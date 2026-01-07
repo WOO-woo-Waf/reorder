@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "beta": {
+    "flatten": {
+      "enabled": true,
+      "exclude_dirs": [
+        "success",
+        "extracted",
+        "intermediate",
+        "final",
+        "failed",
+        "tools",
+        "__pycache__"
+      ]
+    },
+    "exclude": {
+      "names": [
+        "config.json"
+      ],
+      "exts": [
+        ".bat",
+        ".cmd",
+        ".ps1",
+        ".py",
+        ".json",
+        ".md",
+        ".log"
+      ]
+    },
+    "guess_suffixes": [
+      ".7z",
+      ".zip",
+      ".rar",
+      ".tar",
+      ".tgz",
+      ".tar.gz",
+      ".gz",
+      ".bz2",
+      ".xz"
+    ],
+    "log_passwords": true,
+    "deep_extract": {
+      "enabled": true,
+      "max_depth": 4,
+      "min_archive_mb": 100,
+      "final_single_mb": 200
+    }
+  },
+  "paths": {
+    "keywords": "resources/keywords.txt",
+    "passwords": "resources/passwords.txt"
+  },
+  "tools": {
+    "seven_zip": {
+      "exe": "tools\\7zip\\Files\\7-Zip\\7z.exe",
+      "auto_download": true,
+      "download": {
+        "source": "7-zip.org",
+        "prefer": "msi-x64",
+        "timeout_sec": 60
+      },
+      "install_dir": "tools/7zip"
+    },
+    "unrar": {
+      "exe": "D:/RAR/Rar.exe"
+    },
+    "bandizip": {
+      "exe": "D:/bandzip/bz.exe"
+    }
+  }
+}

@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+*.egg
+
+# VSCode
+.vscode/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Logs
+*.log
+
+# Build
+build/
+dist/
+
+# Archive outputs (generated during runs)
+success/
+intermediate/
+final/
+failed/
+
+# Test outputs
+*.bak
+*.tmp
+
+# Environment
+.env
+.venv/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Misc
+*.swp
+*.swo
+
+# Allow config.json as reference but you can override locally
+# config.local.json
+
+# Allow all test directories and samples
+!tests/
