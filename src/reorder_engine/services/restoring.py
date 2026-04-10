@@ -333,29 +333,24 @@ class _ApateRestoreRule(RestoreRule):
         outputs: list[VariantArtifact] = []
         current = path
         for index in range(1, self._rounds + 1):
-            round_dir = workspace / self.name() / f"round_{index}"
-            if not dry_run:
-                round_dir.mkdir(parents=True, exist_ok=True)
             if self._append_mp4_if_missing and not current.suffix:
-                current_with_suffix = round_dir / f"{current.name}.mp4"
+                current_with_suffix = current.with_name(f"{current.name}.mp4")
                 if not dry_run:
-                    shutil.copy2(current, current_with_suffix)
+                    current.rename(current_with_suffix)
                 current = current_with_suffix
-            dst = round_dir / current.name
             ok = True
             if not dry_run:
-                ok = reveal(current, output_path=dst, quiet=True, in_place=False)
+                ok = reveal(current, quiet=True, in_place=True)
             if not ok:
                 return outputs
             artifact = VariantArtifact(
                 source=path,
-                path=dst,
+                path=current,
                 rule_name=self.name(),
-                suffix_changed=(dst.suffix != path.suffix),
+                suffix_changed=(current.suffix != path.suffix),
                 keep=True,
             )
             outputs.append(artifact)
-            current = dst
         return outputs
 
 

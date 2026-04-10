@@ -24,6 +24,22 @@ def _make_disguised(original: bytes, mask_head: bytes) -> bytes:
 
 
 class ApateTests(unittest.TestCase):
+    def test_reveal_handles_official_abnormal_branch(self) -> None:
+        module = _load_apate()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            original = b"PK\x03\x04abc"
+            mask = b"\x00\x00\x00\x20ftypmp42"
+            disguised = mask + original[::-1] + len(mask).to_bytes(4, "little")
+            src = root / "short.mp4"
+            out = root / "short.out"
+            src.write_bytes(disguised)
+
+            ok = module.apate_official_reveal(src, output_path=out, quiet=True)
+
+            self.assertTrue(ok)
+            self.assertEqual(out.read_bytes(), original)
+
     def test_reveal_writes_to_new_file_and_keeps_source(self) -> None:
         module = _load_apate()
         apate_official_reveal = module.apate_official_reveal

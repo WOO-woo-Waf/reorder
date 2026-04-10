@@ -255,16 +255,8 @@ class BetaFolderPipeline:
         return restored or [path]
 
     def _copy_volume_set_to_workspace(self, vs: VolumeSet, workspace: Path, *, dry_run: bool) -> VolumeSet:
-        if dry_run:
-            return vs
-        copied_members: list[Path] = []
-        for member in vs.members:
-            dst = workspace / member.name
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(member, dst)
-            copied_members.append(dst)
-        entry = workspace / vs.entry.name
-        return VolumeSet(entry=entry, members=tuple(copied_members), group_key=vs.group_key)
+        _ = (workspace, dry_run)
+        return vs
 
     def _promote_final_dir(self, current_dir: Path, final_root: Path, *, package_name: str, dry_run: bool) -> Path:
         leaf = deepest_wrapper_dir(current_dir) if self._path_compress else current_dir

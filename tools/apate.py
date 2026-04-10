@@ -71,12 +71,18 @@ def _read_revealed_bytes(src: Path) -> tuple[bytes, int] | None:
         handle.seek(0, os.SEEK_END)
         file_size = handle.tell()
         backup_pos = file_size - 4 - probe.mask_head_length
-        handle.seek(backup_pos)
-        original_head_reversed = handle.read(probe.mask_head_length)
+        if probe.mask_head_length <= backup_pos:
+            handle.seek(backup_pos)
+            original_head_reversed = handle.read(probe.mask_head_length)
+        else:
+            handle.seek(probe.mask_head_length)
+            original_head_reversed = handle.read(backup_pos)
         original_head = original_head_reversed[::-1]
         handle.seek(0)
         body = handle.read(backup_pos)
-        return original_head + body[probe.mask_head_length:], probe.mask_head_length
+        if probe.mask_head_length <= backup_pos:
+            return original_head + body[probe.mask_head_length:], probe.mask_head_length
+        return original_head, probe.mask_head_length
 
 
 def apate_official_reveal(
