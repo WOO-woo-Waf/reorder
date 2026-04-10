@@ -641,21 +641,21 @@ class RestorationService:
         self._inspector = inspector or ArchiveSignatureInspector()
 
     def restore(self, path: Path, *, workspace: Path | None = None, dry_run: bool = False) -> list[Path]:
-        seen: set[Path] = set()
-        out: list[Path] = []
-        for candidate in [path]:
-            if candidate not in seen:
-                seen.add(candidate)
-                out.append(candidate)
         for restorer in self._restorers:
             if not restorer.can_handle(path):
                 continue
-            for candidate in restorer.restore(path, workspace=workspace, dry_run=dry_run):
+            restored = restorer.restore(path, workspace=workspace, dry_run=dry_run)
+            if not restored:
+                return [path]
+            out: list[Path] = []
+            seen: set[Path] = set()
+            for candidate in restored:
                 if candidate in seen:
                     continue
                 seen.add(candidate)
                 out.append(candidate)
-        return out
+            return out or [path]
+        return [path]
 
     def identify(self, path: Path) -> ArchiveProbe:
         return self._inspector.probe_path(path)

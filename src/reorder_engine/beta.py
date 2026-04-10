@@ -199,8 +199,8 @@ def main(argv: list[str] | None = None) -> int:
     inspector = ArchiveSignatureInspector()
     restore_service = RestorationService(
         [
-            ApateRestorer(inspector),
             RepeatedApateRestorer(inspector, rounds=cfg.beta.rules.max_restore_rounds),
+            ApateRestorer(inspector),
             SuffixVariantBuilder(inspector),
         ],
         inspector=inspector,

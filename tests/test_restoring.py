@@ -6,7 +6,7 @@ import struct
 from pathlib import Path
 
 from reorder_engine.domain.models import ArchiveKind
-from reorder_engine.services.restoring import ArchiveSignatureInspector, RepeatedApateRestorer, RestorationService, SuffixVariantBuilder
+from reorder_engine.services.restoring import ArchiveSignatureInspector, ApateRestorer, RepeatedApateRestorer, RestorationService, SuffixVariantBuilder
 
 
 class RestoringTests(unittest.TestCase):
@@ -55,6 +55,25 @@ class RestoringTests(unittest.TestCase):
             inspector = ArchiveSignatureInspector()
             restorer = RepeatedApateRestorer(inspector, rounds=3)
             self.assertTrue(restorer.can_handle(source))
+
+    def test_restoration_service_picks_single_apate_strategy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "FolderThree.mp4"
+            source.write_bytes(self._make_disguised(b"PK\x03\x04hello", b"\x00\x00\x00\x00"))
+            inspector = ArchiveSignatureInspector()
+            service = RestorationService(
+                [
+                    RepeatedApateRestorer(inspector, rounds=3),
+                    ApateRestorer(inspector),
+                    SuffixVariantBuilder(inspector),
+                ],
+                inspector=inspector,
+            )
+
+            restored = service.restore(source, workspace=root, dry_run=True)
+
+            self.assertEqual(restored, [source])
 
 
 if __name__ == "__main__":
