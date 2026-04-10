@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 from reorder_engine.beta import build_parser
-from reorder_engine.domain.models import ExtractionRequest, ExtractionResult, VolumeSet
+from reorder_engine.domain.models import ArchiveKind, ArchiveProbe, ExtractionRequest, ExtractionResult, VolumeSet
 from reorder_engine.interfaces.extracting import ExtractorStrategy
 from reorder_engine.services.extracting import ExtractionService
 
@@ -77,6 +77,25 @@ class BetaCliAndExtractingTests(unittest.TestCase):
             self.assertFalse(result.ok)
             self.assertEqual(first.calls, [None])
             self.assertEqual(second.calls, [])
+
+    def test_extraction_service_uses_probe_preferred_tool(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            archive = root / "a.rar"
+            archive.write_text("x", encoding="utf-8")
+            vs = VolumeSet(entry=archive, members=(archive,), group_key="g")
+            req = ExtractionRequest(volume_set=vs, output_dir=root / "out", passwords=())
+            fail = ExtractionResult(volume_set=vs, ok=False, tool="7z", message="not rar archive")
+            ok = ExtractionResult(volume_set=vs, ok=True, tool="unrar", message="ok")
+            first = _FakeExtractor("7z", [fail])
+            second = _FakeExtractor("unrar", [ok])
+            probe = ArchiveProbe(path=archive, kind=ArchiveKind.ARCHIVE, archive_suffix=".rar", preferred_tool="unrar", reason="test")
+
+            result = ExtractionService([first, second]).extract_one(req, probe=probe)
+
+            self.assertTrue(result.ok)
+            self.assertEqual(first.calls, [])
+            self.assertEqual(second.calls, [None])
 
 
 if __name__ == "__main__":

@@ -79,6 +79,23 @@ class CollisionPolicy(str, Enum):
     DUPLICATES_DIR = "_duplicates"
 
 
+class ArchiveKind(str, Enum):
+    UNKNOWN = "unknown"
+    ARCHIVE = "archive"
+    APATE = "apate"
+    VARIANT = "variant"
+
+
+@dataclass(frozen=True)
+class ArchiveProbe:
+    path: Path
+    kind: ArchiveKind
+    archive_suffix: str | None = None
+    embedded_archive_name: str | None = None
+    preferred_tool: str | None = None
+    reason: str | None = None
+
+
 @dataclass(frozen=True)
 class VariantArtifact:
     source: Path

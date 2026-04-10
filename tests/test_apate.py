@@ -4,6 +4,7 @@ import struct
 import tempfile
 import unittest
 import importlib.util
+import sys
 from pathlib import Path
 
 
@@ -12,8 +13,9 @@ def _load_apate():
     spec = importlib.util.spec_from_file_location("test_apate_module", script)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
-    return module.apate_official_reveal
+    return module
 
 
 def _make_disguised(original: bytes, mask_head: bytes) -> bytes:
@@ -23,7 +25,8 @@ def _make_disguised(original: bytes, mask_head: bytes) -> bytes:
 
 class ApateTests(unittest.TestCase):
     def test_reveal_writes_to_new_file_and_keeps_source(self) -> None:
-        apate_official_reveal = _load_apate()
+        module = _load_apate()
+        apate_official_reveal = module.apate_official_reveal
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             original = b"PK\x03\x04hello world from zip"
@@ -37,6 +40,20 @@ class ApateTests(unittest.TestCase):
             self.assertTrue(ok)
             self.assertEqual(src.read_bytes(), disguised)
             self.assertEqual(out.read_bytes(), original)
+
+    def test_probe_apate_file_reads_only_structure_metadata(self) -> None:
+        module = _load_apate()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            original = b"PK\x03\x04hello world from zip"
+            disguised = _make_disguised(original, b"\x00\x00\x00\x00")
+            src = root / "sample.mp4"
+            src.write_bytes(disguised)
+
+            probe = module.probe_apate_file(src)
+
+            self.assertTrue(probe.ok)
+            self.assertEqual(probe.original_head[:4], b"PK\x03\x04")
 
 
 if __name__ == "__main__":

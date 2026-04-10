@@ -11,6 +11,7 @@ import argparse
 import os
 import shutil
 import struct
+from dataclasses import dataclass
 from pathlib import Path
 
 
@@ -20,27 +21,62 @@ def _default_output_path(path: Path) -> Path:
     return path.with_name(f"{path.name}.revealed")
 
 
+@dataclass(frozen=True)
+class ApateProbe:
+    ok: bool
+    mask_head_length: int = 0
+    original_head: bytes = b""
+    reason: str | None = None
+
+
+def probe_apate_file(file_path: str | os.PathLike[str], *, max_mask_length: int = 8 * 1024 * 1024) -> ApateProbe:
+    src = Path(file_path)
+    if not src.is_file():
+        return ApateProbe(ok=False, reason="missing-file")
+
+    try:
+        with open(src, "rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            file_size = handle.tell()
+            if file_size < 8:
+                return ApateProbe(ok=False, reason="too-small")
+
+            handle.seek(-4, os.SEEK_END)
+            indicator_bytes = handle.read(4)
+            mask_head_length = struct.unpack("<I", indicator_bytes)[0]
+            if mask_head_length <= 0:
+                return ApateProbe(ok=False, reason="zero-mask-length")
+            if mask_head_length > max_mask_length:
+                return ApateProbe(ok=False, reason="mask-too-large")
+
+            backup_pos = file_size - 4 - mask_head_length
+            if backup_pos <= 0:
+                return ApateProbe(ok=False, reason="invalid-layout")
+
+            handle.seek(backup_pos)
+            original_head_reversed = handle.read(mask_head_length)
+            if len(original_head_reversed) != mask_head_length:
+                return ApateProbe(ok=False, reason="truncated-mask")
+            original_head = original_head_reversed[::-1]
+            return ApateProbe(ok=True, mask_head_length=mask_head_length, original_head=original_head[:32], reason="ok")
+    except OSError as exc:
+        return ApateProbe(ok=False, reason=str(exc))
+
+
 def _read_revealed_bytes(src: Path) -> tuple[bytes, int] | None:
+    probe = probe_apate_file(src)
+    if not probe.ok:
+        return None
     with open(src, "rb") as handle:
         handle.seek(0, os.SEEK_END)
         file_size = handle.tell()
-        if file_size < 4:
-            return None
-
-        handle.seek(-4, os.SEEK_END)
-        indicator_bytes = handle.read(4)
-        mask_head_length = struct.unpack("<I", indicator_bytes)[0]
-        backup_pos = file_size - 4 - mask_head_length
-        if backup_pos < 0:
-            return None
-
+        backup_pos = file_size - 4 - probe.mask_head_length
         handle.seek(backup_pos)
-        original_head_reversed = handle.read(mask_head_length)
+        original_head_reversed = handle.read(probe.mask_head_length)
         original_head = original_head_reversed[::-1]
-
         handle.seek(0)
         body = handle.read(backup_pos)
-        return original_head + body[mask_head_length:], mask_head_length
+        return original_head + body[probe.mask_head_length:], probe.mask_head_length
 
 
 def apate_official_reveal(

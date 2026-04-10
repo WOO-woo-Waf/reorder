@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from reorder_engine.domain.models import ExtractionRequest, ExtractionResult
+from reorder_engine.domain.models import ArchiveProbe, ExtractionRequest, ExtractionResult
 from reorder_engine.infrastructure.command_runner import ExternalCommandRunner
 from reorder_engine.infrastructure.tools import BandizipCli, SevenZipCli, UnrarCli
 from reorder_engine.interfaces.extracting import ExtractorStrategy
@@ -116,9 +116,22 @@ class UnrarExtractor(ExtractorStrategy):
         )
 
 
+class ToolCompatibilityPolicy:
+    def preferred_tool(self, probe: ArchiveProbe | None) -> str | None:
+        raise NotImplementedError
+
+
+class DefaultToolCompatibilityPolicy(ToolCompatibilityPolicy):
+    def preferred_tool(self, probe: ArchiveProbe | None) -> str | None:
+        if probe is None:
+            return None
+        return probe.preferred_tool
+
+
 class ExtractionService:
-    def __init__(self, extractors: list[ExtractorStrategy]):
+    def __init__(self, extractors: list[ExtractorStrategy], *, compatibility_policy: ToolCompatibilityPolicy | None = None):
         self._extractors = extractors
+        self._compatibility_policy = compatibility_policy or DefaultToolCompatibilityPolicy()
 
     def _failure_disposition(self, message: str | None) -> str:
         """Classify failures to reduce useless retries.
@@ -163,7 +176,14 @@ class ExtractionService:
 
         return "retry"
 
-    def extract_one(self, request: ExtractionRequest, *, preference: str = "auto", dry_run: bool = False) -> ExtractionResult:
+    def extract_one(
+        self,
+        request: ExtractionRequest,
+        *,
+        preference: str = "auto",
+        probe: ArchiveProbe | None = None,
+        dry_run: bool = False,
+    ) -> ExtractionResult:
         """按顺序轮流尝试（工具×密码）直到成功。
 
         preference:
@@ -171,7 +191,13 @@ class ExtractionService:
         - 7z/unrar/bandizip：把指定工具放到首位，其余作为 fallback
         """
 
-        ordered = self._order_extractors(preference)
+        effective_preference = preference
+        if effective_preference in {"", "auto"}:
+            preferred = self._compatibility_policy.preferred_tool(probe)
+            if preferred:
+                effective_preference = preferred
+
+        ordered = self._order_extractors(effective_preference)
         ordered = [e for e in ordered if e.is_available()]
         if not ordered:
             return ExtractionResult(volume_set=request.volume_set, ok=False, tool="none", message="No available extractor.")

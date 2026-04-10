@@ -3,11 +3,12 @@ from __future__ import annotations
 import importlib.util
 import re
 import shutil
+import sys
 from abc import ABC, abstractmethod
 from functools import lru_cache
 from pathlib import Path
 
-from reorder_engine.domain.models import CollisionPolicy, VariantArtifact
+from reorder_engine.domain.models import ArchiveKind, ArchiveProbe, CollisionPolicy, VariantArtifact
 from reorder_engine.interfaces.decrypting import RestorerStrategy
 
 
@@ -18,8 +19,21 @@ def _load_apate_reveal():
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Unable to load Apate script: {script}")
     module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return getattr(module, "apate_official_reveal")
+
+
+@lru_cache(maxsize=1)
+def _load_apate_probe():
+    script = Path(__file__).resolve().parents[3] / "tools" / "apate.py"
+    spec = importlib.util.spec_from_file_location("reorder_engine_tools_apate", script)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Unable to load Apate script: {script}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return getattr(module, "probe_apate_file")
 
 
 class ArchiveSignatureInspector:
@@ -61,6 +75,9 @@ class ArchiveSignatureInspector:
             ".exe",
         }
     )
+    _rar_suffixes: tuple[str, ...] = (".rar",)
+    _zip_suffixes: tuple[str, ...] = (".zip", ".zip.001", ".z01")
+    _seven_zip_suffixes: tuple[str, ...] = (".7z", ".7z.001")
 
     def read_header(self, path: Path, size: int = 8) -> bytes:
         try:
@@ -91,8 +108,31 @@ class ArchiveSignatureInspector:
     def looks_like_archive(self, path: Path) -> bool:
         return self.looks_like_archive_name(path.name) or self.detect_archive_suffix(path) is not None
 
-    def is_media_or_disguised(self, path: Path) -> bool:
+    def looks_like_possible_apate_name(self, path: Path) -> bool:
         return path.suffix.lower() in self._media_suffixes or "three" in path.name.lower() or not path.suffix
+
+    def probe_apate(self, path: Path) -> ArchiveProbe | None:
+        if not self.looks_like_possible_apate_name(path):
+            return None
+        probe = _load_apate_probe()(path)
+        if not probe.ok:
+            return None
+
+        archive_suffix = None
+        preferred_tool = None
+        for signature, suffix in self._archive_signatures:
+            if probe.original_head.startswith(signature):
+                archive_suffix = suffix
+                preferred_tool = self.preferred_tool_for_suffix(suffix)
+                break
+
+        return ArchiveProbe(
+            path=path,
+            kind=ArchiveKind.APATE,
+            archive_suffix=archive_suffix,
+            preferred_tool=preferred_tool,
+            reason=probe.reason,
+        )
 
     def trim_embedded_archive_name(self, name: str) -> str | None:
         patterns = (
@@ -114,6 +154,68 @@ class ArchiveSignatureInspector:
             match = re.search(pattern, low)
             if match and match.end() < len(name):
                 return name[: match.end()]
+        return None
+
+    def preferred_tool_for_suffix(self, suffix: str | None) -> str | None:
+        if not suffix:
+            return None
+        low = suffix.lower()
+        if low.endswith(self._rar_suffixes):
+            return "unrar"
+        if low.endswith(self._seven_zip_suffixes):
+            return "7z"
+        if low.endswith(self._zip_suffixes):
+            return "7z"
+        return None
+
+    def probe_path(self, path: Path) -> ArchiveProbe:
+        archive_suffix = self.detect_archive_suffix(path)
+        if self.looks_like_archive_name(path.name) or archive_suffix is not None:
+            suffix = archive_suffix or self._archive_suffix_from_name(path.name)
+            return ArchiveProbe(
+                path=path,
+                kind=ArchiveKind.ARCHIVE,
+                archive_suffix=suffix,
+                preferred_tool=self.preferred_tool_for_suffix(suffix),
+                reason="name-or-signature",
+            )
+
+        apate_probe = self.probe_apate(path)
+        if apate_probe is not None:
+            return apate_probe
+
+        trimmed = self.trim_embedded_archive_name(path.name)
+        if trimmed is not None:
+            suffix = self._archive_suffix_from_name(trimmed)
+            return ArchiveProbe(
+                path=path,
+                kind=ArchiveKind.VARIANT,
+                archive_suffix=suffix,
+                embedded_archive_name=trimmed,
+                preferred_tool=self.preferred_tool_for_suffix(suffix),
+                reason="embedded-archive-name",
+            )
+
+        return ArchiveProbe(path=path, kind=ArchiveKind.UNKNOWN, reason="no-match")
+
+    def _archive_suffix_from_name(self, name: str) -> str | None:
+        low = name.lower()
+        ordered = sorted(self._archive_suffixes, key=len, reverse=True)
+        for suffix in ordered:
+            if low.endswith(suffix):
+                return suffix
+        if re.search(r"\.part\d{1,3}\.rar$", low):
+            return ".rar"
+        if re.search(r"\.part\d{1,3}\.zip$", low):
+            return ".zip"
+        if re.search(r"\.part\d{1,3}\.7z$", low):
+            return ".7z"
+        if re.search(r"\.r\d{2}$", low):
+            return ".rar"
+        if re.search(r"\.z\d{2}$", low):
+            return ".zip"
+        if re.search(r"\.\d{3}$", low):
+            return ".zip"
         return None
 
 
@@ -216,7 +318,7 @@ class _ApateRestoreRule(RestoreRule):
     def matches(self, path: Path, inspector: ArchiveSignatureInspector) -> bool:
         if self._require_three and "three" not in path.name.lower():
             return False
-        return inspector.is_media_or_disguised(path)
+        return inspector.probe_apate(path) is not None
 
     def apply(
         self,
@@ -326,8 +428,8 @@ class _MediaZipRule(RenameVariantRule):
         return "media-to-zip"
 
     def matches(self, path: Path, inspector: ArchiveSignatureInspector) -> bool:
-        _ = inspector
-        return path.suffix.lower() in self._suffixes
+        probe = inspector.probe_path(path)
+        return probe.kind == ArchiveKind.UNKNOWN and path.suffix.lower() in self._suffixes
 
     def build(
         self,
@@ -355,8 +457,7 @@ class _NoSuffixZipRule(RenameVariantRule):
         return "no-suffix-to-zip"
 
     def matches(self, path: Path, inspector: ArchiveSignatureInspector) -> bool:
-        _ = inspector
-        return not path.suffix
+        return inspector.probe_path(path).kind == ArchiveKind.UNKNOWN and not path.suffix
 
     def build(
         self,
@@ -386,8 +487,8 @@ class _JpgExeArchiveRule(RenameVariantRule):
         return "jpg-exe-archive-variants"
 
     def matches(self, path: Path, inspector: ArchiveSignatureInspector) -> bool:
-        _ = inspector
-        return path.suffix.lower() in self._allowed
+        probe = inspector.probe_path(path)
+        return probe.kind == ArchiveKind.UNKNOWN and path.suffix.lower() in self._allowed
 
     def build(
         self,
@@ -594,6 +695,9 @@ class RestorationService:
                 seen.add(candidate)
                 out.append(candidate)
         return out
+
+    def identify(self, path: Path) -> ArchiveProbe:
+        return self._inspector.probe_path(path)
 
     def build_post_extract_candidates(
         self,

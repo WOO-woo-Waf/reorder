@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from reorder_engine.domain.models import ExtractionRequest, ExtractionResult, VolumeSet
+from reorder_engine.domain.models import ArchiveKind, ArchiveProbe, ExtractionRequest, ExtractionResult, VolumeSet
 from reorder_engine.interfaces.grouping import VolumeGroupingStrategy
 from reorder_engine.services.archive_naming import split_archive_name
 from reorder_engine.services.config import BetaDeepExtractConfig
@@ -127,7 +127,9 @@ class BetaFolderPipeline:
         seen: set[Path] = set()
         prepared = self._decrypt.prepare(vs.entry, workspace=workspace, dry_run=dry_run)
         for item in prepared:
-            for candidate in self._restore.restore(item, workspace=workspace, dry_run=dry_run):
+            probe = self._restore.identify(item)
+            self._emit(f"IDENTIFY: file={item.name} kind={probe.kind.value} suffix={probe.archive_suffix or '-'} reason={probe.reason or '-'}")
+            for candidate in self._candidate_chain(item, probe=probe, workspace=workspace, dry_run=dry_run):
                 if candidate in seen:
                     continue
                 seen.add(candidate)
@@ -145,9 +147,10 @@ class BetaFolderPipeline:
         last = ExtractionResult(volume_set=vs, ok=False, tool="none", message="No candidate executed")
         for index, candidate in enumerate(candidates, start=1):
             attempt_dir = layer_root / f"attempt_{index}"
+            probe = self._restore.identify(candidate)
             request_vs = vs if len(vs.members) > 1 else VolumeSet(entry=candidate, members=(candidate,), group_key=vs.group_key)
             req = ExtractionRequest(volume_set=request_vs, output_dir=attempt_dir, passwords=self._passwords)
-            res = self._extractor.extract_one(req, preference="auto", dry_run=dry_run)
+            res = self._extractor.extract_one(req, preference="auto", probe=probe, dry_run=dry_run)
             last = res
             self._emit_extract_result("EXTRACT", request_vs.entry.name, res)
             if res.ok:
@@ -193,12 +196,13 @@ class BetaFolderPipeline:
             extracted = False
             for index, candidate in enumerate(candidates, start=1):
                 target_dir = package_root / f"L{depth + 1}" / self._safe_name(candidate.name)
+                probe = self._restore.identify(candidate)
                 req = ExtractionRequest(
                     volume_set=VolumeSet(entry=candidate, members=(candidate,), group_key=f"{package_name}:{depth}:{index}"),
                     output_dir=target_dir,
                     passwords=self._passwords,
                 )
-                res = self._extractor.extract_one(req, preference="auto", dry_run=dry_run)
+                res = self._extractor.extract_one(req, preference="auto", probe=probe, dry_run=dry_run)
                 self._emit_extract_result("DEEP-EXTRACT", candidate.name, res)
                 if res.ok:
                     current_dir = target_dir
@@ -231,13 +235,24 @@ class BetaFolderPipeline:
         out: list[Path] = []
         seen: set[Path] = set()
         for candidate in base_candidates:
+            probe = self._restore.identify(candidate)
+            self._emit(f"IDENTIFY: nested={candidate.name} kind={probe.kind.value} suffix={probe.archive_suffix or '-'} reason={probe.reason or '-'}")
             child_workspace = workspace / self._safe_name(candidate.name)
-            for derived in self._restore.restore(candidate, workspace=child_workspace, dry_run=dry_run):
+            for derived in self._candidate_chain(candidate, probe=probe, workspace=child_workspace, dry_run=dry_run):
                 if derived in seen:
                     continue
                 seen.add(derived)
                 out.append(derived)
         return out
+
+    def _candidate_chain(self, path: Path, *, probe: ArchiveProbe, workspace: Path, dry_run: bool) -> list[Path]:
+        if probe.kind == ArchiveKind.ARCHIVE:
+            return [path]
+        if probe.kind == ArchiveKind.APATE:
+            restored = self._restore.restore(path, workspace=workspace, dry_run=dry_run)
+            return restored or [path]
+        restored = self._restore.restore(path, workspace=workspace, dry_run=dry_run)
+        return restored or [path]
 
     def _copy_volume_set_to_workspace(self, vs: VolumeSet, workspace: Path, *, dry_run: bool) -> VolumeSet:
         if dry_run:
