@@ -9,9 +9,14 @@
         "intermediate",
         "final",
         "failed",
+        "archives_success",
+        "resources",
+        "tests",
         "tools",
         "__pycache__"
-      ]
+      ],
+      "allowed_roots": [],
+      "allow_inside_project_repo": false
     },
     "exclude": {
       "names": [

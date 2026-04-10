@@ -23,7 +23,7 @@ from reorder_engine.services.keywords import KeywordRepository
 from reorder_engine.services.passwords import PasswordRepository
 from reorder_engine.services.restoring import PassthroughRestorer, RestorationService
 from reorder_engine.services.beta_pipeline import BetaFolderPipeline
-from reorder_engine.services.flattening import FolderFlattener
+from reorder_engine.services.flattening import FolderFlattener, flatten_safety_check
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -36,6 +36,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--config", default=None, help="配置文件路径（默认 <workdir>/config.json）")
     p.add_argument("--no-flatten", action="store_true", help="不展平子目录文件（默认会展平）")
+    p.add_argument(
+        "--allow-flatten-in-project",
+        action="store_true",
+        help="允许在 reorder_engine 源码仓库目录内展平（高风险；默认禁止）",
+    )
     p.add_argument("--dry-run", action="store_true", help="只打印计划，不实际改名/解压/移动")
     p.add_argument("--self-check", action="store_true", help="启动时自检：打印 7z/WinRAR/UnRAR/Bandizip 可用性与版本/帮助")
     p.add_argument("--log", default=None, help="日志文件路径（默认 <folder>/reorder_engine.log）")
@@ -211,13 +216,22 @@ def main(argv: list[str] | None = None) -> int:
     runner = ExternalCommandRunner(stream=not bool(args.dry_run), line_sink=sink)
 
     if cfg.beta.flatten.enabled and not args.no_flatten:
-        moves = FolderFlattener().flatten(
+        allow_inside = bool(cfg.beta.flatten.allow_inside_project_repo) or bool(args.allow_flatten_in_project)
+        skip_reason = flatten_safety_check(
             folder,
-            dry_run=bool(args.dry_run),
-            exclude_dirs=set(cfg.beta.flatten.exclude_dirs),
+            allowed_roots=cfg.beta.flatten.allowed_roots,
+            allow_inside_project_repo=allow_inside,
         )
-        if moves:
-            logger.info("FLATTEN: moved %s files into %s", len(moves), folder)
+        if skip_reason:
+            logger.warning("FLATTEN: %s", skip_reason)
+        else:
+            moves = FolderFlattener().flatten(
+                folder,
+                dry_run=bool(args.dry_run),
+                exclude_dirs=set(cfg.beta.flatten.exclude_dirs),
+            )
+            if moves:
+                logger.info("FLATTEN: moved %s files into %s", len(moves), folder)
 
     if args.self_check:
         # self-check 不应该因为 7z 缺失而提前退出：先检查已配置工具，再尝试确保 7z。

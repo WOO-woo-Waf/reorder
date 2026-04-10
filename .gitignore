@@ -25,6 +25,7 @@ success/
 intermediate/
 final/
 failed/
+archives_success/
 
 # Test outputs
 *.bak

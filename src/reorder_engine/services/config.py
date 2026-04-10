@@ -43,6 +43,10 @@ class ToolsConfig:
 class BetaFlattenConfig:
     enabled: bool
     exclude_dirs: tuple[str, ...]
+    # 非空时：仅当目标目录落在下列路径之一之下时才允许展平（推荐用于固定「下载收件箱」目录）
+    allowed_roots: tuple[str, ...]
+    # 未配置白名单时：若目标在 reorder_engine 源码仓库内则默认禁止展平
+    allow_inside_project_repo: bool
 
 
 @dataclass(frozen=True)
@@ -119,9 +123,14 @@ class ConfigManager:
                         "intermediate",
                         "final",
                         "failed",
+                        "archives_success",
+                        "resources",
+                        "tests",
                         "tools",
                         "__pycache__",
                     ],
+                    "allowed_roots": [],
+                    "allow_inside_project_repo": False,
                 },
                 "exclude": {"names": ["config.json"], "exts": [".bat", ".cmd", ".ps1", ".py", ".json", ".md", ".log"]},
                 "guess_suffixes": [".7z", ".zip", ".rar", ".tar", ".tgz", ".tar.gz", ".gz", ".bz2", ".xz"],
@@ -219,17 +228,43 @@ class ConfigManager:
             min_archive_mb=int(deep.get("min_archive_mb", 100)),
             final_single_mb=int(deep.get("final_single_mb", 200)),
         )
+        allowed_raw = flatten.get("allowed_roots", [])
+        allowed_roots = tuple(str(x) for x in allowed_raw) if isinstance(allowed_raw, list) else ()
         beta_cfg = BetaConfig(
             flatten=BetaFlattenConfig(
                 enabled=bool(flatten.get("enabled", True)),
                 exclude_dirs=tuple(
                     flatten.get(
                         "exclude_dirs",
-                        ["success", "extracted", "intermediate", "final", "failed", "tools", "__pycache__"],
+                        [
+                            "success",
+                            "extracted",
+                            "intermediate",
+                            "final",
+                            "failed",
+                            "archives_success",
+                            "resources",
+                            "tests",
+                            "tools",
+                            "__pycache__",
+                        ],
                     )
                 )
                 if isinstance(flatten.get("exclude_dirs", None), list)
-                else ("success", "extracted", "intermediate", "final", "failed", "tools", "__pycache__"),
+                else (
+                    "success",
+                    "extracted",
+                    "intermediate",
+                    "final",
+                    "failed",
+                    "archives_success",
+                    "resources",
+                    "tests",
+                    "tools",
+                    "__pycache__",
+                ),
+                allowed_roots=allowed_roots,
+                allow_inside_project_repo=bool(flatten.get("allow_inside_project_repo", False)),
             ),
             exclude=BetaExcludeConfig(
                 names=tuple(exclude.get("names", ["config.json"])) if isinstance(exclude.get("names", None), list) else ("config.json",),
