@@ -1,78 +1,110 @@
 """
-Apate 伪装文件就地还原：对标上游 rippod/apate 的 Program.Reveal（常规分支）。
+Non-destructive Apate reveal helper.
 
-上游仓库: https://github.com/rippod/apate
-参考实现: apate/Program.cs -> Reveal
-详细文档: 同目录 APATE.md
+Reference project:
+https://github.com/rippod/apate
 """
 
 from __future__ import annotations
 
 import argparse
 import os
+import shutil
 import struct
-import sys
 from pathlib import Path
 
 
-def apate_official_reveal(file_path: str | os.PathLike[str], *, quiet: bool = False) -> bool:
-    """
-    与 Apate 源码 Program.Reveal 等价的 Python 实现（面具长度正常时）。
+def _default_output_path(path: Path) -> Path:
+    if path.suffix:
+        return path.with_name(f"{path.stem}.revealed{path.suffix}")
+    return path.with_name(f"{path.name}.revealed")
 
-    就地改写文件：去掉尾部面具元数据并写回原始文件头。请先备份。
-    """
-    path = Path(file_path)
-    if not path.is_file():
+
+def _read_revealed_bytes(src: Path) -> tuple[bytes, int] | None:
+    with open(src, "rb") as handle:
+        handle.seek(0, os.SEEK_END)
+        file_size = handle.tell()
+        if file_size < 4:
+            return None
+
+        handle.seek(-4, os.SEEK_END)
+        indicator_bytes = handle.read(4)
+        mask_head_length = struct.unpack("<I", indicator_bytes)[0]
+        backup_pos = file_size - 4 - mask_head_length
+        if backup_pos < 0:
+            return None
+
+        handle.seek(backup_pos)
+        original_head_reversed = handle.read(mask_head_length)
+        original_head = original_head_reversed[::-1]
+
+        handle.seek(0)
+        body = handle.read(backup_pos)
+        return original_head + body[mask_head_length:], mask_head_length
+
+
+def apate_official_reveal(
+    file_path: str | os.PathLike[str],
+    *,
+    output_path: str | os.PathLike[str] | None = None,
+    quiet: bool = False,
+    in_place: bool = False,
+) -> bool:
+    src = Path(file_path)
+    if not src.is_file():
         if not quiet:
-            print("文件路径不存在或不是文件")
+            print("File does not exist or is not a file.")
         return False
 
     try:
-        with open(path, "rb+") as f:
-            f.seek(0, os.SEEK_END)
-            file_size = f.tell()
-
-            if file_size < 4:
-                return False
-
-            f.seek(-4, os.SEEK_END)
-            indicator_bytes = f.read(4)
-            mask_head_length = struct.unpack("<I", indicator_bytes)[0]
-
+        parsed = _read_revealed_bytes(src)
+        if parsed is None:
             if not quiet:
-                print(f"[*] 检测到面具头长度: {mask_head_length} 字节")
+                print("Invalid Apate structure.")
+            return False
 
-            backup_pos = file_size - 4 - mask_head_length
-            if backup_pos < 0:
-                if not quiet:
-                    print("[-] 文件结构损坏，无法还原")
-                return False
+        revealed_bytes, mask_head_length = parsed
+        if not quiet:
+            print(f"[*] Mask head length: {mask_head_length} bytes")
 
-            f.seek(backup_pos)
-            original_head_reversed = f.read(mask_head_length)
-            original_head = original_head_reversed[::-1]
+        if in_place:
+            dst = src
+        else:
+            dst = Path(output_path) if output_path else _default_output_path(src)
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            if dst != src:
+                shutil.copy2(src, dst)
 
-            f.truncate(backup_pos)
-            f.seek(0)
-            f.write(original_head)
+        with open(dst, "rb+") as handle:
+            handle.seek(0)
+            handle.write(revealed_bytes)
+            handle.truncate(len(revealed_bytes))
 
         if not quiet:
-            print("[+] 还原成功！文件已恢复原始结构。")
+            print(f"[+] Reveal succeeded: {dst}")
         return True
-    except OSError as e:
+    except OSError as exc:
         if not quiet:
-            print(f"[-] 还原过程中发生错误: {e}")
+            print(f"[-] Reveal failed: {exc}")
         return False
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(
-        description="Apate 伪装文件还原（对标 github.com/rippod/apate Program.Reveal）。默认原地修改，请先备份。"
+    parser = argparse.ArgumentParser(
+        description="Reveal Apate-disguised files. Defaults to writing a sibling output file."
     )
-    p.add_argument("file", type=Path, help="被伪装过的文件路径")
-    p.add_argument("-q", "--quiet", action="store_true", help="仅通过退出码表示结果")
-    args = p.parse_args(argv)
-    ok = apate_official_reveal(args.file, quiet=args.quiet)
+    parser.add_argument("file", type=Path, help="Path to the disguised file.")
+    parser.add_argument("-o", "--output", type=Path, default=None, help="Optional output path.")
+    parser.add_argument("--in-place", action="store_true", help="Modify the input file directly.")
+    parser.add_argument("-q", "--quiet", action="store_true", help="Only signal success via exit code.")
+    args = parser.parse_args(argv)
+
+    ok = apate_official_reveal(
+        args.file,
+        output_path=args.output,
+        quiet=args.quiet,
+        in_place=bool(args.in_place),
+    )
     return 0 if ok else 1
 
 

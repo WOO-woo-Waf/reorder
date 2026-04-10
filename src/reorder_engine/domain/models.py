@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from typing import Iterable, Sequence
 
@@ -72,3 +73,43 @@ class PipelineOptions:
     tool_preference: str  # auto|7z|bandizip
     dry_run: bool = False
     recursive: bool = True
+
+
+class CollisionPolicy(str, Enum):
+    DUPLICATES_DIR = "_duplicates"
+
+
+@dataclass(frozen=True)
+class VariantArtifact:
+    source: Path
+    path: Path
+    rule_name: str
+    suffix_changed: bool = False
+    keep: bool = True
+
+
+@dataclass(frozen=True)
+class TraceStep:
+    stage: str
+    detail: str
+    path: Path | None = None
+
+
+@dataclass
+class ProcessTrace:
+    steps: list[TraceStep] = field(default_factory=list)
+
+    def add(self, stage: str, detail: str, path: Path | None = None) -> None:
+        self.steps.append(TraceStep(stage=stage, detail=detail, path=path))
+
+
+@dataclass
+class WorkItem:
+    original_path: Path
+    current_path: Path
+    workspace: Path
+    group_key: str
+    trace: ProcessTrace = field(default_factory=ProcessTrace)
+
+    def record(self, stage: str, detail: str, path: Path | None = None) -> None:
+        self.trace.add(stage=stage, detail=detail, path=path)

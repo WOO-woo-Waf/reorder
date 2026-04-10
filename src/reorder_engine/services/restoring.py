@@ -1,25 +1,622 @@
 from __future__ import annotations
 
+import importlib.util
+import re
+import shutil
+from abc import ABC, abstractmethod
+from functools import lru_cache
 from pathlib import Path
 
+from reorder_engine.domain.models import CollisionPolicy, VariantArtifact
 from reorder_engine.interfaces.decrypting import RestorerStrategy
+
+
+@lru_cache(maxsize=1)
+def _load_apate_reveal():
+    script = Path(__file__).resolve().parents[3] / "tools" / "apate.py"
+    spec = importlib.util.spec_from_file_location("reorder_engine_tools_apate", script)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Unable to load Apate script: {script}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return getattr(module, "apate_official_reveal")
+
+
+class ArchiveSignatureInspector:
+    _archive_signatures: tuple[tuple[bytes, str], ...] = (
+        (b"PK\x03\x04", ".zip"),
+        (b"7z\xbc\xaf'\x1c", ".7z"),
+        (b"Rar!\x1a\x07\x00", ".rar"),
+        (b"Rar!\x1a\x07\x01\x00", ".rar"),
+        (b"\x1f\x8b\x08", ".gz"),
+    )
+    _archive_suffixes: tuple[str, ...] = (
+        ".zip",
+        ".rar",
+        ".7z",
+        ".tar",
+        ".gz",
+        ".bz2",
+        ".xz",
+        ".tgz",
+        ".tar.gz",
+        ".7z.001",
+        ".zip.001",
+    )
+    _media_suffixes: frozenset[str] = frozenset(
+        {
+            ".jpg",
+            ".jpeg",
+            ".png",
+            ".gif",
+            ".bmp",
+            ".webp",
+            ".mp4",
+            ".mkv",
+            ".avi",
+            ".mov",
+            ".wmv",
+            ".flv",
+            ".webm",
+            ".exe",
+        }
+    )
+
+    def read_header(self, path: Path, size: int = 8) -> bytes:
+        try:
+            with open(path, "rb") as handle:
+                return handle.read(size)
+        except OSError:
+            return b""
+
+    def detect_archive_suffix(self, path: Path) -> str | None:
+        header = self.read_header(path)
+        for signature, suffix in self._archive_signatures:
+            if header.startswith(signature):
+                return suffix
+        return None
+
+    def looks_like_archive_name(self, name: str) -> bool:
+        low = name.lower()
+        if low.endswith(self._archive_suffixes):
+            return True
+        if re.search(r"\.part\d{1,3}\.(rar|zip|7z)$", low):
+            return True
+        if re.search(r"\.[rz]\d{2}$", low):
+            return True
+        if re.search(r"\.\d{3}$", low):
+            return True
+        return False
+
+    def looks_like_archive(self, path: Path) -> bool:
+        return self.looks_like_archive_name(path.name) or self.detect_archive_suffix(path) is not None
+
+    def is_media_or_disguised(self, path: Path) -> bool:
+        return path.suffix.lower() in self._media_suffixes or "three" in path.name.lower() or not path.suffix
+
+    def trim_embedded_archive_name(self, name: str) -> str | None:
+        patterns = (
+            r"\.tar\.gz",
+            r"\.7z\.001",
+            r"\.zip\.001",
+            r"\.part\d{1,3}\.(rar|zip|7z)",
+            r"\.rar",
+            r"\.zip",
+            r"\.7z",
+            r"\.tar",
+            r"\.tgz",
+            r"\.gz",
+            r"\.bz2",
+            r"\.xz",
+        )
+        low = name.lower()
+        for pattern in patterns:
+            match = re.search(pattern, low)
+            if match and match.end() < len(name):
+                return name[: match.end()]
+        return None
+
+
+class _ArtifactFactory:
+    def __init__(self, base_dir: Path):
+        self._base_dir = base_dir
+
+    def make_copy(
+        self,
+        src: Path,
+        *,
+        relative_name: str,
+        rule_name: str,
+        suffix_changed: bool,
+        dry_run: bool,
+    ) -> VariantArtifact:
+        dst = self._base_dir / relative_name
+        if dst.exists():
+            dst = self._duplicates_target(dst, rule_name)
+        if not dry_run:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+        return VariantArtifact(source=src, path=dst, rule_name=rule_name, suffix_changed=suffix_changed, keep=True)
+
+    def _duplicates_target(self, dst: Path, rule_name: str) -> Path:
+        duplicate_root = self._base_dir / CollisionPolicy.DUPLICATES_DIR.value / rule_name
+        return duplicate_root / dst.name
+
+
+class RestoreRule(ABC):
+    @abstractmethod
+    def name(self) -> str:
+        ...
+
+    @abstractmethod
+    def matches(self, path: Path, inspector: ArchiveSignatureInspector) -> bool:
+        ...
+
+    @abstractmethod
+    def apply(
+        self,
+        path: Path,
+        *,
+        workspace: Path,
+        inspector: ArchiveSignatureInspector,
+        dry_run: bool,
+    ) -> list[VariantArtifact]:
+        ...
+
+
+class RenameVariantRule(ABC):
+    @abstractmethod
+    def name(self) -> str:
+        ...
+
+    @abstractmethod
+    def matches(self, path: Path, inspector: ArchiveSignatureInspector) -> bool:
+        ...
+
+    @abstractmethod
+    def build(
+        self,
+        path: Path,
+        *,
+        workspace: Path,
+        inspector: ArchiveSignatureInspector,
+        dry_run: bool,
+    ) -> list[VariantArtifact]:
+        ...
+
+
+class PostExtractRule(ABC):
+    @abstractmethod
+    def name(self) -> str:
+        ...
+
+    @abstractmethod
+    def collect(
+        self,
+        folder: Path,
+        *,
+        workspace: Path,
+        inspector: ArchiveSignatureInspector,
+        min_archive_bytes: int,
+        final_single_bytes: int,
+        dry_run: bool,
+    ) -> list[Path]:
+        ...
+
+
+class _ApateRestoreRule(RestoreRule):
+    def __init__(self, *, rounds: int, require_three: bool, append_mp4_if_missing: bool):
+        self._rounds = rounds
+        self._require_three = require_three
+        self._append_mp4_if_missing = append_mp4_if_missing
+
+    def name(self) -> str:
+        return "apate-three" if self._require_three else "apate-once"
+
+    def matches(self, path: Path, inspector: ArchiveSignatureInspector) -> bool:
+        if self._require_three and "three" not in path.name.lower():
+            return False
+        return inspector.is_media_or_disguised(path)
+
+    def apply(
+        self,
+        path: Path,
+        *,
+        workspace: Path,
+        inspector: ArchiveSignatureInspector,
+        dry_run: bool,
+    ) -> list[VariantArtifact]:
+        _ = inspector
+        reveal = _load_apate_reveal()
+        outputs: list[VariantArtifact] = []
+        current = path
+        for index in range(1, self._rounds + 1):
+            round_dir = workspace / self.name() / f"round_{index}"
+            if not dry_run:
+                round_dir.mkdir(parents=True, exist_ok=True)
+            if self._append_mp4_if_missing and not current.suffix:
+                current_with_suffix = round_dir / f"{current.name}.mp4"
+                if not dry_run:
+                    shutil.copy2(current, current_with_suffix)
+                current = current_with_suffix
+            dst = round_dir / current.name
+            ok = True
+            if not dry_run:
+                ok = reveal(current, output_path=dst, quiet=True, in_place=False)
+            if not ok:
+                return outputs
+            artifact = VariantArtifact(
+                source=path,
+                path=dst,
+                rule_name=self.name(),
+                suffix_changed=(dst.suffix != path.suffix),
+                keep=True,
+            )
+            outputs.append(artifact)
+            current = dst
+        return outputs
+
+
+class _TrimEmbeddedArchiveSuffixRule(RenameVariantRule):
+    def name(self) -> str:
+        return "trim-embedded-archive-suffix"
+
+    def matches(self, path: Path, inspector: ArchiveSignatureInspector) -> bool:
+        return inspector.trim_embedded_archive_name(path.name) is not None
+
+    def build(
+        self,
+        path: Path,
+        *,
+        workspace: Path,
+        inspector: ArchiveSignatureInspector,
+        dry_run: bool,
+    ) -> list[VariantArtifact]:
+        trimmed = inspector.trim_embedded_archive_name(path.name)
+        if trimmed is None:
+            return []
+        factory = _ArtifactFactory(workspace / self.name())
+        return [
+            factory.make_copy(
+                path,
+                relative_name=trimmed,
+                rule_name=self.name(),
+                suffix_changed=True,
+                dry_run=dry_run,
+            )
+        ]
+
+
+class _SignatureRenameRule(RenameVariantRule):
+    def name(self) -> str:
+        return "signature-rename"
+
+    def matches(self, path: Path, inspector: ArchiveSignatureInspector) -> bool:
+        detected = inspector.detect_archive_suffix(path)
+        return detected is not None and not path.name.lower().endswith(detected)
+
+    def build(
+        self,
+        path: Path,
+        *,
+        workspace: Path,
+        inspector: ArchiveSignatureInspector,
+        dry_run: bool,
+    ) -> list[VariantArtifact]:
+        detected = inspector.detect_archive_suffix(path)
+        if detected is None:
+            return []
+        target_name = f"{path.name}{detected}" if not path.suffix else f"{path.stem}{detected}"
+        factory = _ArtifactFactory(workspace / self.name())
+        return [
+            factory.make_copy(
+                path,
+                relative_name=target_name,
+                rule_name=self.name(),
+                suffix_changed=True,
+                dry_run=dry_run,
+            )
+        ]
+
+
+class _MediaZipRule(RenameVariantRule):
+    _suffixes = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm"}
+
+    def name(self) -> str:
+        return "media-to-zip"
+
+    def matches(self, path: Path, inspector: ArchiveSignatureInspector) -> bool:
+        _ = inspector
+        return path.suffix.lower() in self._suffixes
+
+    def build(
+        self,
+        path: Path,
+        *,
+        workspace: Path,
+        inspector: ArchiveSignatureInspector,
+        dry_run: bool,
+    ) -> list[VariantArtifact]:
+        _ = inspector
+        factory = _ArtifactFactory(workspace / self.name())
+        return [
+            factory.make_copy(
+                path,
+                relative_name=f"{path.stem}.zip",
+                rule_name=self.name(),
+                suffix_changed=True,
+                dry_run=dry_run,
+            )
+        ]
+
+
+class _NoSuffixZipRule(RenameVariantRule):
+    def name(self) -> str:
+        return "no-suffix-to-zip"
+
+    def matches(self, path: Path, inspector: ArchiveSignatureInspector) -> bool:
+        _ = inspector
+        return not path.suffix
+
+    def build(
+        self,
+        path: Path,
+        *,
+        workspace: Path,
+        inspector: ArchiveSignatureInspector,
+        dry_run: bool,
+    ) -> list[VariantArtifact]:
+        _ = inspector
+        factory = _ArtifactFactory(workspace / self.name())
+        return [
+            factory.make_copy(
+                path,
+                relative_name=f"{path.name}.zip",
+                rule_name=self.name(),
+                suffix_changed=True,
+                dry_run=dry_run,
+            )
+        ]
+
+
+class _JpgExeArchiveRule(RenameVariantRule):
+    _allowed = {".jpg", ".jpeg", ".exe"}
+
+    def name(self) -> str:
+        return "jpg-exe-archive-variants"
+
+    def matches(self, path: Path, inspector: ArchiveSignatureInspector) -> bool:
+        _ = inspector
+        return path.suffix.lower() in self._allowed
+
+    def build(
+        self,
+        path: Path,
+        *,
+        workspace: Path,
+        inspector: ArchiveSignatureInspector,
+        dry_run: bool,
+    ) -> list[VariantArtifact]:
+        _ = inspector
+        factory = _ArtifactFactory(workspace / self.name())
+        out: list[VariantArtifact] = []
+        for suffix in (".rar", ".zip", ".7z"):
+            out.append(
+                factory.make_copy(
+                    path,
+                    relative_name=f"{path.stem}{suffix}",
+                    rule_name=self.name(),
+                    suffix_changed=True,
+                    dry_run=dry_run,
+                )
+            )
+        return out
+
+
+class _TrailingScZipRule(PostExtractRule):
+    def name(self) -> str:
+        return "trim-sc-zip"
+
+    def collect(
+        self,
+        folder: Path,
+        *,
+        workspace: Path,
+        inspector: ArchiveSignatureInspector,
+        min_archive_bytes: int,
+        final_single_bytes: int,
+        dry_run: bool,
+    ) -> list[Path]:
+        _ = (inspector, min_archive_bytes, final_single_bytes)
+        out: list[Path] = []
+        factory = _ArtifactFactory(workspace / self.name())
+        for file in folder.rglob("*"):
+            if not file.is_file():
+                continue
+            base_name = file.name
+            if not base_name.lower().endswith("sc"):
+                continue
+            trimmed = base_name[:-2].rstrip()
+            if not trimmed:
+                continue
+            artifact = factory.make_copy(
+                file,
+                relative_name=f"{trimmed}.zip",
+                rule_name=self.name(),
+                suffix_changed=True,
+                dry_run=dry_run,
+            )
+            out.append(artifact.path)
+        return out
+
+
+class _NestedArchivePostRule(PostExtractRule):
+    def name(self) -> str:
+        return "nested-archives"
+
+    def collect(
+        self,
+        folder: Path,
+        *,
+        workspace: Path,
+        inspector: ArchiveSignatureInspector,
+        min_archive_bytes: int,
+        final_single_bytes: int,
+        dry_run: bool,
+    ) -> list[Path]:
+        _ = (workspace, dry_run)
+        files = [p for p in folder.rglob("*") if p.is_file()]
+        if not files:
+            return []
+
+        def size_of(path: Path) -> int:
+            try:
+                return path.stat().st_size
+            except OSError:
+                return 0
+
+        direct_files = [p for p in folder.iterdir() if p.is_file()]
+        direct_dirs = [p for p in folder.iterdir() if p.is_dir()]
+        if len(direct_files) == 1 and not direct_dirs:
+            only = direct_files[0]
+            if inspector.looks_like_archive(only) or size_of(only) >= max(min_archive_bytes, final_single_bytes):
+                return [only]
+
+        archive_like = [p for p in files if inspector.looks_like_archive(p)]
+        archive_like.sort(key=size_of, reverse=True)
+        if archive_like:
+            return archive_like[:5]
+
+        big_files = [p for p in files if size_of(p) >= final_single_bytes]
+        big_files.sort(key=size_of, reverse=True)
+        return big_files[:1]
+
+
+class ApateRestorer(RestorerStrategy):
+    def __init__(self, inspector: ArchiveSignatureInspector):
+        self._inspector = inspector
+        self._rules: tuple[RestoreRule, ...] = (_ApateRestoreRule(rounds=1, require_three=False, append_mp4_if_missing=False),)
+
+    def can_handle(self, path: Path) -> bool:
+        return any(rule.matches(path, self._inspector) for rule in self._rules)
+
+    def restore(self, path: Path, *, workspace: Path | None = None, dry_run: bool = False) -> list[Path]:
+        if workspace is None:
+            return [path]
+        out: list[Path] = []
+        for rule in self._rules:
+            if rule.matches(path, self._inspector):
+                out.extend(artifact.path for artifact in rule.apply(path, workspace=workspace, inspector=self._inspector, dry_run=dry_run))
+        return out
+
+
+class RepeatedApateRestorer(RestorerStrategy):
+    def __init__(self, inspector: ArchiveSignatureInspector, *, rounds: int = 3):
+        self._inspector = inspector
+        self._rules: tuple[RestoreRule, ...] = (
+            _ApateRestoreRule(rounds=max(2, rounds), require_three=True, append_mp4_if_missing=True),
+        )
+
+    def can_handle(self, path: Path) -> bool:
+        return any(rule.matches(path, self._inspector) for rule in self._rules)
+
+    def restore(self, path: Path, *, workspace: Path | None = None, dry_run: bool = False) -> list[Path]:
+        if workspace is None:
+            return [path]
+        out: list[Path] = []
+        for rule in self._rules:
+            if rule.matches(path, self._inspector):
+                out.extend(artifact.path for artifact in rule.apply(path, workspace=workspace, inspector=self._inspector, dry_run=dry_run))
+        return out
+
+
+class SuffixVariantBuilder(RestorerStrategy):
+    def __init__(self, inspector: ArchiveSignatureInspector, rules: list[RenameVariantRule] | None = None):
+        self._inspector = inspector
+        self._rules = tuple(
+            rules
+            or [
+                _TrimEmbeddedArchiveSuffixRule(),
+                _SignatureRenameRule(),
+                _MediaZipRule(),
+                _NoSuffixZipRule(),
+                _JpgExeArchiveRule(),
+            ]
+        )
+
+    def can_handle(self, path: Path) -> bool:
+        return any(rule.matches(path, self._inspector) for rule in self._rules)
+
+    def restore(self, path: Path, *, workspace: Path | None = None, dry_run: bool = False) -> list[Path]:
+        if workspace is None:
+            return [path]
+        out: list[Path] = []
+        for rule in self._rules:
+            if rule.matches(path, self._inspector):
+                out.extend(artifact.path for artifact in rule.build(path, workspace=workspace, inspector=self._inspector, dry_run=dry_run))
+        return out
 
 
 class PassthroughRestorer(RestorerStrategy):
     def can_handle(self, path: Path) -> bool:
         return True
 
-    def restore(self, path: Path) -> list[Path]:
+    def restore(self, path: Path, *, workspace: Path | None = None, dry_run: bool = False) -> list[Path]:
+        _ = (workspace, dry_run)
         return [path]
 
 
 class RestorationService:
-    def __init__(self, restorers: list[RestorerStrategy]):
+    def __init__(
+        self,
+        restorers: list[RestorerStrategy],
+        *,
+        post_rules: list[PostExtractRule] | None = None,
+        inspector: ArchiveSignatureInspector | None = None,
+    ):
         self._restorers = restorers
+        self._post_rules = tuple(post_rules or [_TrailingScZipRule(), _NestedArchivePostRule()])
+        self._inspector = inspector or ArchiveSignatureInspector()
 
-    def restore(self, path: Path, *, dry_run: bool = False) -> list[Path]:
-        # dry_run 下同样不写文件即可
-        for r in self._restorers:
-            if r.can_handle(path):
-                return r.restore(path)
-        return [path]
+    def restore(self, path: Path, *, workspace: Path | None = None, dry_run: bool = False) -> list[Path]:
+        seen: set[Path] = set()
+        out: list[Path] = []
+        for candidate in [path]:
+            if candidate not in seen:
+                seen.add(candidate)
+                out.append(candidate)
+        for restorer in self._restorers:
+            if not restorer.can_handle(path):
+                continue
+            for candidate in restorer.restore(path, workspace=workspace, dry_run=dry_run):
+                if candidate in seen:
+                    continue
+                seen.add(candidate)
+                out.append(candidate)
+        return out
+
+    def build_post_extract_candidates(
+        self,
+        folder: Path,
+        *,
+        workspace: Path,
+        min_archive_bytes: int,
+        final_single_bytes: int,
+        dry_run: bool = False,
+    ) -> list[Path]:
+        seen: set[Path] = set()
+        out: list[Path] = []
+        for rule in self._post_rules:
+            for candidate in rule.collect(
+                folder,
+                workspace=workspace,
+                inspector=self._inspector,
+                min_archive_bytes=min_archive_bytes,
+                final_single_bytes=final_single_bytes,
+                dry_run=dry_run,
+            ):
+                if candidate in seen:
+                    continue
+                seen.add(candidate)
+                out.append(candidate)
+        return out

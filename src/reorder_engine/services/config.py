@@ -64,11 +64,21 @@ class BetaDeepExtractConfig:
 
 
 @dataclass(frozen=True)
+class BetaRulesConfig:
+    max_restore_rounds: int
+
+
+@dataclass(frozen=True)
 class BetaConfig:
     flatten: BetaFlattenConfig
     exclude: BetaExcludeConfig
     guess_suffixes: tuple[str, ...]
     log_passwords: bool = False
+    extractor_order: tuple[str, ...] = ("7z", "unrar", "bandizip")
+    preserve_payload_names: bool = True
+    duplicates_dir_name: str = "_duplicates"
+    path_compress: bool = True
+    rules: BetaRulesConfig = BetaRulesConfig(max_restore_rounds=3)
     deep_extract: BetaDeepExtractConfig = BetaDeepExtractConfig(
         enabled=False,
         max_depth=4,
@@ -135,6 +145,11 @@ class ConfigManager:
                 "exclude": {"names": ["config.json"], "exts": [".bat", ".cmd", ".ps1", ".py", ".json", ".md", ".log"]},
                 "guess_suffixes": [".7z", ".zip", ".rar", ".tar", ".tgz", ".tar.gz", ".gz", ".bz2", ".xz"],
                 "log_passwords": False,
+                "extractor_order": ["7z", "unrar", "bandizip"],
+                "preserve_payload_names": True,
+                "duplicates_dir_name": "_duplicates",
+                "path_compress": True,
+                "rules": {"max_restore_rounds": 3},
                 "deep_extract": {"enabled": False, "max_depth": 4, "min_archive_mb": 100, "final_single_mb": 200},
             },
             "paths": {
@@ -221,6 +236,11 @@ class ConfigManager:
         exclude = beta.get("exclude", {})
         guess_suffixes = beta.get("guess_suffixes", [".7z", ".zip", ".rar"])
         log_passwords = bool(beta.get("log_passwords", False))
+        extractor_order = beta.get("extractor_order", ["7z", "unrar", "bandizip"])
+        preserve_payload_names = bool(beta.get("preserve_payload_names", True))
+        duplicates_dir_name = str(beta.get("duplicates_dir_name", "_duplicates") or "_duplicates")
+        path_compress = bool(beta.get("path_compress", True))
+        rules_raw = beta.get("rules", {}) or {}
         deep = beta.get("deep_extract", {}) or {}
         deep_cfg = BetaDeepExtractConfig(
             enabled=bool(deep.get("enabled", False)),
@@ -274,6 +294,11 @@ class ConfigManager:
             ),
             guess_suffixes=tuple(guess_suffixes) if isinstance(guess_suffixes, list) else (".7z", ".zip", ".rar"),
             log_passwords=log_passwords,
+            extractor_order=tuple(str(x) for x in extractor_order) if isinstance(extractor_order, list) else ("7z", "unrar", "bandizip"),
+            preserve_payload_names=preserve_payload_names,
+            duplicates_dir_name=duplicates_dir_name,
+            path_compress=path_compress,
+            rules=BetaRulesConfig(max_restore_rounds=int(rules_raw.get("max_restore_rounds", 3))),
             deep_extract=deep_cfg,
         )
 
