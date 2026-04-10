@@ -35,19 +35,17 @@ class RestoringTests(unittest.TestCase):
 
             self.assertEqual(probe.kind, ArchiveKind.UNKNOWN)
 
-    def test_suffix_variant_builder_changes_only_suffix(self) -> None:
+    def test_suffix_variant_builder_plans_suffix_changes_without_copying(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             source = root / "005-04.喜怒不形于色的人_1.mp4"
             source.write_bytes(b"not really a zip")
-            workspace = root / "variants"
-
             service = RestorationService([SuffixVariantBuilder(ArchiveSignatureInspector())])
-            candidates = service.restore(source, workspace=workspace)
+            plans = service.variant_plans(source)
 
-            names = {candidate.name for candidate in candidates}
-            self.assertIn("005-04.喜怒不形于色的人_1.mp4", names)
-            self.assertIn("005-04.喜怒不形于色的人_1.zip", names)
+            target_names = {plan.target.name for plan in plans}
+            self.assertIn("005-04.喜怒不形于色的人_1.zip", target_names)
+            self.assertFalse((root / "005-04.喜怒不形于色的人_1.zip").exists())
 
     def test_repeated_apate_restorer_matches_three_name(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -8,10 +8,12 @@ from typing import Callable
 from reorder_engine.domain.models import ArchiveKind, ArchiveProbe, ExtractionRequest, ExtractionResult, VolumeSet
 from reorder_engine.interfaces.grouping import VolumeGroupingStrategy
 from reorder_engine.services.archive_naming import split_archive_name
+from reorder_engine.services.cleaning import SafeRenamer
 from reorder_engine.services.config import BetaDeepExtractConfig
 from reorder_engine.services.decrypting import DecryptionService
 from reorder_engine.services.extracting import ExtractionService
 from reorder_engine.services.flattening import deepest_wrapper_dir
+from reorder_engine.services.rename_session import RenameSession
 from reorder_engine.services.restoring import RestorationService
 
 
@@ -57,6 +59,7 @@ class BetaFolderPipeline:
         self._preserve_payload_names = bool(preserve_payload_names)
         self._path_compress = bool(path_compress)
         self._archive_min_mb = max(1, int(archive_min_mb))
+        self._renamer = SafeRenamer()
 
     def run(self, *, dry_run: bool = False) -> BetaRunResult:
         success_dir = self._folder / "success"
@@ -97,7 +100,7 @@ class BetaFolderPipeline:
                 )
                 if deep_ok:
                     ok += 1
-                    self._move_original_members(volume_set, archives_dir, package_name=package_name, dry_run=dry_run)
+                    self._move_original_members(result.volume_set, archives_dir, package_name=package_name, dry_run=dry_run)
                     if message:
                         self._emit(f"FINAL: {message}")
                     if final_dir is not None:
@@ -146,15 +149,11 @@ class BetaFolderPipeline:
     ) -> tuple[ExtractionResult, Path | None]:
         last = ExtractionResult(volume_set=vs, ok=False, tool="none", message="No candidate executed")
         for index, candidate in enumerate(candidates, start=1):
-            attempt_dir = layer_root / f"attempt_{index}"
-            probe = self._restore.identify(candidate)
             request_vs = vs if len(vs.members) > 1 else VolumeSet(entry=candidate, members=(candidate,), group_key=vs.group_key)
-            req = ExtractionRequest(volume_set=request_vs, output_dir=attempt_dir, passwords=self._passwords)
-            res = self._extractor.extract_one(req, preference="auto", probe=probe, dry_run=dry_run)
+            res, out_dir = self._extract_with_variant_attempts(request_vs, layer_root / f"attempt_{index}", dry_run=dry_run)
             last = res
-            self._emit_extract_result("EXTRACT", request_vs.entry.name, res)
             if res.ok:
-                return res, attempt_dir
+                return res, out_dir
         return last, None
 
     def _continue_after_extract(
@@ -195,17 +194,11 @@ class BetaFolderPipeline:
 
             extracted = False
             for index, candidate in enumerate(candidates, start=1):
-                target_dir = package_root / f"L{depth + 1}" / self._safe_name(candidate.name)
-                probe = self._restore.identify(candidate)
-                req = ExtractionRequest(
-                    volume_set=VolumeSet(entry=candidate, members=(candidate,), group_key=f"{package_name}:{depth}:{index}"),
-                    output_dir=target_dir,
-                    passwords=self._passwords,
-                )
-                res = self._extractor.extract_one(req, preference="auto", probe=probe, dry_run=dry_run)
-                self._emit_extract_result("DEEP-EXTRACT", candidate.name, res)
+                request_vs = VolumeSet(entry=candidate, members=(candidate,), group_key=f"{package_name}:{depth}:{index}")
+                target_dir_root = package_root / f"L{depth + 1}" / self._safe_name(candidate.name)
+                res, target_dir = self._extract_with_variant_attempts(request_vs, target_dir_root, dry_run=dry_run, prefix="DEEP-EXTRACT")
                 if res.ok:
-                    current_dir = target_dir
+                    current_dir = target_dir if target_dir is not None else target_dir_root
                     extracted = True
                     break
             if not extracted:
@@ -244,6 +237,60 @@ class BetaFolderPipeline:
                 seen.add(derived)
                 out.append(derived)
         return out
+
+    def _extract_with_variant_attempts(
+        self,
+        volume_set: VolumeSet,
+        base_output_dir: Path,
+        *,
+        dry_run: bool,
+        prefix: str = "EXTRACT",
+    ) -> tuple[ExtractionResult, Path | None]:
+        probe = self._restore.identify(volume_set.entry)
+        attempt_vs = volume_set
+        direct_result, direct_dir = self._run_extract_attempt(attempt_vs, probe=probe, output_dir=base_output_dir, dry_run=dry_run, prefix=prefix)
+        if direct_result.ok or len(volume_set.members) > 1:
+            return direct_result, direct_dir
+
+        last = direct_result
+        variant_plans = self._restore.variant_plans(volume_set.entry)
+        for variant_index, plan in enumerate(variant_plans, start=1):
+            if plan.target.exists() and plan.target != volume_set.entry:
+                self._emit(f"RENAME-SKIP: target exists {plan.target.name} rule={plan.rule_name}")
+                continue
+            session = RenameSession.create(self._renamer)
+            renamed_entry = session.rename(volume_set.entry, plan.target, dry_run=dry_run)
+            renamed_vs = VolumeSet(entry=renamed_entry, members=(renamed_entry,), group_key=volume_set.group_key)
+            variant_probe = self._restore.identify(renamed_entry)
+            self._emit(f"RENAME-TRY: {volume_set.entry.name} -> {renamed_entry.name} rule={plan.rule_name}")
+            result, out_dir = self._run_extract_attempt(
+                renamed_vs,
+                probe=variant_probe,
+                output_dir=base_output_dir.parent / f"{base_output_dir.name}_variant_{variant_index}",
+                dry_run=dry_run,
+                prefix=prefix,
+            )
+            last = result
+            if result.ok:
+                return result, out_dir
+            session.rollback_best_effort(dry_run=dry_run)
+            self._emit(f"RENAME-ROLLBACK: {renamed_entry.name} -> {volume_set.entry.name} rule={plan.rule_name}")
+
+        return last, None
+
+    def _run_extract_attempt(
+        self,
+        volume_set: VolumeSet,
+        *,
+        probe: ArchiveProbe,
+        output_dir: Path,
+        dry_run: bool,
+        prefix: str,
+    ) -> tuple[ExtractionResult, Path | None]:
+        req = ExtractionRequest(volume_set=volume_set, output_dir=output_dir, passwords=self._passwords)
+        result = self._extractor.extract_one(req, preference="auto", probe=probe, dry_run=dry_run)
+        self._emit_extract_result(prefix, volume_set.entry.name, result)
+        return result, (output_dir if result.ok else None)
 
     def _candidate_chain(self, path: Path, *, probe: ArchiveProbe, workspace: Path, dry_run: bool) -> list[Path]:
         if probe.kind == ArchiveKind.ARCHIVE:

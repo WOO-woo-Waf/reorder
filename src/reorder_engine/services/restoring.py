@@ -8,7 +8,7 @@ from abc import ABC, abstractmethod
 from functools import lru_cache
 from pathlib import Path
 
-from reorder_engine.domain.models import ArchiveKind, ArchiveProbe, CollisionPolicy, VariantArtifact
+from reorder_engine.domain.models import ArchiveKind, ArchiveProbe, RenameVariantPlan, VariantArtifact
 from reorder_engine.interfaces.decrypting import RestorerStrategy
 
 
@@ -219,32 +219,6 @@ class ArchiveSignatureInspector:
         return None
 
 
-class _ArtifactFactory:
-    def __init__(self, base_dir: Path):
-        self._base_dir = base_dir
-
-    def make_copy(
-        self,
-        src: Path,
-        *,
-        relative_name: str,
-        rule_name: str,
-        suffix_changed: bool,
-        dry_run: bool,
-    ) -> VariantArtifact:
-        dst = self._base_dir / relative_name
-        if dst.exists():
-            dst = self._duplicates_target(dst, rule_name)
-        if not dry_run:
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dst)
-        return VariantArtifact(source=src, path=dst, rule_name=rule_name, suffix_changed=suffix_changed, keep=True)
-
-    def _duplicates_target(self, dst: Path, rule_name: str) -> Path:
-        duplicate_root = self._base_dir / CollisionPolicy.DUPLICATES_DIR.value / rule_name
-        return duplicate_root / dst.name
-
-
 class RestoreRule(ABC):
     @abstractmethod
     def name(self) -> str:
@@ -276,14 +250,12 @@ class RenameVariantRule(ABC):
         ...
 
     @abstractmethod
-    def build(
+    def plan(
         self,
         path: Path,
         *,
-        workspace: Path,
         inspector: ArchiveSignatureInspector,
-        dry_run: bool,
-    ) -> list[VariantArtifact]:
+    ) -> list[RenameVariantPlan]:
         ...
 
 
@@ -361,25 +333,20 @@ class _TrimEmbeddedArchiveSuffixRule(RenameVariantRule):
     def matches(self, path: Path, inspector: ArchiveSignatureInspector) -> bool:
         return inspector.trim_embedded_archive_name(path.name) is not None
 
-    def build(
+    def plan(
         self,
         path: Path,
         *,
-        workspace: Path,
         inspector: ArchiveSignatureInspector,
-        dry_run: bool,
-    ) -> list[VariantArtifact]:
+    ) -> list[RenameVariantPlan]:
         trimmed = inspector.trim_embedded_archive_name(path.name)
         if trimmed is None:
             return []
-        factory = _ArtifactFactory(workspace / self.name())
         return [
-            factory.make_copy(
-                path,
-                relative_name=trimmed,
+            RenameVariantPlan(
+                source=path,
+                target=path.with_name(trimmed),
                 rule_name=self.name(),
-                suffix_changed=True,
-                dry_run=dry_run,
             )
         ]
 
@@ -392,26 +359,21 @@ class _SignatureRenameRule(RenameVariantRule):
         detected = inspector.detect_archive_suffix(path)
         return detected is not None and not path.name.lower().endswith(detected)
 
-    def build(
+    def plan(
         self,
         path: Path,
         *,
-        workspace: Path,
         inspector: ArchiveSignatureInspector,
-        dry_run: bool,
-    ) -> list[VariantArtifact]:
+    ) -> list[RenameVariantPlan]:
         detected = inspector.detect_archive_suffix(path)
         if detected is None:
             return []
         target_name = f"{path.name}{detected}" if not path.suffix else f"{path.stem}{detected}"
-        factory = _ArtifactFactory(workspace / self.name())
         return [
-            factory.make_copy(
-                path,
-                relative_name=target_name,
+            RenameVariantPlan(
+                source=path,
+                target=path.with_name(target_name),
                 rule_name=self.name(),
-                suffix_changed=True,
-                dry_run=dry_run,
             )
         ]
 
@@ -426,23 +388,18 @@ class _MediaZipRule(RenameVariantRule):
         probe = inspector.probe_path(path)
         return probe.kind == ArchiveKind.UNKNOWN and path.suffix.lower() in self._suffixes
 
-    def build(
+    def plan(
         self,
         path: Path,
         *,
-        workspace: Path,
         inspector: ArchiveSignatureInspector,
-        dry_run: bool,
-    ) -> list[VariantArtifact]:
+    ) -> list[RenameVariantPlan]:
         _ = inspector
-        factory = _ArtifactFactory(workspace / self.name())
         return [
-            factory.make_copy(
-                path,
-                relative_name=f"{path.stem}.zip",
+            RenameVariantPlan(
+                source=path,
+                target=path.with_name(f"{path.stem}.zip"),
                 rule_name=self.name(),
-                suffix_changed=True,
-                dry_run=dry_run,
             )
         ]
 
@@ -454,23 +411,18 @@ class _NoSuffixZipRule(RenameVariantRule):
     def matches(self, path: Path, inspector: ArchiveSignatureInspector) -> bool:
         return inspector.probe_path(path).kind == ArchiveKind.UNKNOWN and not path.suffix
 
-    def build(
+    def plan(
         self,
         path: Path,
         *,
-        workspace: Path,
         inspector: ArchiveSignatureInspector,
-        dry_run: bool,
-    ) -> list[VariantArtifact]:
+    ) -> list[RenameVariantPlan]:
         _ = inspector
-        factory = _ArtifactFactory(workspace / self.name())
         return [
-            factory.make_copy(
-                path,
-                relative_name=f"{path.name}.zip",
+            RenameVariantPlan(
+                source=path,
+                target=path.with_name(f"{path.name}.zip"),
                 rule_name=self.name(),
-                suffix_changed=True,
-                dry_run=dry_run,
             )
         ]
 
@@ -485,28 +437,44 @@ class _JpgExeArchiveRule(RenameVariantRule):
         probe = inspector.probe_path(path)
         return probe.kind == ArchiveKind.UNKNOWN and path.suffix.lower() in self._allowed
 
-    def build(
+    def plan(
         self,
         path: Path,
         *,
-        workspace: Path,
         inspector: ArchiveSignatureInspector,
-        dry_run: bool,
-    ) -> list[VariantArtifact]:
+    ) -> list[RenameVariantPlan]:
         _ = inspector
-        factory = _ArtifactFactory(workspace / self.name())
-        out: list[VariantArtifact] = []
+        out: list[RenameVariantPlan] = []
         for suffix in (".rar", ".zip", ".7z"):
             out.append(
-                factory.make_copy(
-                    path,
-                    relative_name=f"{path.stem}{suffix}",
+                RenameVariantPlan(
+                    source=path,
+                    target=path.with_name(f"{path.stem}{suffix}"),
                     rule_name=self.name(),
-                    suffix_changed=True,
-                    dry_run=dry_run,
                 )
             )
         return out
+
+
+class _TrimScToZipRule(RenameVariantRule):
+    def name(self) -> str:
+        return "trim-sc-to-zip"
+
+    def matches(self, path: Path, inspector: ArchiveSignatureInspector) -> bool:
+        _ = inspector
+        return path.is_file() and path.name.lower().endswith("sc")
+
+    def plan(
+        self,
+        path: Path,
+        *,
+        inspector: ArchiveSignatureInspector,
+    ) -> list[RenameVariantPlan]:
+        _ = inspector
+        trimmed = path.name[:-2].rstrip()
+        if not trimmed:
+            return []
+        return [RenameVariantPlan(source=path, target=path.with_name(f"{trimmed}.zip"), rule_name=self.name())]
 
 
 class _TrailingScZipRule(PostExtractRule):
@@ -525,24 +493,13 @@ class _TrailingScZipRule(PostExtractRule):
     ) -> list[Path]:
         _ = (inspector, min_archive_bytes, final_single_bytes)
         out: list[Path] = []
-        factory = _ArtifactFactory(workspace / self.name())
         for file in folder.rglob("*"):
             if not file.is_file():
                 continue
             base_name = file.name
             if not base_name.lower().endswith("sc"):
                 continue
-            trimmed = base_name[:-2].rstrip()
-            if not trimmed:
-                continue
-            artifact = factory.make_copy(
-                file,
-                relative_name=f"{trimmed}.zip",
-                rule_name=self.name(),
-                suffix_changed=True,
-                dry_run=dry_run,
-            )
-            out.append(artifact.path)
+            out.append(file)
         return out
 
 
@@ -632,6 +589,7 @@ class SuffixVariantBuilder(RestorerStrategy):
         self._rules = tuple(
             rules
             or [
+                _TrimScToZipRule(),
                 _TrimEmbeddedArchiveSuffixRule(),
                 _SignatureRenameRule(),
                 _MediaZipRule(),
@@ -644,12 +602,20 @@ class SuffixVariantBuilder(RestorerStrategy):
         return any(rule.matches(path, self._inspector) for rule in self._rules)
 
     def restore(self, path: Path, *, workspace: Path | None = None, dry_run: bool = False) -> list[Path]:
-        if workspace is None:
-            return [path]
-        out: list[Path] = []
+        _ = (workspace, dry_run)
+        return [path]
+
+    def plan_variants(self, path: Path) -> list[RenameVariantPlan]:
+        out: list[RenameVariantPlan] = []
+        seen: set[Path] = set()
         for rule in self._rules:
-            if rule.matches(path, self._inspector):
-                out.extend(artifact.path for artifact in rule.build(path, workspace=workspace, inspector=self._inspector, dry_run=dry_run))
+            if not rule.matches(path, self._inspector):
+                continue
+            for plan in rule.plan(path, inspector=self._inspector):
+                if plan.target == path or plan.target in seen:
+                    continue
+                seen.add(plan.target)
+                out.append(plan)
         return out
 
 
@@ -693,6 +659,20 @@ class RestorationService:
 
     def identify(self, path: Path) -> ArchiveProbe:
         return self._inspector.probe_path(path)
+
+    def variant_plans(self, path: Path) -> list[RenameVariantPlan]:
+        out: list[RenameVariantPlan] = []
+        seen: set[Path] = set()
+        for restorer in self._restorers:
+            plan_fn = getattr(restorer, "plan_variants", None)
+            if not callable(plan_fn):
+                continue
+            for plan in plan_fn(path):
+                if plan.target in seen:
+                    continue
+                seen.add(plan.target)
+                out.append(plan)
+        return out
 
     def build_post_extract_candidates(
         self,

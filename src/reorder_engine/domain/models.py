@@ -106,6 +106,13 @@ class VariantArtifact:
 
 
 @dataclass(frozen=True)
+class RenameVariantPlan:
+    source: Path
+    target: Path
+    rule_name: str
+
+
+@dataclass(frozen=True)
 class TraceStep:
     stage: str
     detail: str
