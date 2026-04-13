@@ -108,12 +108,7 @@ class ArchiveSignatureInspector:
     def looks_like_archive(self, path: Path) -> bool:
         return self.looks_like_archive_name(path.name) or self.detect_archive_suffix(path) is not None
 
-    def looks_like_possible_apate_name(self, path: Path) -> bool:
-        return path.suffix.lower() in self._media_suffixes or "three" in path.name.lower() or not path.suffix
-
     def probe_apate(self, path: Path) -> ArchiveProbe | None:
-        if not self.looks_like_possible_apate_name(path):
-            return None
         probe = _load_apate_probe()(path)
         if not probe.ok:
             return None
@@ -279,17 +274,13 @@ class PostExtractRule(ABC):
 
 
 class _ApateRestoreRule(RestoreRule):
-    def __init__(self, *, rounds: int, require_three: bool, append_mp4_if_missing: bool):
-        self._rounds = rounds
-        self._require_three = require_three
-        self._append_mp4_if_missing = append_mp4_if_missing
+    def __init__(self, *, rounds: int):
+        self._rounds = max(1, rounds)
 
     def name(self) -> str:
-        return "apate-three" if self._require_three else "apate-once"
+        return "apate-reveal"
 
     def matches(self, path: Path, inspector: ArchiveSignatureInspector) -> bool:
-        if self._require_three and "three" not in path.name.lower():
-            return False
         return inspector.probe_apate(path) is not None
 
     def apply(
@@ -300,16 +291,13 @@ class _ApateRestoreRule(RestoreRule):
         inspector: ArchiveSignatureInspector,
         dry_run: bool,
     ) -> list[VariantArtifact]:
-        _ = inspector
+        _ = workspace
         reveal = _load_apate_reveal()
         outputs: list[VariantArtifact] = []
         current = path
-        for index in range(1, self._rounds + 1):
-            if self._append_mp4_if_missing and not current.suffix:
-                current_with_suffix = current.with_name(f"{current.name}.mp4")
-                if not dry_run:
-                    current.rename(current_with_suffix)
-                current = current_with_suffix
+        for _index in range(1, self._rounds + 1):
+            if inspector.probe_apate(current) is None:
+                break
             ok = True
             if not dry_run:
                 ok = reveal(current, quiet=True, in_place=True)
@@ -324,6 +312,41 @@ class _ApateRestoreRule(RestoreRule):
             )
             outputs.append(artifact)
         return outputs
+
+
+class _UnknownArchiveVariantsRule(RenameVariantRule):
+    def name(self) -> str:
+        return "unknown-archive-variants"
+
+    def matches(self, path: Path, inspector: ArchiveSignatureInspector) -> bool:
+        probe = inspector.probe_path(path)
+        return probe.kind == ArchiveKind.UNKNOWN
+
+    def plan(
+        self,
+        path: Path,
+        *,
+        inspector: ArchiveSignatureInspector,
+    ) -> list[RenameVariantPlan]:
+        _ = inspector
+        return [
+            RenameVariantPlan(
+                source=path,
+                target=path.with_name(f"{path.stem}.7z" if path.suffix else f"{path.name}.7z"),
+                rule_name=self.name(),
+                preferred_tool="bandizip",
+            ),
+            RenameVariantPlan(
+                source=path,
+                target=path.with_name(f"{path.stem}.zip" if path.suffix else f"{path.name}.zip"),
+                rule_name=self.name(),
+            ),
+            RenameVariantPlan(
+                source=path,
+                target=path.with_name(f"{path.stem}.rar" if path.suffix else f"{path.name}.rar"),
+                rule_name=self.name(),
+            ),
+        ]
 
 
 class _TrimEmbeddedArchiveSuffixRule(RenameVariantRule):
@@ -573,9 +596,9 @@ class _NestedArchivePostRule(PostExtractRule):
 
 
 class ApateRestorer(RestorerStrategy):
-    def __init__(self, inspector: ArchiveSignatureInspector):
+    def __init__(self, inspector: ArchiveSignatureInspector, *, rounds: int = 3):
         self._inspector = inspector
-        self._rules: tuple[RestoreRule, ...] = (_ApateRestoreRule(rounds=1, require_three=False, append_mp4_if_missing=False),)
+        self._rules: tuple[RestoreRule, ...] = (_ApateRestoreRule(rounds=rounds),)
 
     def can_handle(self, path: Path) -> bool:
         return any(rule.matches(path, self._inspector) for rule in self._rules)
@@ -594,7 +617,7 @@ class RepeatedApateRestorer(RestorerStrategy):
     def __init__(self, inspector: ArchiveSignatureInspector, *, rounds: int = 3):
         self._inspector = inspector
         self._rules: tuple[RestoreRule, ...] = (
-            _ApateRestoreRule(rounds=max(2, rounds), require_three=True, append_mp4_if_missing=True),
+            _ApateRestoreRule(rounds=max(1, rounds)),
         )
 
     def can_handle(self, path: Path) -> bool:
@@ -619,10 +642,7 @@ class SuffixVariantBuilder(RestorerStrategy):
                 _TrimScToZipRule(),
                 _TrimEmbeddedArchiveSuffixRule(),
                 _SignatureRenameRule(),
-                _Media7zBandizipRule(),
-                _MediaZipRule(),
-                _NoSuffixZipRule(),
-                _JpgExeArchiveRule(),
+                _UnknownArchiveVariantsRule(),
             ]
         )
 

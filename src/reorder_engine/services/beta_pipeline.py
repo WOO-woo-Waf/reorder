@@ -67,12 +67,12 @@ class BetaFolderPipeline:
         archives_dir = success_dir / "archives"
         intermediate_dir = self._folder / "intermediate"
         final_root = self._folder / "final"
-        failed_dir = self._folder / "failed"
+        error_dir = self._folder / "error_files"
         if not dry_run:
             archives_dir.mkdir(parents=True, exist_ok=True)
             intermediate_dir.mkdir(parents=True, exist_ok=True)
             final_root.mkdir(parents=True, exist_ok=True)
-            failed_dir.mkdir(parents=True, exist_ok=True)
+            error_dir.mkdir(parents=True, exist_ok=True)
 
         all_files = [p for p in self._folder.glob("*") if p.is_file()]
         all_files = [p for p in all_files if p.name not in self._exclude_names and p.suffix.lower() not in self._exclude_exts]
@@ -82,7 +82,7 @@ class BetaFolderPipeline:
         ok = 0
         fail = 0
         for volume_set in volume_sets:
-            if self._is_in_result_dirs(volume_set, {success_dir, intermediate_dir, final_root, failed_dir}):
+            if self._is_in_result_dirs(volume_set, {success_dir, intermediate_dir, final_root, error_dir}):
                 continue
 
             package_name = self._package_name(volume_set.entry.name)
@@ -113,14 +113,14 @@ class BetaFolderPipeline:
                 continue
 
             fail += 1
-            self._move_original_members(volume_set, failed_dir, package_name=package_name, dry_run=dry_run)
+            self._move_original_members(volume_set, error_dir, package_name=package_name, dry_run=dry_run)
             if result.message:
-                self._emit(f"FAIL: {self._summarize_message(result.message)}")
+                self._emit(f"ERROR-FILE: {self._summarize_message(result.message)}")
 
         if not dry_run:
             self._remove_empty_dirs(intermediate_dir)
             self._remove_empty_dirs(final_root)
-            self._remove_empty_dirs(failed_dir)
+            self._remove_empty_dirs(error_dir)
             self._remove_empty_dirs(success_dir)
         return BetaRunResult(ok_count=ok, fail_count=fail, total=ok + fail)
 

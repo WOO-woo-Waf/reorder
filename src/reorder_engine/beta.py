@@ -18,7 +18,6 @@ from reorder_engine.services.passwords import PasswordRepository
 from reorder_engine.services.restoring import (
     ApateRestorer,
     ArchiveSignatureInspector,
-    RepeatedApateRestorer,
     RestorationService,
     SuffixVariantBuilder,
 )
@@ -199,8 +198,7 @@ def main(argv: list[str] | None = None) -> int:
     inspector = ArchiveSignatureInspector()
     restore_service = RestorationService(
         [
-            RepeatedApateRestorer(inspector, rounds=cfg.beta.rules.max_restore_rounds),
-            ApateRestorer(inspector),
+            ApateRestorer(inspector, rounds=cfg.beta.rules.max_restore_rounds),
             SuffixVariantBuilder(inspector),
         ],
         inspector=inspector,

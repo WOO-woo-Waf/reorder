@@ -65,7 +65,7 @@ def flatten_safety_check(
 
 class FolderFlattener:
     def flatten(self, root: Path, *, dry_run: bool = False, exclude_dirs: set[str] | None = None) -> list[FlattenMoveRecord]:
-        user_exclude = exclude_dirs or {"success", "failed", "tools", "__pycache__", "intermediate", "final"}
+        user_exclude = exclude_dirs or {"success", "failed", "error_files", "tools", "__pycache__", "intermediate", "final"}
         excluded = set(user_exclude) | set(_MANDATORY_EXCLUDE_DIR_PARTS)
         moves: list[FlattenMoveRecord] = []
 
@@ -89,6 +89,8 @@ class FolderFlattener:
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(path), str(dst))
 
+        if not dry_run:
+            self._remove_empty_dirs(root, excluded=excluded)
         return moves
 
     def _duplicate_target(self, root: Path, src: Path) -> Path:
@@ -101,6 +103,20 @@ class FolderFlattener:
             if not nested.exists():
                 return nested
         return duplicate_root / src.name
+
+    def _remove_empty_dirs(self, root: Path, *, excluded: set[str]) -> None:
+        dirs = [path for path in root.rglob("*") if path.is_dir()]
+        for path in sorted(dirs, key=lambda item: len(item.parts), reverse=True):
+            if path == root:
+                continue
+            if any(part in excluded for part in path.parts if part != root.name):
+                continue
+            try:
+                next(path.iterdir())
+            except StopIteration:
+                path.rmdir()
+            except OSError:
+                continue
 
 
 def deepest_wrapper_dir(root: Path) -> Path:

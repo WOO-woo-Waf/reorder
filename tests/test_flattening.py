@@ -22,6 +22,8 @@ class FlatteningTests(unittest.TestCase):
             duplicate_values = [path.read_text(encoding="utf-8") for path in (root / "_duplicates").rglob("same.001")]
             self.assertIn(root_value, {"a", "b"})
             self.assertEqual(sorted(duplicate_values + [root_value]), ["a", "b"])
+            self.assertFalse((root / "a").exists())
+            self.assertFalse((root / "b").exists())
 
     def test_deepest_wrapper_dir_returns_leaf_wrapper(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
