@@ -110,6 +110,7 @@ class RenameVariantPlan:
     source: Path
     target: Path
     rule_name: str
+    preferred_tool: str | None = None
 
 
 @dataclass(frozen=True)

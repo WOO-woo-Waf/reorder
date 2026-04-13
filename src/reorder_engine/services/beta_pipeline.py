@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import shutil
 from dataclasses import dataclass
+from dataclasses import replace
 from pathlib import Path
 from typing import Callable
 
@@ -262,6 +263,8 @@ class BetaFolderPipeline:
             renamed_entry = session.rename(volume_set.entry, plan.target, dry_run=dry_run)
             renamed_vs = VolumeSet(entry=renamed_entry, members=(renamed_entry,), group_key=volume_set.group_key)
             variant_probe = self._restore.identify(renamed_entry)
+            if plan.preferred_tool:
+                variant_probe = replace(variant_probe, preferred_tool=plan.preferred_tool)
             self._emit(f"RENAME-TRY: {volume_set.entry.name} -> {renamed_entry.name} rule={plan.rule_name}")
             result, out_dir = self._run_extract_attempt(
                 renamed_vs,

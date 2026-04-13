@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+import struct
 import tempfile
 import unittest
-import struct
 from pathlib import Path
 
 from reorder_engine.domain.models import ArchiveKind
-from reorder_engine.services.restoring import ArchiveSignatureInspector, ApateRestorer, RepeatedApateRestorer, RestorationService, SuffixVariantBuilder
+from reorder_engine.services.restoring import (
+    ApateRestorer,
+    ArchiveSignatureInspector,
+    RepeatedApateRestorer,
+    RestorationService,
+    SuffixVariantBuilder,
+)
 
 
 class RestoringTests(unittest.TestCase):
@@ -38,14 +44,19 @@ class RestoringTests(unittest.TestCase):
     def test_suffix_variant_builder_plans_suffix_changes_without_copying(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            source = root / "005-04.喜怒不形于色的人_1.mp4"
+            source = root / "lesson_1.mp4"
             source.write_bytes(b"not really a zip")
             service = RestorationService([SuffixVariantBuilder(ArchiveSignatureInspector())])
             plans = service.variant_plans(source)
 
             target_names = {plan.target.name for plan in plans}
-            self.assertIn("005-04.喜怒不形于色的人_1.zip", target_names)
-            self.assertFalse((root / "005-04.喜怒不形于色的人_1.zip").exists())
+            self.assertIn("lesson_1.zip", target_names)
+            self.assertIn("lesson_1.7z", target_names)
+            self.assertFalse((root / "lesson_1.zip").exists())
+            self.assertFalse((root / "lesson_1.7z").exists())
+
+            seven_zip_plan = next(plan for plan in plans if plan.target.suffix == ".7z")
+            self.assertEqual(seven_zip_plan.preferred_tool, "bandizip")
 
     def test_repeated_apate_restorer_matches_three_name(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

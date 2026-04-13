@@ -404,6 +404,33 @@ class _MediaZipRule(RenameVariantRule):
         ]
 
 
+class _Media7zBandizipRule(RenameVariantRule):
+    _suffixes = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm"}
+
+    def name(self) -> str:
+        return "media-to-7z-bandizip"
+
+    def matches(self, path: Path, inspector: ArchiveSignatureInspector) -> bool:
+        probe = inspector.probe_path(path)
+        return probe.kind == ArchiveKind.UNKNOWN and path.suffix.lower() in self._suffixes
+
+    def plan(
+        self,
+        path: Path,
+        *,
+        inspector: ArchiveSignatureInspector,
+    ) -> list[RenameVariantPlan]:
+        _ = inspector
+        return [
+            RenameVariantPlan(
+                source=path,
+                target=path.with_name(f"{path.stem}.7z"),
+                rule_name=self.name(),
+                preferred_tool="bandizip",
+            )
+        ]
+
+
 class _NoSuffixZipRule(RenameVariantRule):
     def name(self) -> str:
         return "no-suffix-to-zip"
@@ -592,6 +619,7 @@ class SuffixVariantBuilder(RestorerStrategy):
                 _TrimScToZipRule(),
                 _TrimEmbeddedArchiveSuffixRule(),
                 _SignatureRenameRule(),
+                _Media7zBandizipRule(),
                 _MediaZipRule(),
                 _NoSuffixZipRule(),
                 _JpgExeArchiveRule(),
