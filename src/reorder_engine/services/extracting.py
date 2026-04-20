@@ -134,7 +134,7 @@ class ExtractionService:
         self._compatibility_policy = compatibility_policy or DefaultToolCompatibilityPolicy()
 
     def _failure_disposition(self, message: str | None) -> str:
-        """Classify failures to reduce useless retries.
+        """Classify failures while preserving the full tool x password matrix.
 
         Returns:
         - "retry"        : keep trying passwords/tools
@@ -147,33 +147,13 @@ class ExtractionService:
 
         m = message.lower()
 
-        # Multi-volume missing parts: retrying with other tools/passwords won't help.
+        # Multi-volume missing parts are a hard stop: no password/tool matrix can fix them.
         if "missing volume" in m or "unavailable data" in m:
             return "stop_all"
 
-        # Definitive "not an archive" signals.
-        if "is not archive" in m:
-            return "stop_all"
-
-        # 7z may emit a WARNING like:
-        #   "Cannot open the file as [7z] archive" + "The file is open as [zip] archive"
-        # This is not a definitive failure (it often means the extension is misleading).
-        if "cannot open the file as" in m:
-            if "the file is open as" in m:
-                return "retry"
-            # ambiguous: try next tool rather than stopping entirely
-            return "next_tool"
-
-        # Tool-specific definitive failures.
-        if "unknown archive" in m:
-            return "stop_all"
-        if "not rar" in m and "archive" in m:
-            return "stop_all"
-        if "不是 rar" in message or "不是rar" in message:
-            return "stop_all"
-        if "没有要解压的文件" in message:
-            return "stop_all"
-
+        # For archive/tool mismatch and password-related failures, keep exhausting the
+        # full matrix across all configured tools and passwords. This avoids a single
+        # CLI's "not archive" style message from preventing later attempts that may work.
         return "retry"
 
     def extract_one(
@@ -184,12 +164,7 @@ class ExtractionService:
         probe: ArchiveProbe | None = None,
         dry_run: bool = False,
     ) -> ExtractionResult:
-        """按顺序轮流尝试（工具×密码）直到成功。
-
-        preference:
-        - auto：按注册顺序
-        - 7z/unrar/bandizip：把指定工具放到首位，其余作为 fallback
-        """
+        """Try the configured tool/password matrix until one attempt succeeds."""
 
         effective_preference = preference
         if effective_preference in {"", "auto"}:
@@ -202,13 +177,12 @@ class ExtractionService:
         if not ordered:
             return ExtractionResult(volume_set=request.volume_set, ok=False, tool="none", message="No available extractor.")
 
-        # Always probe with no password first. If the tool reports a definitive failure
-        # (e.g. missing volumes / not an archive), do not spam retries across passwords.
+        # Always probe with no password first, then exhaust the password list for each
+        # tool unless we hit a hard-stop condition such as missing split volumes.
         passwords: list[str] = [p for p in request.passwords if p]
 
         last: ExtractionResult | None = None
         for ext in ordered:
-            # 1) First attempt without password
             last = self._try_extract(ext, request, None, dry_run=dry_run)
             if last.ok:
                 return last
@@ -219,7 +193,6 @@ class ExtractionService:
             if disp == "next_tool":
                 continue
 
-            # 2) Then try passwords (if any)
             for pwd in passwords:
                 last = self._try_extract(ext, request, pwd, dry_run=dry_run)
                 if last.ok:
@@ -236,13 +209,11 @@ class ExtractionService:
         pref = preference.lower().strip()
         if pref in {"auto", ""}:
             return list(self._extractors)
-        # 把匹配的放到最前
         primary = [e for e in self._extractors if e.name() == pref]
         rest = [e for e in self._extractors if e.name() != pref]
         return primary + rest
 
     def _try_extract(self, extractor: ExtractorStrategy, request: ExtractionRequest, password: str | None, *, dry_run: bool) -> ExtractionResult:
-        # 兼容：如果 extractor 有 extract_with_password 则用它，否则回退到 extract
         fn = getattr(extractor, "extract_with_password", None)
         if callable(fn):
             return fn(request, password, dry_run=dry_run)

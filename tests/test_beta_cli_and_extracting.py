@@ -97,6 +97,47 @@ class BetaCliAndExtractingTests(unittest.TestCase):
             self.assertEqual(first.calls, [])
             self.assertEqual(second.calls, [None])
 
+    def test_extraction_service_exhausts_tool_password_matrix_on_archive_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            archive = root / "a.7z.001"
+            archive.write_text("x", encoding="utf-8")
+            vs = VolumeSet(entry=archive, members=(archive,), group_key="g")
+            req = ExtractionRequest(volume_set=vs, output_dir=root / "out", passwords=("pw1", "pw2"))
+
+            first = _FakeExtractor(
+                "7z",
+                [
+                    ExtractionResult(volume_set=vs, ok=False, tool="7z", message="is not archive"),
+                    ExtractionResult(volume_set=vs, ok=False, tool="7z", message="Cannot open encrypted archive. Wrong password?"),
+                    ExtractionResult(volume_set=vs, ok=False, tool="7z", message="Cannot open encrypted archive. Wrong password?"),
+                ],
+            )
+            second = _FakeExtractor(
+                "unrar",
+                [
+                    ExtractionResult(volume_set=vs, ok=False, tool="unrar", message="not rar archive"),
+                    ExtractionResult(volume_set=vs, ok=False, tool="unrar", message="not rar archive"),
+                    ExtractionResult(volume_set=vs, ok=False, tool="unrar", message="not rar archive"),
+                ],
+            )
+            third = _FakeExtractor(
+                "bandizip",
+                [
+                    ExtractionResult(volume_set=vs, ok=False, tool="bandizip", message="unknown archive"),
+                    ExtractionResult(volume_set=vs, ok=False, tool="bandizip", message="wrong password"),
+                    ExtractionResult(volume_set=vs, ok=False, tool="bandizip", message="wrong password"),
+                ],
+            )
+
+            result = ExtractionService([first, second, third]).extract_one(req)
+
+            self.assertFalse(result.ok)
+            self.assertEqual(result.tool, "bandizip")
+            self.assertEqual(first.calls, [None, "pw1", "pw2"])
+            self.assertEqual(second.calls, [None, "pw1", "pw2"])
+            self.assertEqual(third.calls, [None, "pw1", "pw2"])
+
 
 if __name__ == "__main__":
     unittest.main()
