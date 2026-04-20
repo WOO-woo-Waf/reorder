@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 
@@ -33,10 +34,10 @@ class ArchiveDiscoveryService:
         suf = p.suffix.lower()
         if suf in _ARCHIVE_SUFFIXES:
             return True
-        if suf in {".001", ".002", ".003"}:
+        if re.fullmatch(r"\.\d{3}", suf):
             return True
-        if re_match := p.name.lower().endswith((".7z.001", ".zip.001")):
-            return re_match
+        if p.name.lower().endswith((".7z.001", ".zip.001")):
+            return True
         if suf.startswith(".r") and len(suf) == 4 and suf[2:].isdigit():
             return True
         if suf.startswith(".z") and len(suf) == 4 and suf[2:].isdigit():

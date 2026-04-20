@@ -62,9 +62,18 @@ class DefaultVolumeGroupingStrategy(VolumeGroupingStrategy):
             base_norm = self._normalizer.normalize_for_grouping(base)
             return f"num:{base_norm}"
 
-        # 6) 单卷：按 stem+suffix
+        # 6) 主文件也要与老式分卷共用同一个分组键
+        suffix = p.suffix.lower()
+        if suffix == ".rar":
+            stem_norm = self._normalizer.normalize_for_grouping(p.stem)
+            return f"rxx:{stem_norm}.rar"
+        if suffix == ".zip":
+            stem_norm = self._normalizer.normalize_for_grouping(p.stem)
+            return f"zxx:{stem_norm}.zip"
+
+        # 7) 单卷：按 stem+suffix
         stem_norm = self._normalizer.normalize_for_grouping(p.stem)
-        return f"single:{stem_norm}{p.suffix.lower()}"
+        return f"single:{stem_norm}{suffix}"
 
     def _pick_entry(self, members: list[Path]) -> Path:
         # 优先入口：
