@@ -30,15 +30,23 @@ if "%TARGET_DIR:~-1%"=="\" set "TARGET_DIR=%TARGET_DIR:~0,-1%"
 if "%CONDA_ENV%"=="" set "CONDA_ENV=reorder"
 if "%NO_PAUSE%"=="" set "NO_PAUSE=0"
 
-echo [EXTRACT] folder=%TARGET_DIR% workdir=%WORK_DIR%
+set "MAIN_LOG=%TARGET_DIR%\reorder_engine.extract.log"
+set "TOOL_LOG=%TARGET_DIR%\reorder_engine.extract.tools.log"
+
+echo [EXTRACT] folder=%TARGET_DIR%
+echo [EXTRACT] workdir=%WORK_DIR%
+echo [EXTRACT] progress: current flow / file / tool / password
+echo [EXTRACT] main log: %MAIN_LOG%
+echo [EXTRACT] tool log: %TOOL_LOG%
+echo.
 pushd "%WORK_DIR%"
 conda run -n %CONDA_ENV% --no-capture-output python -m reorder_engine.beta ^
   --workdir "%WORK_DIR%" ^
   --folder "%TARGET_DIR%" ^
   --deep-extract ^
   --preserve-payload-names ^
-  --log "%TARGET_DIR%\reorder_engine.extract.log" ^
-  --tool-log "%TARGET_DIR%\reorder_engine.extract.tools.log"
+  --log "%MAIN_LOG%" ^
+  --tool-log "%TOOL_LOG%"
 set "RC=%errorlevel%"
 popd
 

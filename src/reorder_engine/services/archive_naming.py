@@ -37,6 +37,14 @@ def split_archive_name(filename: str) -> ArchiveNameParts:
             end=f".{m.group('idx')}",
         )
 
+    m = re.match(r"^(?P<base>.+)\.(?P<idx>\d{3})\.(?P<ext>7z|zip|rar)$", filename, flags=re.IGNORECASE)
+    if m:
+        return ArchiveNameParts(
+            base=m.group("base"),
+            mid=f".{m.group('idx')}",
+            end=f".{m.group('ext')}",
+        )
+
     # part volumes: .part01.rar / .part1.rar
     m = re.match(
         r"^(?P<base>.+)\.part(?P<idx>\d{1,3})\.(?P<ext>rar|zip|7z)$",

@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from reorder_engine.domain.models import ArchiveKind, ArchiveProbe, VolumeSet
 from reorder_engine.services.beta_pipeline import BetaFolderPipeline
 
 
@@ -37,6 +38,107 @@ class BetaPipelineTests(unittest.TestCase):
             result = self._make_pipeline(root)._is_final_output(root)
 
             self.assertEqual(result, "many-files")
+
+    def test_failure_category_splits_password_from_unknown_type(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            unknown = root / "payload.bin"
+            unknown.write_bytes(b"plain")
+            pipeline = self._make_pipeline(root)
+            pipeline._restore = type(
+                "Restore",
+                (),
+                {"identify": lambda _self, path: ArchiveProbe(path=path, kind=ArchiveKind.UNKNOWN)},
+            )()
+
+            password_result = type("Result", (), {"message": "Wrong password"})()
+            unknown_result = type("Result", (), {"message": "Can not open the file as archive"})()
+
+            self.assertEqual(pipeline._failure_category(password_result, unknown), "password_error")
+            self.assertEqual(pipeline._failure_category(unknown_result, unknown), "unknown_type")
+
+    def test_password_category_matches_tool_log_wrong_password(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            archive = root / "payload.zip"
+            archive.write_bytes(b"plain")
+            pipeline = self._make_pipeline(root)
+
+            result = type("Result", (), {"message": "ERROR: Wrong password : file.jpg"})()
+
+            self.assertEqual(pipeline._failure_category(result, archive), "password_error")
+
+    def test_force_apate_attempt_is_limited_to_unknown_media(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            media = root / "payload.jpg"
+            media.write_bytes(b"plain")
+            pipeline = self._make_pipeline(root)
+            pipeline._restore = type(
+                "Restore",
+                (),
+                {
+                    "identify": lambda _self, path: ArchiveProbe(path=path, kind=ArchiveKind.UNKNOWN),
+                    "force_apate_restore_with_rollbacks": lambda _self, path, dry_run=False: (path, ["rollback"]),
+                },
+            )()
+
+            attempt = pipeline._force_apate_attempt_if_useful(media, dry_run=False)
+
+            self.assertIsNotNone(attempt)
+            self.assertEqual(attempt.path, media)
+            self.assertEqual(attempt.rollbacks, ("rollback",))
+
+    def test_package_name_ignores_middle_numbered_volume_tail(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            self.assertEqual(self._make_pipeline(root)._package_name("3616S.001.7z"), "3616S")
+
+    def test_middle_numbered_volume_set_normalizes_to_001_suffix(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = root / "3616S.001.7z"
+            second = root / "3616S.002.7z"
+            first.write_bytes(b"one")
+            second.write_bytes(b"two")
+            pipeline = self._make_pipeline(root)
+
+            normalized = pipeline._normalize_middle_numbered_volume_set(
+                VolumeSet(entry=first, members=(first, second), group_key="split-midnum:3616s.7z"),
+                dry_run=False,
+            )
+
+            self.assertIsNotNone(normalized)
+            normalized_vs, session = normalized
+            self.assertEqual(normalized_vs.entry.name, "3616S.7z.001")
+            self.assertEqual({path.name for path in normalized_vs.members}, {"3616S.7z.001", "3616S.7z.002"})
+            self.assertFalse(first.exists())
+
+            session.rollback_best_effort()
+
+            self.assertTrue(first.exists())
+            self.assertTrue(second.exists())
+
+    def test_partial_single_output_moves_to_error_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_dir = root / "intermediate" / "pkg" / "L1" / "attempt"
+            source_dir.mkdir(parents=True)
+            payload = source_dir / "NO-3616.7zz"
+            payload.write_bytes(b"inner")
+            pipeline = self._make_pipeline(root)
+
+            moved = pipeline._move_partial_outputs_to_error(
+                source_dir,
+                root / "error_files" / "password_error",
+                package_name="3616S",
+                dry_run=False,
+            )
+
+            self.assertEqual(moved, root / "error_files" / "password_error" / "NO-3616.7zz")
+            self.assertTrue(moved.exists())
+            self.assertFalse(payload.exists())
 
 
 if __name__ == "__main__":

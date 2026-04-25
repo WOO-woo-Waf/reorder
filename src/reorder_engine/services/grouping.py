@@ -39,6 +39,11 @@ class DefaultVolumeGroupingStrategy(VolumeGroupingStrategy):
             return f"split:{base_norm}.{m.group(2).lower()}"
 
         # 2) 处理 name.part01.rar / name.part1.rar
+        m = re.match(r"^(?P<base>.+)\.(?P<idx>\d{3})\.(?P<ext>7z|zip|rar)$", name, flags=re.IGNORECASE)
+        if m:
+            base_norm = self._normalizer.normalize_for_grouping(m.group("base"))
+            return f"split-midnum:{base_norm}.{m.group('ext').lower()}"
+
         m = re.match(r"^(?P<base>.+)\.part(?P<idx>\d{1,3})\.(?P<ext>rar|zip|7z)$", name, flags=re.IGNORECASE)
         if m:
             base_norm = self._normalizer.normalize_for_grouping(m.group("base"))
@@ -84,6 +89,9 @@ class DefaultVolumeGroupingStrategy(VolumeGroupingStrategy):
         for p in members:
             low = p.name.lower()
             if low.endswith(".7z.001") or low.endswith(".zip.001"):
+                return p
+        for p in members:
+            if re.search(r"\.0*1\.(7z|zip|rar)$", p.name, flags=re.IGNORECASE):
                 return p
         for p in members:
             if re.search(r"\.part0*1\.(rar|zip|7z)$", p.name, flags=re.IGNORECASE):

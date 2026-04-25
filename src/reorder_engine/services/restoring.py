@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import importlib.util
 import re
-import shutil
 import sys
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
@@ -34,6 +34,25 @@ def _load_apate_probe():
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return getattr(module, "probe_apate_file")
+
+
+@lru_cache(maxsize=1)
+def _load_apate_redisguise():
+    script = Path(__file__).resolve().parents[3] / "tools" / "apate.py"
+    spec = importlib.util.spec_from_file_location("reorder_engine_tools_apate", script)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Unable to load Apate script: {script}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return getattr(module, "apate_official_redisguise_in_place")
+
+
+@dataclass(frozen=True)
+class ApateRollbackRecord:
+    path: Path
+    mask_head: bytes
+    rule_name: str
 
 
 class ArchiveSignatureInspector:
@@ -120,6 +139,8 @@ class ArchiveSignatureInspector:
                 archive_suffix = suffix
                 preferred_tool = self.preferred_tool_for_suffix(suffix)
                 break
+        if archive_suffix is None:
+            return None
 
         return ArchiveProbe(
             path=path,
@@ -291,11 +312,10 @@ class _ApateRestoreRule(RestoreRule):
         inspector: ArchiveSignatureInspector,
         dry_run: bool,
     ) -> list[VariantArtifact]:
-        _ = workspace
         reveal = _load_apate_reveal()
         outputs: list[VariantArtifact] = []
         current = path
-        for _index in range(1, self._rounds + 1):
+        for index in range(1, self._rounds + 1):
             if inspector.probe_apate(current) is None:
                 break
             ok = True
@@ -307,11 +327,20 @@ class _ApateRestoreRule(RestoreRule):
                 source=path,
                 path=current,
                 rule_name=self.name(),
-                suffix_changed=(current.suffix != path.suffix),
+                suffix_changed=False,
                 keep=True,
             )
             outputs.append(artifact)
+            current = artifact.path
         return outputs
+
+    def capture_rollback(self, path: Path, inspector: ArchiveSignatureInspector) -> ApateRollbackRecord | None:
+        if inspector.probe_apate(path) is None:
+            return None
+        probe = _load_apate_probe()(path)
+        if not probe.ok or not probe.mask_head:
+            return None
+        return ApateRollbackRecord(path=path, mask_head=probe.mask_head, rule_name=self.name())
 
 
 class _UnknownArchiveVariantsRule(RenameVariantRule):
@@ -612,6 +641,36 @@ class ApateRestorer(RestorerStrategy):
                 out.extend(artifact.path for artifact in rule.apply(path, workspace=workspace, inspector=self._inspector, dry_run=dry_run))
         return out
 
+    def restore_with_rollbacks(
+        self,
+        path: Path,
+        *,
+        workspace: Path | None = None,
+        dry_run: bool = False,
+    ) -> tuple[list[Path], list[ApateRollbackRecord]]:
+        if workspace is None:
+            return [path], []
+        out: list[Path] = []
+        rollbacks: list[ApateRollbackRecord] = []
+        for rule in self._rules:
+            if not rule.matches(path, self._inspector):
+                continue
+            reveal = _load_apate_reveal()
+            current = path
+            for _ in range(rule._rounds):
+                rollback = rule.capture_rollback(current, self._inspector)
+                if rollback is None:
+                    break
+                ok = True
+                if not dry_run:
+                    ok = reveal(current, quiet=True, in_place=True)
+                if not ok:
+                    break
+                if not dry_run:
+                    rollbacks.append(rollback)
+                out.append(current)
+        return out, rollbacks
+
 
 class RepeatedApateRestorer(RestorerStrategy):
     def __init__(self, inspector: ArchiveSignatureInspector, *, rounds: int = 3):
@@ -632,6 +691,19 @@ class RepeatedApateRestorer(RestorerStrategy):
                 out.extend(artifact.path for artifact in rule.apply(path, workspace=workspace, inspector=self._inspector, dry_run=dry_run))
         return out
 
+    def restore_with_rollbacks(
+        self,
+        path: Path,
+        *,
+        workspace: Path | None = None,
+        dry_run: bool = False,
+    ) -> tuple[list[Path], list[ApateRollbackRecord]]:
+        return ApateRestorer(self._inspector, rounds=self._rules[0]._rounds).restore_with_rollbacks(
+            path,
+            workspace=workspace,
+            dry_run=dry_run,
+        )
+
 
 class SuffixVariantBuilder(RestorerStrategy):
     def __init__(self, inspector: ArchiveSignatureInspector, rules: list[RenameVariantRule] | None = None):
@@ -642,6 +714,7 @@ class SuffixVariantBuilder(RestorerStrategy):
                 _TrimScToZipRule(),
                 _TrimEmbeddedArchiveSuffixRule(),
                 _SignatureRenameRule(),
+                _JpgExeArchiveRule(),
                 _UnknownArchiveVariantsRule(),
             ]
         )
@@ -704,6 +777,59 @@ class RestorationService:
                 out.append(candidate)
             return out or [path]
         return [path]
+
+    def restore_with_rollbacks(
+        self,
+        path: Path,
+        *,
+        workspace: Path | None = None,
+        dry_run: bool = False,
+    ) -> tuple[list[Path], list[ApateRollbackRecord]]:
+        for restorer in self._restorers:
+            if not restorer.can_handle(path):
+                continue
+            fn = getattr(restorer, "restore_with_rollbacks", None)
+            if callable(fn):
+                restored, rollbacks = fn(path, workspace=workspace, dry_run=dry_run)
+            else:
+                restored = restorer.restore(path, workspace=workspace, dry_run=dry_run)
+                rollbacks = []
+            if not restored:
+                return [path], rollbacks
+            out: list[Path] = []
+            seen: set[Path] = set()
+            for candidate in restored:
+                if candidate in seen:
+                    continue
+                seen.add(candidate)
+                out.append(candidate)
+            return (out or [path]), rollbacks
+        return [path], []
+
+    def rollback_apate(self, records: list[ApateRollbackRecord], *, dry_run: bool = False) -> None:
+        if dry_run:
+            return
+        redisguise = _load_apate_redisguise()
+        for record in reversed(records):
+            redisguise(record.path, mask_head=record.mask_head, quiet=True)
+
+    def force_apate_restore_with_rollbacks(
+        self,
+        path: Path,
+        *,
+        dry_run: bool = False,
+    ) -> tuple[Path | None, list[ApateRollbackRecord]]:
+        probe = _load_apate_probe()(path)
+        if not probe.ok or not probe.mask_head:
+            return None, []
+        rollback = ApateRollbackRecord(path=path, mask_head=probe.mask_head, rule_name="apate-force-reveal")
+        if dry_run:
+            return path, []
+        reveal = _load_apate_reveal()
+        ok = reveal(path, quiet=True, in_place=True)
+        if not ok:
+            return None, []
+        return path, [rollback]
 
     def identify(self, path: Path) -> ArchiveProbe:
         return self._inspector.probe_path(path)

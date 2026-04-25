@@ -26,6 +26,7 @@ class ApateProbe:
     ok: bool
     mask_head_length: int = 0
     original_head: bytes = b""
+    mask_head: bytes = b""
     reason: str | None = None
 
 
@@ -53,12 +54,23 @@ def probe_apate_file(file_path: str | os.PathLike[str], *, max_mask_length: int 
             if backup_pos <= 0:
                 return ApateProbe(ok=False, reason="invalid-layout")
 
+            handle.seek(0)
+            mask_head = handle.read(mask_head_length)
+            if len(mask_head) != mask_head_length:
+                return ApateProbe(ok=False, reason="truncated-mask-head")
+
             handle.seek(backup_pos)
             original_head_reversed = handle.read(mask_head_length)
             if len(original_head_reversed) != mask_head_length:
                 return ApateProbe(ok=False, reason="truncated-mask")
             original_head = original_head_reversed[::-1]
-            return ApateProbe(ok=True, mask_head_length=mask_head_length, original_head=original_head[:32], reason="ok")
+            return ApateProbe(
+                ok=True,
+                mask_head_length=mask_head_length,
+                original_head=original_head[:32],
+                mask_head=mask_head,
+                reason="ok",
+            )
     except OSError as exc:
         return ApateProbe(ok=False, reason=str(exc))
 
@@ -99,6 +111,27 @@ def apate_official_reveal(
         return False
 
     try:
+        if in_place:
+            probe = probe_apate_file(src)
+            if not probe.ok:
+                if not quiet:
+                    print("Invalid Apate structure.")
+                return False
+            with open(src, "rb+") as handle:
+                handle.seek(0, os.SEEK_END)
+                file_size = handle.tell()
+                backup_pos = file_size - 4 - probe.mask_head_length
+                handle.seek(backup_pos)
+                original_head_reversed = handle.read(probe.mask_head_length)
+                original_head = original_head_reversed[::-1]
+                handle.seek(0)
+                handle.write(original_head)
+                handle.truncate(backup_pos)
+            if not quiet:
+                print(f"[*] Mask head length: {probe.mask_head_length} bytes")
+                print(f"[+] Reveal succeeded: {src}")
+            return True
+
         parsed = _read_revealed_bytes(src)
         if parsed is None:
             if not quiet:
@@ -128,6 +161,45 @@ def apate_official_reveal(
     except OSError as exc:
         if not quiet:
             print(f"[-] Reveal failed: {exc}")
+        return False
+
+
+def apate_official_redisguise_in_place(
+    file_path: str | os.PathLike[str],
+    *,
+    mask_head: bytes,
+    quiet: bool = False,
+) -> bool:
+    src = Path(file_path)
+    if not src.is_file():
+        if not quiet:
+            print("File does not exist or is not a file.")
+        return False
+    if not mask_head:
+        if not quiet:
+            print("Mask head is empty.")
+        return False
+
+    try:
+        mask_head_length = len(mask_head)
+        with open(src, "rb+") as handle:
+            handle.seek(0)
+            original_head = handle.read(mask_head_length)
+            if len(original_head) != mask_head_length:
+                if not quiet:
+                    print("File is shorter than mask head.")
+                return False
+            handle.seek(0)
+            handle.write(mask_head)
+            handle.seek(0, os.SEEK_END)
+            handle.write(original_head[::-1])
+            handle.write(struct.pack("<I", mask_head_length))
+        if not quiet:
+            print(f"[+] Re-disguise succeeded: {src}")
+        return True
+    except OSError as exc:
+        if not quiet:
+            print(f"[-] Re-disguise failed: {exc}")
         return False
 
 

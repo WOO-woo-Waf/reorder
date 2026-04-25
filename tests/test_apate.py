@@ -71,6 +71,22 @@ class ApateTests(unittest.TestCase):
             self.assertTrue(probe.ok)
             self.assertEqual(probe.original_head[:4], b"PK\x03\x04")
 
+    def test_redisguise_in_place_restores_disguised_bytes(self) -> None:
+        module = _load_apate()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            original = b"PK\x03\x04hello world from zip"
+            mask = b"\x00\x00\x00\x00"
+            disguised = _make_disguised(original, mask)
+            src = root / "sample.mp4"
+            src.write_bytes(disguised)
+
+            self.assertTrue(module.apate_official_reveal(src, quiet=True, in_place=True))
+            self.assertEqual(src.read_bytes(), original)
+
+            self.assertTrue(module.apate_official_redisguise_in_place(src, mask_head=mask, quiet=True))
+            self.assertEqual(src.read_bytes(), disguised)
+
 
 if __name__ == "__main__":
     unittest.main()

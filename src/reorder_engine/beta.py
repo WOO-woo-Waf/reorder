@@ -49,6 +49,16 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+class _ConsoleProgressFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        if "PIPE:   msg:" in message:
+            return False
+        if "\n" in message and ("ERROR-FILE" in message or "ERROR-PARTIAL" in message):
+            return False
+        return True
+
+
 def _setup_logging(folder: Path, log_path: Path, tool_log_path: Path) -> tuple[logging.Logger, logging.Logger]:
     folder.mkdir(parents=True, exist_ok=True)
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -68,15 +78,13 @@ def _setup_logging(folder: Path, log_path: Path, tool_log_path: Path) -> tuple[l
     file_handler.setFormatter(formatter)
     stream_handler = logging.StreamHandler()
     stream_handler.setFormatter(formatter)
+    stream_handler.addFilter(_ConsoleProgressFilter())
     logger.addHandler(file_handler)
     logger.addHandler(stream_handler)
 
     tool_file_handler = logging.FileHandler(tool_log_path, encoding="utf-8")
     tool_file_handler.setFormatter(formatter)
-    tool_stream_handler = logging.StreamHandler()
-    tool_stream_handler.setFormatter(formatter)
     tool_logger.addHandler(tool_file_handler)
-    tool_logger.addHandler(tool_stream_handler)
 
     setattr(logger, "_configured", True)
     setattr(tool_logger, "_configured", True)
@@ -205,7 +213,11 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     extractors = _build_extractors(cfg, runner, ensure.exe, disable_bandizip=bool(args.disable_bandizip))
-    extraction_service = ExtractionService(extractors=extractors)
+    def attempt_sink(tool: str, entry: Path, password: str | None) -> None:
+        password_text = password if password else "<none>"
+        logger.info("TRY: tool=%s entry=%s password=%s", tool, entry.name, password_text)
+
+    extraction_service = ExtractionService(extractors=extractors, attempt_sink=attempt_sink)
 
     pipeline = BetaFolderPipeline(
         folder=folder,

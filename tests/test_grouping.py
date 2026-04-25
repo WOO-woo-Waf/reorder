@@ -45,6 +45,20 @@ class GroupingTests(unittest.TestCase):
             self.assertEqual(by_entry["movie.rar"], {"movie.rar", "movie.r00", "movie.r01"})
             self.assertEqual(by_entry["album.zip"], {"album.zip", "album.z01", "album.z02"})
 
+    def test_grouping_handles_middle_numbered_7z_volumes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = root / "3616S.001.7z"
+            second = root / "3616S.002.7z"
+            for path in (first, second):
+                path.write_text("x", encoding="utf-8")
+
+            groups = DefaultVolumeGroupingStrategy(DefaultGroupingNormalizer()).group([first, second])
+
+            self.assertEqual(len(groups), 1)
+            self.assertEqual(groups[0].entry.name, "3616S.001.7z")
+            self.assertEqual({member.name for member in groups[0].members}, {"3616S.001.7z", "3616S.002.7z"})
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shutil
+import re
 from dataclasses import dataclass
 from dataclasses import replace
 from pathlib import Path
@@ -23,6 +24,12 @@ class BetaRunResult:
     ok_count: int
     fail_count: int
     total: int
+
+
+@dataclass(frozen=True)
+class CandidateAttempt:
+    path: Path
+    rollbacks: tuple = ()
 
 
 class BetaFolderPipeline:
@@ -87,9 +94,8 @@ class BetaFolderPipeline:
 
             package_name = self._package_name(volume_set.entry.name)
             package_root = intermediate_dir / package_name
-            copied_vs = self._copy_volume_set_to_workspace(volume_set, package_root / "input", dry_run=dry_run)
-            candidates = self._entry_candidates(copied_vs, package_root / "variants" / "L1", dry_run=dry_run)
-            result, layer1_dir = self._extract_first_success(copied_vs, candidates, package_root / "L1", dry_run=dry_run)
+            candidates = self._entry_candidates(volume_set, package_root / "variants" / "L1", dry_run=dry_run)
+            result, layer1_dir = self._extract_first_success(volume_set, candidates, package_root / "L1", dry_run=dry_run)
 
             if result.ok and layer1_dir is not None:
                 deep_ok, final_dir, message = self._continue_after_extract(
@@ -108,14 +114,31 @@ class BetaFolderPipeline:
                         self._emit(f"FINAL-DIR: {final_dir}")
                     continue
 
+            if not result.ok and layer1_dir is not None and self._has_any_file(layer1_dir):
+                fail_category = self._failure_category(result, layer1_dir)
+                moved_dir = self._move_partial_outputs_to_error(
+                    layer1_dir,
+                    error_dir / fail_category,
+                    package_name=package_name,
+                    dry_run=dry_run,
+                )
+                self._move_original_members(result.volume_set, archives_dir, package_name=package_name, dry_run=dry_run)
+                if result.message:
+                    self._emit(f"ERROR-PARTIAL[{fail_category}]: {self._summarize_message(result.message)}")
+                if moved_dir is not None:
+                    self._emit(f"ERROR-PARTIAL-DIR: {moved_dir}")
+                ok += 1
+                continue
+
             if self._is_missing_volume(result.message):
                 self._emit(f"MISSING-VOLUME: keep-in-place entry={volume_set.entry.name}")
                 continue
 
             fail += 1
-            self._move_original_members(volume_set, error_dir, package_name=package_name, dry_run=dry_run)
+            fail_category = self._failure_category(result, volume_set.entry)
+            self._move_original_members(volume_set, error_dir / fail_category, package_name=package_name, dry_run=dry_run)
             if result.message:
-                self._emit(f"ERROR-FILE: {self._summarize_message(result.message)}")
+                self._emit(f"ERROR-FILE[{fail_category}]: {self._summarize_message(result.message)}")
 
         if not dry_run:
             self._remove_empty_dirs(intermediate_dir)
@@ -124,38 +147,90 @@ class BetaFolderPipeline:
             self._remove_empty_dirs(success_dir)
         return BetaRunResult(ok_count=ok, fail_count=fail, total=ok + fail)
 
-    def _entry_candidates(self, vs: VolumeSet, workspace: Path, *, dry_run: bool) -> list[Path]:
+    def _entry_candidates(self, vs: VolumeSet, workspace: Path, *, dry_run: bool) -> list[CandidateAttempt]:
         if len(vs.members) > 1:
-            return [vs.entry]
-        out: list[Path] = []
+            return [CandidateAttempt(vs.entry)]
+        out: list[CandidateAttempt] = []
         seen: set[Path] = set()
         prepared = self._decrypt.prepare(vs.entry, workspace=workspace, dry_run=dry_run)
         for item in prepared:
             probe = self._restore.identify(item)
             self._emit(f"IDENTIFY: file={item.name} kind={probe.kind.value} suffix={probe.archive_suffix or '-'} reason={probe.reason or '-'}")
-            for candidate in self._candidate_chain(item, probe=probe, workspace=workspace, dry_run=dry_run):
+            for attempt in self._candidate_chain(item, probe=probe, workspace=workspace, dry_run=dry_run):
+                candidate = attempt.path
                 if candidate in seen:
                     continue
                 seen.add(candidate)
-                out.append(candidate)
-        return out or [vs.entry]
+                out.append(attempt)
+        return out or [CandidateAttempt(vs.entry)]
 
     def _extract_first_success(
         self,
         vs: VolumeSet,
-        candidates: list[Path],
+        candidates: list[CandidateAttempt],
         layer_root: Path,
         *,
         dry_run: bool,
     ) -> tuple[ExtractionResult, Path | None]:
+        if len(vs.members) > 1:
+            return self._extract_volume_set_first_success(vs, layer_root, dry_run=dry_run)
+
         last = ExtractionResult(volume_set=vs, ok=False, tool="none", message="No candidate executed")
-        for index, candidate in enumerate(candidates, start=1):
-            request_vs = vs if len(vs.members) > 1 else VolumeSet(entry=candidate, members=(candidate,), group_key=vs.group_key)
+        for index, attempt in enumerate(candidates, start=1):
+            candidate = attempt.path
+            request_vs = VolumeSet(entry=candidate, members=(candidate,), group_key=vs.group_key)
             res, out_dir = self._extract_with_variant_attempts(request_vs, layer_root / f"attempt_{index}", dry_run=dry_run)
             last = res
             if res.ok:
                 return res, out_dir
+            self._rollback_attempt(attempt, dry_run=dry_run)
+
+        force_attempt = self._force_apate_attempt_if_useful(vs.entry, dry_run=dry_run)
+        if force_attempt is not None:
+            request_vs = VolumeSet(entry=force_attempt.path, members=(force_attempt.path,), group_key=vs.group_key)
+            res, out_dir = self._extract_with_variant_attempts(
+                request_vs,
+                layer_root / f"attempt_{len(candidates) + 1}_force_apate",
+                dry_run=dry_run,
+            )
+            last = res
+            if res.ok:
+                return res, out_dir
+            self._rollback_attempt(force_attempt, dry_run=dry_run)
         return last, None
+
+    def _extract_volume_set_first_success(
+        self,
+        vs: VolumeSet,
+        layer_root: Path,
+        *,
+        dry_run: bool,
+    ) -> tuple[ExtractionResult, Path | None]:
+        last, out_dir = self._extract_with_variant_attempts(vs, layer_root / "attempt_1", dry_run=dry_run)
+        if last.ok:
+            return last, out_dir
+
+        normalized = self._normalize_middle_numbered_volume_set(vs, dry_run=dry_run)
+        if normalized is None:
+            return last, None
+
+        normalized_vs, session = normalized
+        self._emit(
+            f"VOLUME-RENAME-TRY: {vs.entry.name} -> {normalized_vs.entry.name} rule=middle-numbered-volume"
+        )
+        result, normalized_out_dir = self._extract_with_variant_attempts(
+            normalized_vs,
+            layer_root / "attempt_2_volume_renamed",
+            dry_run=dry_run,
+        )
+        if result.ok or (normalized_out_dir is not None and self._has_any_file(normalized_out_dir)):
+            return result, normalized_out_dir
+
+        session.rollback_best_effort(dry_run=dry_run)
+        self._emit(
+            f"VOLUME-RENAME-ROLLBACK: {normalized_vs.entry.name} -> {vs.entry.name} rule=middle-numbered-volume"
+        )
+        return result, None
 
     def _continue_after_extract(
         self,
@@ -194,7 +269,8 @@ class BetaFolderPipeline:
                 return False, None, f"depth={depth} no candidates"
 
             extracted = False
-            for index, candidate in enumerate(candidates, start=1):
+            for index, attempt in enumerate(candidates, start=1):
+                candidate = attempt.path
                 request_vs = VolumeSet(entry=candidate, members=(candidate,), group_key=f"{package_name}:{depth}:{index}")
                 target_dir_root = package_root / f"L{depth + 1}" / self._safe_name(candidate.name)
                 res, target_dir = self._extract_with_variant_attempts(request_vs, target_dir_root, dry_run=dry_run, prefix="DEEP-EXTRACT")
@@ -202,6 +278,7 @@ class BetaFolderPipeline:
                     current_dir = target_dir if target_dir is not None else target_dir_root
                     extracted = True
                     break
+                self._rollback_attempt(attempt, dry_run=dry_run)
             if not extracted:
                 if self._has_any_file(current_dir):
                     final_dir = self._promote_final_dir(current_dir, final_root, package_name=package_name, dry_run=dry_run)
@@ -218,7 +295,7 @@ class BetaFolderPipeline:
         min_archive_bytes: int,
         final_single_bytes: int,
         dry_run: bool,
-    ) -> list[Path]:
+    ) -> list[CandidateAttempt]:
         base_candidates = self._restore.build_post_extract_candidates(
             folder,
             workspace=workspace,
@@ -226,17 +303,17 @@ class BetaFolderPipeline:
             final_single_bytes=final_single_bytes,
             dry_run=dry_run,
         )
-        out: list[Path] = []
+        out: list[CandidateAttempt] = []
         seen: set[Path] = set()
         for candidate in base_candidates:
             probe = self._restore.identify(candidate)
             self._emit(f"IDENTIFY: nested={candidate.name} kind={probe.kind.value} suffix={probe.archive_suffix or '-'} reason={probe.reason or '-'}")
             child_workspace = workspace / self._safe_name(candidate.name)
-            for derived in self._candidate_chain(candidate, probe=probe, workspace=child_workspace, dry_run=dry_run):
-                if derived in seen:
+            for attempt in self._candidate_chain(candidate, probe=probe, workspace=child_workspace, dry_run=dry_run):
+                if attempt.path in seen:
                     continue
-                seen.add(derived)
-                out.append(derived)
+                seen.add(attempt.path)
+                out.append(attempt)
         return out
 
     def _extract_with_variant_attempts(
@@ -293,20 +370,90 @@ class BetaFolderPipeline:
         req = ExtractionRequest(volume_set=volume_set, output_dir=output_dir, passwords=self._passwords)
         result = self._extractor.extract_one(req, preference="auto", probe=probe, dry_run=dry_run)
         self._emit_extract_result(prefix, volume_set.entry.name, result)
-        return result, (output_dir if result.ok else None)
+        if result.ok or self._has_any_file(output_dir):
+            return result, output_dir
+        return result, None
 
-    def _candidate_chain(self, path: Path, *, probe: ArchiveProbe, workspace: Path, dry_run: bool) -> list[Path]:
+    def _candidate_chain(self, path: Path, *, probe: ArchiveProbe, workspace: Path, dry_run: bool) -> list[CandidateAttempt]:
         if probe.kind == ArchiveKind.ARCHIVE:
-            return [path]
+            return [CandidateAttempt(path)]
         if probe.kind == ArchiveKind.APATE:
-            restored = self._restore.restore(path, workspace=workspace, dry_run=dry_run)
-            return restored or [path]
-        restored = self._restore.restore(path, workspace=workspace, dry_run=dry_run)
-        return restored or [path]
+            restored, rollbacks = self._restore.restore_with_rollbacks(path, workspace=workspace, dry_run=dry_run)
+            return [CandidateAttempt(candidate, tuple(rollbacks)) for candidate in (restored or [path])]
+        restored, rollbacks = self._restore.restore_with_rollbacks(path, workspace=workspace, dry_run=dry_run)
+        return [CandidateAttempt(candidate, tuple(rollbacks)) for candidate in (restored or [path])]
 
-    def _copy_volume_set_to_workspace(self, vs: VolumeSet, workspace: Path, *, dry_run: bool) -> VolumeSet:
-        _ = (workspace, dry_run)
-        return vs
+    def _rollback_attempt(self, attempt: CandidateAttempt, *, dry_run: bool) -> None:
+        if not attempt.rollbacks:
+            return
+        self._restore.rollback_apate(list(attempt.rollbacks), dry_run=dry_run)
+        self._emit(f"APATE-ROLLBACK: {attempt.path.name}")
+
+    def _force_apate_attempt_if_useful(self, path: Path, *, dry_run: bool) -> CandidateAttempt | None:
+        probe = self._restore.identify(path)
+        if probe.kind != ArchiveKind.UNKNOWN:
+            return None
+        if path.suffix.lower() not in {".jpg", ".jpeg", ".png", ".webp", ".mp4", ".mkv", ".avi", ".mov", ".exe"}:
+            return None
+        fn = getattr(self._restore, "force_apate_restore_with_rollbacks", None)
+        if not callable(fn):
+            return None
+        restored, rollbacks = fn(path, dry_run=dry_run)
+        if restored is None:
+            return None
+        self._emit(f"APATE-FORCE-TRY: {path.name}")
+        return CandidateAttempt(restored, tuple(rollbacks))
+
+    def _normalize_middle_numbered_volume_set(
+        self,
+        vs: VolumeSet,
+        *,
+        dry_run: bool,
+    ) -> tuple[VolumeSet, RenameSession] | None:
+        plans: list[tuple[Path, Path]] = []
+        for member in vs.members:
+            target = self._middle_numbered_volume_target(member)
+            if target is None:
+                return None
+            if target.exists() and target not in vs.members:
+                self._emit(f"VOLUME-RENAME-SKIP: target exists {target.name}")
+                return None
+            plans.append((member, target))
+
+        if not plans or all(src == dst for src, dst in plans):
+            return None
+
+        targets = [target for _src, target in plans]
+        if len(set(targets)) != len(targets):
+            return None
+
+        session = RenameSession.create(self._renamer)
+        renamed_members: list[Path] = []
+        entry: Path | None = None
+        try:
+            for src, dst in plans:
+                renamed = session.rename(src, dst, dry_run=dry_run)
+                renamed_members.append(renamed)
+                if src == vs.entry:
+                    entry = renamed
+        except OSError:
+            session.rollback_best_effort(dry_run=dry_run)
+            raise
+
+        return (
+            VolumeSet(
+                entry=entry or renamed_members[0],
+                members=tuple(renamed_members),
+                group_key=vs.group_key,
+            ),
+            session,
+        )
+
+    def _middle_numbered_volume_target(self, path: Path) -> Path | None:
+        match = re.match(r"^(?P<base>.+)\.(?P<idx>\d{3})\.(?P<ext>7z|zip|rar)$", path.name, flags=re.IGNORECASE)
+        if match is None:
+            return None
+        return path.with_name(f"{match.group('base')}.{match.group('ext')}.{match.group('idx')}")
 
     def _promote_final_dir(self, current_dir: Path, final_root: Path, *, package_name: str, dry_run: bool) -> Path:
         leaf = deepest_wrapper_dir(current_dir) if self._path_compress else current_dir
@@ -348,6 +495,43 @@ class BetaFolderPipeline:
             shutil.move(str(member), str(dst))
             self._emit(f"MOVE: {member.name} -> {dst}")
 
+    def _move_partial_outputs_to_error(
+        self,
+        source_dir: Path,
+        dest_dir: Path,
+        *,
+        package_name: str,
+        dry_run: bool,
+    ) -> Path | None:
+        if not self._has_any_file(source_dir):
+            return None
+
+        files = [path for path in source_dir.iterdir() if path.is_file()]
+        dirs = [path for path in source_dir.iterdir() if path.is_dir()]
+        if len(files) == 1 and not dirs:
+            target = dest_dir / files[0].name
+            if target.exists():
+                target = self._duplicate_target(dest_dir, target_name=files[0].name, package_name=package_name)
+            if dry_run:
+                self._emit(f"MOVE(dry): {files[0]} -> {target}")
+                return target
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(files[0]), str(target))
+            self._remove_empty_dirs(source_dir)
+            self._emit(f"MOVE-PARTIAL: {files[0].name} -> {target}")
+            return target
+
+        target_dir = dest_dir / package_name
+        if target_dir.exists():
+            target_dir = self._duplicate_target(dest_dir, target_name=package_name, package_name=package_name)
+        if dry_run:
+            self._emit(f"MOVE(dry): {source_dir} -> {target_dir}")
+            return target_dir
+        target_dir.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(source_dir), str(target_dir))
+        self._emit(f"MOVE-PARTIAL-DIR: {source_dir} -> {target_dir}")
+        return target_dir
+
     def _is_in_result_dirs(self, vs: VolumeSet, dirs: set[Path]) -> bool:
         for member in vs.members:
             for directory in dirs:
@@ -360,6 +544,54 @@ class BetaFolderPipeline:
             return False
         text = message.lower()
         return "missing volume" in text or "unavailable data" in text
+
+    def _failure_category(self, result: ExtractionResult, entry: Path) -> str:
+        message = (result.message or "").lower()
+        if self._looks_like_password_error(message):
+            return "password_error"
+        probe = self._restore.identify(entry)
+        if probe.kind == ArchiveKind.UNKNOWN or self._looks_like_unknown_type_error(message):
+            return "unknown_type"
+        if self._is_missing_volume(result.message):
+            return "missing_volume"
+        return "extract_failed"
+
+    def _looks_like_password_error(self, message: str) -> bool:
+        return any(
+            marker in message
+            for marker in (
+                "wrong password",
+                "error: wrong password",
+                "wrong password?",
+                "password is incorrect",
+                "incorrect password",
+                "invalid password",
+                "illegal password",
+                "encrypted",
+                "can not open encrypted archive",
+                "cannot open encrypted archive",
+                "data error in encrypted",
+                "crc failed in encrypted",
+                "data error",
+                "crc failed",
+                "密码错误",
+                "密码不正确",
+                "口令错误",
+                "非法密码",
+            )
+        )
+
+    def _looks_like_unknown_type_error(self, message: str) -> bool:
+        return any(
+            marker in message
+            for marker in (
+                "can not open the file as archive",
+                "cannot open the file as archive",
+                "is not archive",
+                "not archive",
+                "unsupported archive type",
+            )
+        )
 
     def _emit_extract_result(self, prefix: str, entry_name: str, result: ExtractionResult) -> None:
         status = "OK" if result.ok else "FAIL"

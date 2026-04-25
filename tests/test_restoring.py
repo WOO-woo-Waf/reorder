@@ -41,6 +41,16 @@ class RestoringTests(unittest.TestCase):
 
             self.assertEqual(probe.kind, ArchiveKind.UNKNOWN)
 
+    def test_inspector_rejects_apate_layout_when_restored_head_is_not_archive(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "video.mp4"
+            source.write_bytes(self._make_disguised(b"NOPEnot an archive", b"\x00\x00\x00\x00"))
+
+            probe = ArchiveSignatureInspector().probe_path(source)
+
+            self.assertEqual(probe.kind, ArchiveKind.UNKNOWN)
+
     def test_suffix_variant_builder_plans_suffix_changes_without_copying(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -57,6 +67,53 @@ class RestoringTests(unittest.TestCase):
 
             seven_zip_plan = next(plan for plan in plans if plan.target.suffix == ".7z")
             self.assertEqual(seven_zip_plan.preferred_tool, "bandizip")
+
+    def test_jpg_and_exe_variants_try_rar_before_zip_and_7z(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "PC11025.jpg"
+            source.write_bytes(b"not directly identifiable")
+            service = RestorationService([SuffixVariantBuilder(ArchiveSignatureInspector())])
+            plans = service.variant_plans(source)
+
+            self.assertEqual([plan.target.suffix for plan in plans[:3]], [".rar", ".zip", ".7z"])
+
+    def test_apate_restore_is_in_place_and_rolls_back(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workspace = root / "workspace"
+            original = b"PK\x03\x04hello"
+            disguised = self._make_disguised(original, b"\x00\x00\x00\x00")
+            source = root / "FolderThree.mp4"
+            source.write_bytes(disguised)
+            inspector = ArchiveSignatureInspector()
+            service = RestorationService([ApateRestorer(inspector, rounds=3)], inspector=inspector)
+
+            restored, rollbacks = service.restore_with_rollbacks(source, workspace=workspace)
+
+            self.assertEqual(len(restored), 1)
+            self.assertEqual(restored[0], source)
+            self.assertEqual(source.read_bytes(), original)
+
+            service.rollback_apate(rollbacks)
+
+            self.assertEqual(source.read_bytes(), disguised)
+
+    def test_force_apate_restore_allows_non_archive_restored_head(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            original = b"NOPEhello"
+            disguised = self._make_disguised(original, b"\x00\x00\x00\x00")
+            source = root / "damaged.jpg"
+            source.write_bytes(disguised)
+            service = RestorationService([SuffixVariantBuilder(ArchiveSignatureInspector())])
+
+            restored, rollbacks = service.force_apate_restore_with_rollbacks(source)
+
+            self.assertEqual(restored, source)
+            self.assertEqual(source.read_bytes(), original)
+            service.rollback_apate(rollbacks)
+            self.assertEqual(source.read_bytes(), disguised)
 
     def test_repeated_apate_restorer_matches_three_name(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
