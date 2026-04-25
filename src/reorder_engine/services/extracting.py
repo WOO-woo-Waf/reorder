@@ -185,33 +185,39 @@ class ExtractionService:
         if not ordered:
             return ExtractionResult(volume_set=request.volume_set, ok=False, tool="none", message="No available extractor.")
 
-        # Always probe with no password first, then exhaust the password list for each
-        # tool unless we hit a hard-stop condition such as missing split volumes.
-        passwords: list[str] = [p for p in request.passwords if p]
+        # Prefer a password that already worked for the same package/layer, then
+        # preserve the full fallback matrix.
+        passwords = self._password_attempt_order(request)
 
         last: ExtractionResult | None = None
         for ext in ordered:
-            last = self._try_extract(ext, request, None, dry_run=dry_run)
-            if last.ok:
-                return last
-
-            disp = self._failure_disposition(last.message)
-            if disp == "stop_all":
-                return last
-            if disp == "next_tool":
-                continue
-
             for pwd in passwords:
                 last = self._try_extract(ext, request, pwd, dry_run=dry_run)
                 if last.ok:
                     return last
                 disp = self._failure_disposition(last.message)
-                if disp in {"stop_all", "next_tool"}:
+                if disp == "stop_all":
+                    return last
+                if disp == "next_tool":
                     break
-            if disp == "stop_all":
-                return last
 
         return last or ExtractionResult(volume_set=request.volume_set, ok=False, tool="none", message="No attempt executed")
+
+    def _password_attempt_order(self, request: ExtractionRequest) -> list[str | None]:
+        ordered: list[str | None] = []
+        seen: set[str | None] = set()
+        if request.preferred_password:
+            ordered.append(request.preferred_password)
+            seen.add(request.preferred_password)
+        if None not in seen:
+            ordered.append(None)
+            seen.add(None)
+        for password in request.passwords:
+            if not password or password in seen:
+                continue
+            ordered.append(password)
+            seen.add(password)
+        return ordered
 
     def _order_extractors(self, preference: str) -> list[ExtractorStrategy]:
         pref = preference.lower().strip()

@@ -138,6 +138,26 @@ class BetaCliAndExtractingTests(unittest.TestCase):
             self.assertEqual(second.calls, [None, "pw1", "pw2"])
             self.assertEqual(third.calls, [None, "pw1", "pw2"])
 
+    def test_extraction_service_tries_preferred_password_first(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            archive = root / "a.7z"
+            archive.write_text("x", encoding="utf-8")
+            vs = VolumeSet(entry=archive, members=(archive,), group_key="g")
+            req = ExtractionRequest(
+                volume_set=vs,
+                output_dir=root / "out",
+                passwords=("pw1", "pw2"),
+                preferred_password="pw2",
+            )
+            ok = ExtractionResult(volume_set=vs, ok=True, tool="7z", message="ok", password="pw2")
+            first = _FakeExtractor("7z", [ok])
+
+            result = ExtractionService([first]).extract_one(req)
+
+            self.assertTrue(result.ok)
+            self.assertEqual(first.calls, ["pw2"])
+
 
 if __name__ == "__main__":
     unittest.main()

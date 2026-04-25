@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 from reorder_engine.domain.models import ArchiveKind, ArchiveProbe, VolumeSet
+from reorder_engine.domain.models import ExtractionResult
 from reorder_engine.services.beta_pipeline import BetaFolderPipeline
 
 
@@ -139,6 +140,35 @@ class BetaPipelineTests(unittest.TestCase):
             self.assertEqual(moved, root / "error_files" / "password_error" / "NO-3616.7zz")
             self.assertTrue(moved.exists())
             self.assertFalse(payload.exists())
+
+    def test_run_extract_attempt_passes_preferred_password(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            archive = root / "payload.7z"
+            archive.write_bytes(b"7z")
+            vs = VolumeSet(entry=archive, members=(archive,), group_key="g")
+
+            class _Extractor:
+                seen = None
+
+                def extract_one(self, request, *, preference="auto", probe=None, dry_run=False):
+                    self.seen = request.preferred_password
+                    return ExtractionResult(volume_set=request.volume_set, ok=False, tool="fake")
+
+            extractor = _Extractor()
+            pipeline = self._make_pipeline(root)
+            pipeline._extractor = extractor
+
+            pipeline._run_extract_attempt(
+                vs,
+                probe=ArchiveProbe(path=archive, kind=ArchiveKind.ARCHIVE),
+                output_dir=root / "out",
+                dry_run=False,
+                prefix="TEST",
+                preferred_password="secret",
+            )
+
+            self.assertEqual(extractor.seen, "secret")
 
 
 if __name__ == "__main__":

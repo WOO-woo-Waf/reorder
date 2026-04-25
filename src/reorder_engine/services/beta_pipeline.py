@@ -95,7 +95,13 @@ class BetaFolderPipeline:
             package_name = self._package_name(volume_set.entry.name)
             package_root = intermediate_dir / package_name
             candidates = self._entry_candidates(volume_set, package_root / "variants" / "L1", dry_run=dry_run)
-            result, layer1_dir = self._extract_first_success(volume_set, candidates, package_root / "L1", dry_run=dry_run)
+            result, layer1_dir = self._extract_first_success(
+                volume_set,
+                candidates,
+                package_root / "L1",
+                dry_run=dry_run,
+                preferred_password=None,
+            )
 
             if result.ok and layer1_dir is not None:
                 deep_ok, final_dir, message = self._continue_after_extract(
@@ -104,6 +110,7 @@ class BetaFolderPipeline:
                     start_dir=layer1_dir,
                     final_root=final_root,
                     dry_run=dry_run,
+                    preferred_password=result.password,
                 )
                 if deep_ok:
                     ok += 1
@@ -171,15 +178,21 @@ class BetaFolderPipeline:
         layer_root: Path,
         *,
         dry_run: bool,
+        preferred_password: str | None = None,
     ) -> tuple[ExtractionResult, Path | None]:
         if len(vs.members) > 1:
-            return self._extract_volume_set_first_success(vs, layer_root, dry_run=dry_run)
+            return self._extract_volume_set_first_success(vs, layer_root, dry_run=dry_run, preferred_password=preferred_password)
 
         last = ExtractionResult(volume_set=vs, ok=False, tool="none", message="No candidate executed")
         for index, attempt in enumerate(candidates, start=1):
             candidate = attempt.path
             request_vs = VolumeSet(entry=candidate, members=(candidate,), group_key=vs.group_key)
-            res, out_dir = self._extract_with_variant_attempts(request_vs, layer_root / f"attempt_{index}", dry_run=dry_run)
+            res, out_dir = self._extract_with_variant_attempts(
+                request_vs,
+                layer_root / f"attempt_{index}",
+                dry_run=dry_run,
+                preferred_password=preferred_password,
+            )
             last = res
             if res.ok:
                 return res, out_dir
@@ -192,6 +205,7 @@ class BetaFolderPipeline:
                 request_vs,
                 layer_root / f"attempt_{len(candidates) + 1}_force_apate",
                 dry_run=dry_run,
+                preferred_password=preferred_password,
             )
             last = res
             if res.ok:
@@ -205,8 +219,14 @@ class BetaFolderPipeline:
         layer_root: Path,
         *,
         dry_run: bool,
+        preferred_password: str | None = None,
     ) -> tuple[ExtractionResult, Path | None]:
-        last, out_dir = self._extract_with_variant_attempts(vs, layer_root / "attempt_1", dry_run=dry_run)
+        last, out_dir = self._extract_with_variant_attempts(
+            vs,
+            layer_root / "attempt_1",
+            dry_run=dry_run,
+            preferred_password=preferred_password,
+        )
         if last.ok:
             return last, out_dir
 
@@ -222,6 +242,7 @@ class BetaFolderPipeline:
             normalized_vs,
             layer_root / "attempt_2_volume_renamed",
             dry_run=dry_run,
+            preferred_password=preferred_password,
         )
         if result.ok or (normalized_out_dir is not None and self._has_any_file(normalized_out_dir)):
             return result, normalized_out_dir
@@ -240,6 +261,7 @@ class BetaFolderPipeline:
         start_dir: Path,
         final_root: Path,
         dry_run: bool,
+        preferred_password: str | None = None,
     ) -> tuple[bool, Path | None, str | None]:
         if not self._deep.enabled:
             final_dir = self._promote_final_dir(start_dir, final_root, package_name=package_name, dry_run=dry_run)
@@ -249,6 +271,7 @@ class BetaFolderPipeline:
         min_archive_bytes = max(self._archive_min_mb, int(self._deep.min_archive_mb)) * 1024 * 1024
         final_single_bytes = max(1, int(self._deep.final_single_mb)) * 1024 * 1024
         current_dir = start_dir
+        current_password = preferred_password
         for depth in range(1, max_depth + 1):
             reason = self._is_final_output(current_dir)
             if reason is not None:
@@ -273,8 +296,16 @@ class BetaFolderPipeline:
                 candidate = attempt.path
                 request_vs = VolumeSet(entry=candidate, members=(candidate,), group_key=f"{package_name}:{depth}:{index}")
                 target_dir_root = package_root / f"L{depth + 1}" / self._safe_name(candidate.name)
-                res, target_dir = self._extract_with_variant_attempts(request_vs, target_dir_root, dry_run=dry_run, prefix="DEEP-EXTRACT")
+                res, target_dir = self._extract_with_variant_attempts(
+                    request_vs,
+                    target_dir_root,
+                    dry_run=dry_run,
+                    prefix="DEEP-EXTRACT",
+                    preferred_password=current_password,
+                )
                 if res.ok:
+                    if res.password:
+                        current_password = res.password
                     current_dir = target_dir if target_dir is not None else target_dir_root
                     extracted = True
                     break
@@ -323,10 +354,18 @@ class BetaFolderPipeline:
         *,
         dry_run: bool,
         prefix: str = "EXTRACT",
+        preferred_password: str | None = None,
     ) -> tuple[ExtractionResult, Path | None]:
         probe = self._restore.identify(volume_set.entry)
         attempt_vs = volume_set
-        direct_result, direct_dir = self._run_extract_attempt(attempt_vs, probe=probe, output_dir=base_output_dir, dry_run=dry_run, prefix=prefix)
+        direct_result, direct_dir = self._run_extract_attempt(
+            attempt_vs,
+            probe=probe,
+            output_dir=base_output_dir,
+            dry_run=dry_run,
+            prefix=prefix,
+            preferred_password=preferred_password,
+        )
         if direct_result.ok or len(volume_set.members) > 1:
             return direct_result, direct_dir
 
@@ -349,6 +388,7 @@ class BetaFolderPipeline:
                 output_dir=base_output_dir.parent / f"{base_output_dir.name}_variant_{variant_index}",
                 dry_run=dry_run,
                 prefix=prefix,
+                preferred_password=preferred_password,
             )
             last = result
             if result.ok:
@@ -366,8 +406,14 @@ class BetaFolderPipeline:
         output_dir: Path,
         dry_run: bool,
         prefix: str,
+        preferred_password: str | None = None,
     ) -> tuple[ExtractionResult, Path | None]:
-        req = ExtractionRequest(volume_set=volume_set, output_dir=output_dir, passwords=self._passwords)
+        req = ExtractionRequest(
+            volume_set=volume_set,
+            output_dir=output_dir,
+            passwords=self._passwords,
+            preferred_password=preferred_password,
+        )
         result = self._extractor.extract_one(req, preference="auto", probe=probe, dry_run=dry_run)
         self._emit_extract_result(prefix, volume_set.entry.name, result)
         if result.ok or self._has_any_file(output_dir):

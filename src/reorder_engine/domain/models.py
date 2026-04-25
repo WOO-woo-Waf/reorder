@@ -53,6 +53,7 @@ class ExtractionRequest:
     volume_set: VolumeSet
     output_dir: Path
     passwords: tuple[str, ...] = ()
+    preferred_password: str | None = None
 
 
 @dataclass(frozen=True)
