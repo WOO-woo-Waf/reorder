@@ -379,18 +379,6 @@ class BetaFolderPipeline:
             return "many-folders"
         if len(files) >= 80:
             return "many-files"
-        video_exts = {".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm"}
-        image_exts = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"}
-        strong_exts = {".iso", ".exe", ".apk", ".obb", ".pak"}
-        video_count = sum(1 for file in files if file.suffix.lower() in video_exts)
-        image_count = sum(1 for file in files if file.suffix.lower() in image_exts)
-        strong_count = sum(1 for file in files if file.suffix.lower() in strong_exts)
-        if video_count >= 1:
-            return "has-video"
-        if strong_count >= 1:
-            return "has-binary"
-        if image_count >= 20:
-            return "many-images"
         return None
 
     def _has_any_file(self, root: Path) -> bool:
