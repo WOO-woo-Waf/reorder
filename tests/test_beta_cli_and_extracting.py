@@ -180,6 +180,7 @@ class BetaCliAndExtractingTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertTrue(result.aborted)
         self.assertEqual(result.exit_code, 130)
+        self.assertIn("Wrong password", result.stderr)
         self.assertEqual(seen, ["begin", "ERROR: Wrong password : file.jpg"])
         self.assertNotIn("late", result.stdout)
 

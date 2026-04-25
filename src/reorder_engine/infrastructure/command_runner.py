@@ -107,7 +107,13 @@ class ExternalCommandRunner:
                     proc.stdout.close()
                     proc.wait()
                     out = "".join(collected)
-                    return CommandResult(ok=False, exit_code=130, stdout=out, stderr="aborted by output guard", aborted=True)
+                    return CommandResult(
+                        ok=False,
+                        exit_code=130,
+                        stdout=out,
+                        stderr=f"aborted by output guard: {stripped}",
+                        aborted=True,
+                    )
             proc.wait(timeout=timeout_sec)
         except subprocess.TimeoutExpired:
             proc.kill()
