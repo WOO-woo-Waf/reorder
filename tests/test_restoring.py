@@ -97,6 +97,42 @@ class RestoringTests(unittest.TestCase):
 
             self.assertEqual(candidates, [payload])
 
+    def test_nested_candidate_stops_on_archive_and_media_mix(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            archive = root / "inner.7z"
+            archive.write_bytes(b"7z\xbc\xaf'\x1c" + b"x")
+            video = root / "payload.mp4"
+            video.write_bytes(b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 1024)
+            service = RestorationService([SuffixVariantBuilder(ArchiveSignatureInspector())])
+
+            candidates = service.build_post_extract_candidates(
+                root,
+                workspace=root / "variants",
+                min_archive_bytes=1,
+                final_single_bytes=1,
+            )
+
+            self.assertEqual(candidates, [])
+
+    def test_nested_candidate_stops_on_archive_and_unknown_file_mix(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            archive = root / "inner.7z"
+            archive.write_bytes(b"7z\xbc\xaf'\x1c" + b"x")
+            payload = root / "payload.bin"
+            payload.write_bytes(b"plain payload")
+            service = RestorationService([SuffixVariantBuilder(ArchiveSignatureInspector())])
+
+            candidates = service.build_post_extract_candidates(
+                root,
+                workspace=root / "variants",
+                min_archive_bytes=1,
+                final_single_bytes=1,
+            )
+
+            self.assertEqual(candidates, [])
+
     def test_suffix_variant_builder_plans_suffix_changes_without_copying(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

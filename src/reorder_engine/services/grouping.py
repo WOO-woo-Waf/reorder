@@ -32,11 +32,16 @@ class DefaultVolumeGroupingStrategy(VolumeGroupingStrategy):
         name = p.name
 
         # 1) 处理 .7z.001 / .zip.001
-        m = re.match(r"^(?P<base>.+)\.(7z|zip)\.(?P<idx>\d{3})$", name, flags=re.IGNORECASE)
+        m = re.match(r"^(?P<base>.+)\.(7z|zip|rar)\.(?P<idx>\d{3})$", name, flags=re.IGNORECASE)
         if m:
             base = m.group("base")
             base_norm = self._normalizer.normalize_for_grouping(base)
             return f"split:{base_norm}.{m.group(2).lower()}"
+
+        m = re.match(r"^(?P<base>.+)\.(?P<ext>7z|zip|rar)\.exe$", name, flags=re.IGNORECASE)
+        if m:
+            base_norm = self._normalizer.normalize_for_grouping(m.group("base"))
+            return f"split:{base_norm}.{m.group('ext').lower()}"
 
         # 2) 处理 name.part01.rar / name.part1.rar
         m = re.match(r"^(?P<base>.+)\.(?P<idx>\d{3})\.(?P<ext>7z|zip|rar)$", name, flags=re.IGNORECASE)
@@ -88,7 +93,10 @@ class DefaultVolumeGroupingStrategy(VolumeGroupingStrategy):
         # - .zip（如果有 z01/z02）
         for p in members:
             low = p.name.lower()
-            if low.endswith(".7z.001") or low.endswith(".zip.001"):
+            if low.endswith(".7z.001") or low.endswith(".zip.001") or low.endswith(".rar.001"):
+                return p
+        for p in members:
+            if re.search(r"\.(7z|zip|rar)\.exe$", p.name, flags=re.IGNORECASE):
                 return p
         for p in members:
             if re.search(r"\.0*1\.(7z|zip|rar)$", p.name, flags=re.IGNORECASE):

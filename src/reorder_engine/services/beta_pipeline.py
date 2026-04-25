@@ -224,6 +224,27 @@ class BetaFolderPipeline:
         dry_run: bool,
         preferred_password: str | None = None,
     ) -> tuple[ExtractionResult, Path | None]:
+        sfx_normalized = self._normalize_sfx_volume_set(vs, dry_run=dry_run)
+        if sfx_normalized is not None:
+            normalized_vs, session = sfx_normalized
+            self._emit(
+                f"VOLUME-RENAME-TRY: {vs.entry.name} -> {normalized_vs.entry.name} rule=sfx-volume"
+            )
+            result, normalized_out_dir = self._extract_with_variant_attempts(
+                normalized_vs,
+                layer_root / "attempt_1_sfx_renamed",
+                dry_run=dry_run,
+                preferred_password=preferred_password,
+            )
+            if result.ok or (normalized_out_dir is not None and self._has_any_file(normalized_out_dir)):
+                return result, normalized_out_dir
+
+            session.rollback_best_effort(dry_run=dry_run)
+            self._emit(
+                f"VOLUME-RENAME-ROLLBACK: {normalized_vs.entry.name} -> {vs.entry.name} rule=sfx-volume"
+            )
+            return result, None
+
         last, out_dir = self._extract_with_variant_attempts(
             vs,
             layer_root / "attempt_1",
@@ -516,9 +537,40 @@ class BetaFolderPipeline:
             return None
         return path.with_name(f"{match.group('base')}.{match.group('ext')}.{match.group('idx')}")
 
+    def _normalize_sfx_volume_set(
+        self,
+        vs: VolumeSet,
+        *,
+        dry_run: bool,
+    ) -> tuple[VolumeSet, RenameSession] | None:
+        sfx_members = [member for member in vs.members if re.search(r"\.(7z|zip|rar)\.exe$", member.name, flags=re.IGNORECASE)]
+        if len(sfx_members) != 1 or len(vs.members) < 2:
+            return None
+
+        sfx = sfx_members[0]
+        match = re.match(r"^(?P<base>.+)\.(?P<ext>7z|zip|rar)\.exe$", sfx.name, flags=re.IGNORECASE)
+        if match is None:
+            return None
+        target = sfx.with_name(f"{match.group('base')}.{match.group('ext')}.001")
+        if target.exists() and target not in vs.members:
+            self._emit(f"VOLUME-RENAME-SKIP: target exists {target.name}")
+            return None
+
+        session = RenameSession.create(self._renamer)
+        renamed_sfx = session.rename(sfx, target, dry_run=dry_run)
+        renamed_members = tuple(renamed_sfx if member == sfx else member for member in vs.members)
+        return (
+            VolumeSet(
+                entry=renamed_sfx if vs.entry == sfx else vs.entry,
+                members=renamed_members,
+                group_key=vs.group_key,
+            ),
+            session,
+        )
+
     def _deferred_volume_group_name(self, path: Path) -> str | None:
         name = path.name
-        match = re.match(r"^(?P<base>.+)\.(?P<ext>7z|zip)\.(?P<idx>\d{3})$", name, flags=re.IGNORECASE)
+        match = re.match(r"^(?P<base>.+)\.(?P<ext>7z|zip|rar)\.(?P<idx>\d{3})$", name, flags=re.IGNORECASE)
         if match is not None:
             return f"{match.group('base')}.{match.group('ext')}"
 

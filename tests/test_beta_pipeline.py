@@ -122,6 +122,31 @@ class BetaPipelineTests(unittest.TestCase):
             self.assertTrue(first.exists())
             self.assertTrue(second.exists())
 
+    def test_sfx_volume_set_normalizes_exe_to_001_suffix(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sfx = root / "A1651.7z.exe"
+            second = root / "A1651.7z.002"
+            sfx.write_bytes(b"one")
+            second.write_bytes(b"two")
+            pipeline = self._make_pipeline(root)
+
+            normalized = pipeline._normalize_sfx_volume_set(
+                VolumeSet(entry=sfx, members=(sfx, second), group_key="split:a1651.7z"),
+                dry_run=False,
+            )
+
+            self.assertIsNotNone(normalized)
+            normalized_vs, session = normalized
+            self.assertEqual(normalized_vs.entry.name, "A1651.7z.001")
+            self.assertEqual({path.name for path in normalized_vs.members}, {"A1651.7z.001", "A1651.7z.002"})
+            self.assertFalse(sfx.exists())
+
+            session.rollback_best_effort()
+
+            self.assertTrue(sfx.exists())
+            self.assertTrue(second.exists())
+
     def test_partial_single_output_moves_to_error_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

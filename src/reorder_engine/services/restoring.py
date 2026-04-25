@@ -662,6 +662,12 @@ class _NestedArchivePostRule(PostExtractRule):
                 return [only]
 
         archive_like = [p for p in files if inspector.looks_like_archive(p)]
+        final_media = [p for p in files if inspector.is_valid_final_media(p)]
+        if final_media:
+            return []
+        if archive_like and any(path not in archive_like for path in files):
+            return []
+
         archive_like.sort(key=size_of, reverse=True)
         if archive_like:
             return archive_like[:5]

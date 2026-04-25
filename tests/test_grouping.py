@@ -59,6 +59,20 @@ class GroupingTests(unittest.TestCase):
             self.assertEqual(groups[0].entry.name, "3616S.001.7z")
             self.assertEqual({member.name for member in groups[0].members}, {"3616S.001.7z", "3616S.002.7z"})
 
+    def test_grouping_merges_sfx_exe_with_matching_split_volumes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sfx = root / "A1651.7z.exe"
+            second = root / "A1651.7z.002"
+            for path in (sfx, second):
+                path.write_text("x", encoding="utf-8")
+
+            groups = DefaultVolumeGroupingStrategy(DefaultGroupingNormalizer()).group([sfx, second])
+
+            self.assertEqual(len(groups), 1)
+            self.assertEqual(groups[0].entry.name, "A1651.7z.exe")
+            self.assertEqual({member.name for member in groups[0].members}, {"A1651.7z.exe", "A1651.7z.002"})
+
 
 if __name__ == "__main__":
     unittest.main()
