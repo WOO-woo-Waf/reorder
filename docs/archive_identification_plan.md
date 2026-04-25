@@ -64,6 +64,16 @@ These signatures are not perfect, but they are strong enough for a conservative 
 
 Use a tiered confidence score instead of a yes/no archive guess.
 
+Implemented first step:
+
+- Valid media detection now exists for common image/video/audio headers.
+- The skip only applies during nested/deep extraction.
+- Top-level `.jpg/.mp4/.exe` disguised files can still be tried.
+- A file with an archive header is still treated as archive even if its suffix is media.
+- A media-suffix file with an invalid/unknown media header is still allowed through the broad fallback.
+
+This is intentionally conservative: it reduces obvious video/image false positives without blocking suspicious media files.
+
 ### High Confidence Archive
 
 Try extraction normally:
@@ -95,12 +105,18 @@ This would stop the common case where a real `.mp4` gets treated as another arch
 
 1. Add `detect_media_suffix(path)` beside `detect_archive_suffix(path)`.
 
+   Status: implemented.
+
 2. Add a probe result field or helper for `kind=MEDIA`.
+
+   Status: implemented as a helper (`is_valid_final_media`) rather than a new public probe kind, so top-level broad behavior is unchanged.
 
 3. Update nested candidate collection:
 
    - If file is a valid media file, do not return it as a nested candidate.
    - Exception: allow force mode for known disguise recipes or explicit user option.
+
+   Status: implemented for valid media only. Suspicious media still flows through.
 
 4. Replace the large single-file fallback:
 
@@ -114,6 +130,8 @@ This would stop the common case where a real `.mp4` gets treated as another arch
    - one big file with Apate archive restore -> candidate
    - one big file with media signature -> final payload
    - one big file unknown -> candidate only if `deep_unknown_single=true`
+
+   Status: partially implemented. Valid media is skipped; unknown large files are still candidates for compatibility.
 
 5. Add config switches:
 
@@ -159,4 +177,3 @@ Possible future improvement:
 - Optionally support inline comments, such as `123 # note`.
 - Optionally normalize full-width spaces.
 - Log both raw count and deduplicated count for easier auditing.
-

@@ -51,6 +51,52 @@ class RestoringTests(unittest.TestCase):
 
             self.assertEqual(probe.kind, ArchiveKind.UNKNOWN)
 
+    def test_inspector_detects_valid_media_without_overriding_archive(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            video = root / "payload.mp4"
+            video.write_bytes(b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 32)
+            fake_video_archive = root / "payload2.mp4"
+            fake_video_archive.write_bytes(b"PK\x03\x04fake zip")
+            inspector = ArchiveSignatureInspector()
+
+            self.assertEqual(inspector.detect_media_suffix(video), ".mp4")
+            self.assertTrue(inspector.is_valid_final_media(video))
+            self.assertFalse(inspector.is_valid_final_media(fake_video_archive))
+            self.assertEqual(inspector.probe_path(fake_video_archive).kind, ArchiveKind.ARCHIVE)
+
+    def test_nested_candidate_skips_single_valid_media_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            payload = root / "payload.mp4"
+            payload.write_bytes(b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 1024)
+            service = RestorationService([SuffixVariantBuilder(ArchiveSignatureInspector())])
+
+            candidates = service.build_post_extract_candidates(
+                root,
+                workspace=root / "variants",
+                min_archive_bytes=1,
+                final_single_bytes=1,
+            )
+
+            self.assertEqual(candidates, [])
+
+    def test_nested_candidate_keeps_large_unknown_media_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            payload = root / "payload.mp4"
+            payload.write_bytes(b"not a normal media header")
+            service = RestorationService([SuffixVariantBuilder(ArchiveSignatureInspector())])
+
+            candidates = service.build_post_extract_candidates(
+                root,
+                workspace=root / "variants",
+                min_archive_bytes=1,
+                final_single_bytes=1,
+            )
+
+            self.assertEqual(candidates, [payload])
+
     def test_suffix_variant_builder_plans_suffix_changes_without_copying(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

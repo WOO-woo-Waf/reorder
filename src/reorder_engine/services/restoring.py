@@ -91,6 +91,11 @@ class ArchiveSignatureInspector:
             ".wmv",
             ".flv",
             ".webm",
+            ".mp3",
+            ".flac",
+            ".ogg",
+            ".wav",
+            ".m4a",
             ".exe",
         }
     )
@@ -111,6 +116,46 @@ class ArchiveSignatureInspector:
             if header.startswith(signature):
                 return suffix
         return None
+
+    def detect_media_suffix(self, path: Path) -> str | None:
+        header = self.read_header(path, size=16)
+        suffix = path.suffix.lower()
+        if suffix in {".jpg", ".jpeg"} and header.startswith(b"\xff\xd8\xff"):
+            return ".jpg"
+        if suffix == ".png" and header.startswith(b"\x89PNG\r\n\x1a\n"):
+            return ".png"
+        if suffix == ".gif" and (header.startswith(b"GIF87a") or header.startswith(b"GIF89a")):
+            return ".gif"
+        if suffix == ".bmp" and header.startswith(b"BM"):
+            return ".bmp"
+        if suffix == ".webp" and header.startswith(b"RIFF") and header[8:12] == b"WEBP":
+            return ".webp"
+        if suffix in {".mp4", ".mov", ".m4a"} and len(header) >= 12 and header[4:8] == b"ftyp":
+            return suffix
+        if suffix in {".mkv", ".webm"} and header.startswith(b"\x1a\x45\xdf\xa3"):
+            return suffix
+        if suffix == ".avi" and header.startswith(b"RIFF") and header[8:12] == b"AVI ":
+            return ".avi"
+        if suffix == ".wav" and header.startswith(b"RIFF") and header[8:12] == b"WAVE":
+            return ".wav"
+        if suffix == ".mp3" and (header.startswith(b"ID3") or header.startswith((b"\xff\xfb", b"\xff\xf3", b"\xff\xf2"))):
+            return ".mp3"
+        if suffix == ".flac" and header.startswith(b"fLaC"):
+            return ".flac"
+        if suffix == ".ogg" and header.startswith(b"OggS"):
+            return ".ogg"
+        if suffix == ".flv" and header.startswith(b"FLV"):
+            return ".flv"
+        return None
+
+    def is_valid_final_media(self, path: Path) -> bool:
+        if path.suffix.lower() not in self._media_suffixes:
+            return False
+        if self.detect_archive_suffix(path) is not None:
+            return False
+        if self.probe_apate(path) is not None:
+            return False
+        return self.detect_media_suffix(path) is not None
 
     def looks_like_archive_name(self, name: str) -> bool:
         low = name.lower()
@@ -611,6 +656,8 @@ class _NestedArchivePostRule(PostExtractRule):
         direct_dirs = [p for p in folder.iterdir() if p.is_dir()]
         if len(direct_files) == 1 and not direct_dirs:
             only = direct_files[0]
+            if inspector.is_valid_final_media(only):
+                return []
             if inspector.looks_like_archive(only) or size_of(only) >= max(min_archive_bytes, final_single_bytes):
                 return [only]
 
@@ -619,7 +666,7 @@ class _NestedArchivePostRule(PostExtractRule):
         if archive_like:
             return archive_like[:5]
 
-        big_files = [p for p in files if size_of(p) >= final_single_bytes]
+        big_files = [p for p in files if size_of(p) >= final_single_bytes and not inspector.is_valid_final_media(p)]
         big_files.sort(key=size_of, reverse=True)
         return big_files[:1]
 
