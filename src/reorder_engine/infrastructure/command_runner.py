@@ -14,16 +14,25 @@ class CommandResult:
     exit_code: int
     stdout: str
     stderr: str
+    aborted: bool = False
 
 
 class ExternalCommandRunner:
-    def __init__(self, *, stream: bool = False, encoding: str | None = None, line_sink: Callable[[str], None] | None = None):
+    def __init__(
+        self,
+        *,
+        stream: bool = False,
+        encoding: str | None = None,
+        line_sink: Callable[[str], None] | None = None,
+        abort_on_line: Callable[[str], bool] | None = None,
+    ):
         self._stream = stream
         # Windows 上外部工具常用本地 ANSI 代码页输出（例如 cp936）。
         # 注意：当启用 PYTHONUTF8=1 时，getpreferredencoding(False) 往往会变成 utf-8，
         # 会导致外部工具的中文输出在日志里出现乱码；这里优先使用 locale.getencoding()。
         self._encoding = encoding or self._default_external_tool_encoding()
         self._line_sink = line_sink
+        self._abort_on_line = abort_on_line
 
     def _default_external_tool_encoding(self) -> str:
         if sys.platform.startswith("win"):
@@ -86,12 +95,19 @@ class ExternalCommandRunner:
         try:
             assert proc.stdout is not None
             for line in proc.stdout:
+                stripped = line.rstrip("\n")
                 if self._line_sink:
                     # line 自带 \n
-                    self._line_sink(line.rstrip("\n"))
+                    self._line_sink(stripped)
                 else:
                     print(line, end="")
                 collected.append(line)
+                if self._abort_on_line and self._abort_on_line(stripped):
+                    proc.kill()
+                    proc.stdout.close()
+                    proc.wait()
+                    out = "".join(collected)
+                    return CommandResult(ok=False, exit_code=130, stdout=out, stderr="aborted by output guard", aborted=True)
             proc.wait(timeout=timeout_sec)
         except subprocess.TimeoutExpired:
             proc.kill()

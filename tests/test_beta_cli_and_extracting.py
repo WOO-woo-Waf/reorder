@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-from reorder_engine.beta import build_parser
+from reorder_engine.beta import _should_abort_tool_line, build_parser
 from reorder_engine.domain.models import ArchiveKind, ArchiveProbe, ExtractionRequest, ExtractionResult, VolumeSet
+from reorder_engine.infrastructure.command_runner import ExternalCommandRunner
 from reorder_engine.interfaces.extracting import ExtractorStrategy
 from reorder_engine.services.extracting import ExtractionService
 
@@ -157,6 +159,29 @@ class BetaCliAndExtractingTests(unittest.TestCase):
 
             self.assertTrue(result.ok)
             self.assertEqual(first.calls, ["pw2"])
+
+    def test_streaming_runner_aborts_on_first_password_error_line(self) -> None:
+        seen: list[str] = []
+        runner = ExternalCommandRunner(
+            stream=True,
+            encoding="utf-8",
+            line_sink=seen.append,
+            abort_on_line=_should_abort_tool_line,
+        )
+
+        result = runner.run(
+            [
+                sys.executable,
+                "-c",
+                "import time; print('begin', flush=True); print('ERROR: Wrong password : file.jpg', flush=True); time.sleep(5); print('late', flush=True)",
+            ]
+        )
+
+        self.assertFalse(result.ok)
+        self.assertTrue(result.aborted)
+        self.assertEqual(result.exit_code, 130)
+        self.assertEqual(seen, ["begin", "ERROR: Wrong password : file.jpg"])
+        self.assertNotIn("late", result.stdout)
 
 
 if __name__ == "__main__":

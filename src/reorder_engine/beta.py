@@ -146,6 +146,20 @@ def _build_extractors(cfg, runner: ExternalCommandRunner, seven_zip_exe: Path | 
     return ordered
 
 
+def _should_abort_tool_line(line: str) -> bool:
+    normalized = line.lower()
+    return any(
+        token in normalized
+        for token in (
+            "wrong password",
+            "password is incorrect",
+            "incorrect password",
+            "invalid password",
+            "illegal password",
+        )
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
@@ -178,7 +192,7 @@ def main(argv: list[str] | None = None) -> int:
     def sink(line: str) -> None:
         tool_logger.info("TOOL: %s", line)
 
-    runner = ExternalCommandRunner(stream=not bool(args.dry_run), line_sink=sink)
+    runner = ExternalCommandRunner(stream=not bool(args.dry_run), line_sink=sink, abort_on_line=_should_abort_tool_line)
 
     if cfg.beta.flatten.enabled and not args.no_flatten:
         allow_inside = bool(cfg.beta.flatten.allow_inside_project_repo) or bool(args.allow_flatten_in_project)
