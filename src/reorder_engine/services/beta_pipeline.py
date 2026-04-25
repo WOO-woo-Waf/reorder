@@ -75,11 +75,13 @@ class BetaFolderPipeline:
         intermediate_dir = self._folder / "intermediate"
         final_root = self._folder / "final"
         error_dir = self._folder / "error_files"
+        deferred_volume_dir = self._folder / "deferred_volumes"
         if not dry_run:
             archives_dir.mkdir(parents=True, exist_ok=True)
             intermediate_dir.mkdir(parents=True, exist_ok=True)
             final_root.mkdir(parents=True, exist_ok=True)
             error_dir.mkdir(parents=True, exist_ok=True)
+            deferred_volume_dir.mkdir(parents=True, exist_ok=True)
 
         all_files = [p for p in self._folder.glob("*") if p.is_file()]
         all_files = [p for p in all_files if p.name not in self._exclude_names and p.suffix.lower() not in self._exclude_exts]
@@ -89,7 +91,7 @@ class BetaFolderPipeline:
         ok = 0
         fail = 0
         for volume_set in volume_sets:
-            if self._is_in_result_dirs(volume_set, {success_dir, intermediate_dir, final_root, error_dir}):
+            if self._is_in_result_dirs(volume_set, {success_dir, intermediate_dir, final_root, error_dir, deferred_volume_dir}):
                 continue
 
             package_name = self._package_name(volume_set.entry.name)
@@ -152,6 +154,7 @@ class BetaFolderPipeline:
             self._remove_empty_dirs(final_root)
             self._remove_empty_dirs(error_dir)
             self._remove_empty_dirs(success_dir)
+            self._remove_empty_dirs(deferred_volume_dir)
         return BetaRunResult(ok_count=ok, fail_count=fail, total=ok + fail)
 
     def _entry_candidates(self, vs: VolumeSet, workspace: Path, *, dry_run: bool) -> list[CandidateAttempt]:
@@ -292,8 +295,17 @@ class BetaFolderPipeline:
                 return False, None, f"depth={depth} no candidates"
 
             extracted = False
+            deferred = False
             for index, attempt in enumerate(candidates, start=1):
                 candidate = attempt.path
+                if self._is_deferred_volume_fragment(candidate):
+                    target = self._defer_volume_fragment(candidate, dry_run=dry_run)
+                    self._rollback_attempt(attempt, dry_run=dry_run)
+                    if target is not None:
+                        self._emit(f"DEFER-VOLUME: {candidate.name} -> {target}")
+                    deferred = True
+                    continue
+
                 request_vs = VolumeSet(entry=candidate, members=(candidate,), group_key=f"{package_name}:{depth}:{index}")
                 target_dir_root = package_root / f"L{depth + 1}" / self._safe_name(candidate.name)
                 res, target_dir = self._extract_with_variant_attempts(
@@ -311,6 +323,9 @@ class BetaFolderPipeline:
                     break
                 self._rollback_attempt(attempt, dry_run=dry_run)
             if not extracted:
+                if deferred and not self._has_any_file(current_dir):
+                    self._remove_empty_dirs(current_dir)
+                    return True, None, f"depth={depth} reason=deferred-volume-fragments"
                 if self._has_any_file(current_dir):
                     final_dir = self._promote_final_dir(current_dir, final_root, package_name=package_name, dry_run=dry_run)
                     return True, final_dir, f"depth={depth} reason=candidates-failed"
@@ -500,6 +515,51 @@ class BetaFolderPipeline:
         if match is None:
             return None
         return path.with_name(f"{match.group('base')}.{match.group('ext')}.{match.group('idx')}")
+
+    def _deferred_volume_group_name(self, path: Path) -> str | None:
+        name = path.name
+        match = re.match(r"^(?P<base>.+)\.(?P<ext>7z|zip)\.(?P<idx>\d{3})$", name, flags=re.IGNORECASE)
+        if match is not None:
+            return f"{match.group('base')}.{match.group('ext')}"
+
+        match = re.match(r"^(?P<base>.+)\.(?P<idx>\d{3})\.(?P<ext>7z|zip|rar)$", name, flags=re.IGNORECASE)
+        if match is not None:
+            return f"{match.group('base')}.{match.group('ext')}"
+
+        match = re.match(r"^(?P<base>.+)\.part(?P<idx>\d{1,3})\.(?P<ext>rar|zip|7z)$", name, flags=re.IGNORECASE)
+        if match is not None:
+            return f"{match.group('base')}.{match.group('ext')}"
+
+        match = re.match(r"^(?P<base>.+)\.(?P<ext>[rz])(?P<idx>\d{2})$", name, flags=re.IGNORECASE)
+        if match is not None:
+            archive_ext = "rar" if match.group("ext").lower() == "r" else "zip"
+            return f"{match.group('base')}.{archive_ext}"
+
+        match = re.match(r"^(?P<base>.+)\.(?P<idx>\d{3})$", name, flags=re.IGNORECASE)
+        if match is not None:
+            return match.group("base")
+
+        return None
+
+    def _is_deferred_volume_fragment(self, path: Path) -> bool:
+        return self._deferred_volume_group_name(path) is not None
+
+    def _defer_volume_fragment(self, path: Path, *, dry_run: bool) -> Path | None:
+        group_name = self._deferred_volume_group_name(path)
+        if group_name is None:
+            return None
+
+        dest_dir = self._folder / "deferred_volumes" / self._safe_name(group_name)
+        target = dest_dir / path.name
+        if target.exists():
+            target = self._duplicate_target(dest_dir, target_name=path.name, package_name=self._safe_name(group_name))
+        if dry_run:
+            self._emit(f"MOVE(dry): {path} -> {target}")
+            return target
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(path), str(target))
+        self._remove_empty_dirs(path.parent)
+        return target
 
     def _promote_final_dir(self, current_dir: Path, final_root: Path, *, package_name: str, dry_run: bool) -> Path:
         leaf = deepest_wrapper_dir(current_dir) if self._path_compress else current_dir

@@ -6,7 +6,8 @@ from pathlib import Path
 
 from reorder_engine.domain.models import ArchiveKind, ArchiveProbe, VolumeSet
 from reorder_engine.domain.models import ExtractionResult
-from reorder_engine.services.beta_pipeline import BetaFolderPipeline
+from reorder_engine.services.beta_pipeline import BetaFolderPipeline, CandidateAttempt
+from reorder_engine.services.config import BetaDeepExtractConfig
 
 
 class BetaPipelineTests(unittest.TestCase):
@@ -169,6 +170,49 @@ class BetaPipelineTests(unittest.TestCase):
             )
 
             self.assertEqual(extractor.seen, "secret")
+
+    def test_defer_volume_fragment_moves_to_group_folder(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fragment = root / "payload.zip.001"
+            fragment.write_bytes(b"PK\x03\x04")
+            pipeline = self._make_pipeline(root)
+
+            moved = pipeline._defer_volume_fragment(fragment, dry_run=False)
+
+            self.assertEqual(moved, root / "deferred_volumes" / "payload.zip" / "payload.zip.001")
+            self.assertTrue(moved.exists())
+            self.assertFalse(fragment.exists())
+
+    def test_continue_after_extract_defers_nested_volume_fragment_without_extracting(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            start_dir = root / "intermediate" / "pkg" / "L1"
+            start_dir.mkdir(parents=True)
+            fragment = start_dir / "payload.zip.001"
+            fragment.write_bytes(b"PK\x03\x04")
+            pipeline = self._make_pipeline(root)
+            pipeline._deep = BetaDeepExtractConfig(enabled=True, max_depth=2, min_archive_mb=1, final_single_mb=1)
+            pipeline._nested_candidates = lambda *args, **kwargs: [CandidateAttempt(fragment)]
+
+            class _Extractor:
+                def extract_one(self, *args, **kwargs):
+                    raise AssertionError("deferred split volumes should not be extracted in this pass")
+
+            pipeline._extractor = _Extractor()
+
+            ok, final_dir, message = pipeline._continue_after_extract(
+                package_name="pkg",
+                package_root=root / "intermediate" / "pkg",
+                start_dir=start_dir,
+                final_root=root / "final",
+                dry_run=False,
+            )
+
+            self.assertTrue(ok)
+            self.assertIsNone(final_dir)
+            self.assertIn("deferred-volume-fragments", message or "")
+            self.assertTrue((root / "deferred_volumes" / "payload.zip" / "payload.zip.001").exists())
 
 
 if __name__ == "__main__":

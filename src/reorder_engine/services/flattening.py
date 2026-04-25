@@ -65,7 +65,7 @@ def flatten_safety_check(
 
 class FolderFlattener:
     def flatten(self, root: Path, *, dry_run: bool = False, exclude_dirs: set[str] | None = None) -> list[FlattenMoveRecord]:
-        user_exclude = exclude_dirs or {"success", "failed", "error_files", "tools", "__pycache__", "intermediate", "final"}
+        user_exclude = exclude_dirs or {"success", "failed", "error_files", "deferred_volumes", "tools", "__pycache__", "intermediate", "final"}
         excluded = set(user_exclude) | set(_MANDATORY_EXCLUDE_DIR_PARTS)
         moves: list[FlattenMoveRecord] = []
 
