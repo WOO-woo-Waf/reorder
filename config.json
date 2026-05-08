@@ -10,7 +10,6 @@
         "final",
         "failed",
         "error_files",
-        "deferred_volumes",
         "archives_success",
         "resources",
         "tests",
