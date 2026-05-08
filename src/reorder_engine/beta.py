@@ -5,7 +5,6 @@ import logging
 from pathlib import Path
 
 from reorder_engine.infrastructure.command_runner import ExternalCommandRunner
-from reorder_engine.infrastructure.sevenzip_bootstrap import SevenZipBootstrapper
 from reorder_engine.services.beta_pipeline import BetaFolderPipeline
 from reorder_engine.services.config import ConfigManager
 from reorder_engine.services.decrypting import DecryptionService, PassthroughDecryptor
@@ -13,6 +12,7 @@ from reorder_engine.services.extracting import BandizipExtractor, ExtractionServ
 from reorder_engine.services.flattening import FolderFlattener, flatten_safety_check
 from reorder_engine.services.grouping import DefaultVolumeGroupingStrategy
 from reorder_engine.services.cleaning import DefaultGroupingNormalizer
+from reorder_engine.infrastructure.tool_bootstrap import ExtractToolBootstrapper
 from reorder_engine.services.keywords import KeywordRepository
 from reorder_engine.services.passwords import PasswordRepository
 from reorder_engine.services.restoring import (
@@ -32,6 +32,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--allow-flatten-in-project", action="store_true", help="Allow flattening inside the repository checkout.")
     parser.add_argument("--dry-run", action="store_true", help="Plan only. Do not move, copy, or extract files.")
     parser.add_argument("--self-check", action="store_true", help="Probe configured command-line tools and print their status.")
+    parser.add_argument("--prepare-tools", action="store_true", help="Prepare configured Windows extraction tools and exit.")
     parser.add_argument("--log", default=None, help="Main log file path.")
     parser.add_argument("--tool-log", default=None, help="Tool output log file path.")
     parser.add_argument("--deep-extract", action="store_true", help="Enable recursive nested extraction.")
@@ -167,14 +168,28 @@ def main(argv: list[str] | None = None) -> int:
     workdir = Path(args.workdir) if args.workdir else Path.cwd()
     config_path = Path(args.config) if args.config else (workdir / "config.json")
 
+    cfg_mgr = ConfigManager(config_path, root_dir=workdir)
+    cfg_mgr.load_or_create_default()
+    cfg = cfg_mgr.to_app_config()
+
+    runner = ExternalCommandRunner(stream=not bool(args.dry_run), line_sink=None, abort_on_line=_should_abort_tool_line)
+    if args.prepare_tools:
+        summary = ExtractToolBootstrapper().ensure_all(cfg, cfg_mgr)
+        cfg = cfg_mgr.to_app_config()
+        for result in summary.results:
+            status = "OK" if result.ok else ("REQUIRED-MISSING" if result.required else "OPTIONAL-MISSING")
+            exe_text = str(result.exe) if result.exe else "<none>"
+            print(f"PREPARE-TOOLS[{status}] {result.name}: {exe_text} ({result.message})")
+        if args.self_check:
+            seven = summary.get("7z")
+            _self_check(folder, cfg, runner=runner, seven_zip_exe=seven.exe if seven else None)
+        return 0 if summary.required_ok else 3
+
     log_path = Path(args.log) if args.log else (folder / "reorder_engine.log")
     tool_log_path = Path(args.tool_log) if args.tool_log else (folder / "reorder_engine.tools.log")
     logger, tool_logger = _setup_logging(folder, log_path, tool_log_path)
 
     logger.info("START: folder=%s workdir=%s config=%s dry_run=%s", folder, workdir, config_path, bool(args.dry_run))
-    cfg_mgr = ConfigManager(config_path, root_dir=workdir)
-    cfg_mgr.load_or_create_default()
-    cfg = cfg_mgr.to_app_config()
 
     _ = KeywordRepository().load(cfg.paths.keywords)
     passwords = PasswordRepository().load(cfg.paths.passwords)
@@ -207,14 +222,16 @@ def main(argv: list[str] | None = None) -> int:
             moves = FolderFlattener().flatten(folder, dry_run=bool(args.dry_run), exclude_dirs=set(cfg.beta.flatten.exclude_dirs))
             logger.info("FLATTEN: moved=%s", len(moves))
 
-    ensure = SevenZipBootstrapper().ensure(cfg, cfg_mgr)
+    tool_summary = ExtractToolBootstrapper().ensure_all(cfg, cfg_mgr)
+    cfg = cfg_mgr.to_app_config()
+    ensure = tool_summary.get("7z")
     if args.self_check:
-        if not ensure.ok:
+        if ensure and not ensure.ok:
             logger.warning("%s", ensure.message)
-        _self_check(folder, cfg, runner=runner, seven_zip_exe=ensure.exe)
+        _self_check(folder, cfg, runner=runner, seven_zip_exe=ensure.exe if ensure else None)
 
-    if not ensure.ok:
-        logger.error("%s", ensure.message)
+    if not ensure or not ensure.ok:
+        logger.error("%s", ensure.message if ensure else "7z not checked")
         return 3
 
     inspector = ArchiveSignatureInspector()

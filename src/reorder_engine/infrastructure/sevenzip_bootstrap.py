@@ -25,8 +25,8 @@ class SevenZipBootstrapper:
             return SevenZipEnsureResult(True, cfg.tools.seven_zip.exe, "7z found from config")
 
         # 2) tools/ 默认位置
-        tools_guess = cfg.root_dir / "tools" / "7zip" / "7z.exe"
-        if tools_guess.exists():
+        tools_guess = self._find_local_7z(cfg)
+        if tools_guess:
             cfg_mgr.set_seven_zip_exe(tools_guess)
             cfg_mgr.save()
             return SevenZipEnsureResult(True, tools_guess, "7z found from tools/7zip")
@@ -54,6 +54,24 @@ class SevenZipBootstrapper:
             return SevenZipEnsureResult(True, exe, "7z downloaded and configured")
 
         return SevenZipEnsureResult(False, None, "7z download finished but exe not found")
+
+    def _find_local_7z(self, cfg: AppConfig) -> Path | None:
+        install_dir = cfg.tools.seven_zip.install_dir
+        direct_candidates = [
+            install_dir / "7z.exe",
+            install_dir / "Files" / "7-Zip" / "7z.exe",
+            cfg.root_dir / "tools" / "7zip" / "7z.exe",
+            cfg.root_dir / "tools" / "7zip" / "Files" / "7-Zip" / "7z.exe",
+        ]
+        for candidate in direct_candidates:
+            if candidate.exists():
+                return candidate
+
+        if install_dir.exists():
+            candidates = sorted(install_dir.rglob("7z.exe"), key=lambda p: (len(str(p)), str(p).lower()))
+            if candidates:
+                return candidates[0]
+        return None
 
     def _download_and_extract(self, cfg: AppConfig) -> Path | None:
         install_dir = cfg.tools.seven_zip.install_dir

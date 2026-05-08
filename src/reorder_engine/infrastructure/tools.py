@@ -15,6 +15,9 @@ def _resolve_tool(exe: str | None, candidates: list[str]) -> str | None:
         p = tools_dir / name
         if p.exists():
             return str(p)
+        matches = sorted(tools_dir.rglob(name), key=lambda x: (len(str(x)), str(x).lower())) if tools_dir.exists() else []
+        if matches:
+            return str(matches[0])
     # 再从 PATH 查找
     for name in candidates:
         found = shutil.which(name)

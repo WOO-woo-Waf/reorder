@@ -3,7 +3,17 @@
 把你要“随项目携带”的解压/还原工具放在这里，代码会优先从该目录加载。
 
 建议文件名（Windows）：
-- `tools/7zip/7z.exe`（推荐）
+- `tools/7zip/7z.exe` 或 `tools/7zip/Files/7-Zip/7z.exe`（推荐）
+- `tools/rar/Rar.exe` 或 `tools/rar/UnRAR.exe`
+- `tools/bandizip/bz.exe`
+
+也可以把私有自用的工具包放到：
+- `tools/_packages/winrar-cli.zip`
+- `tools/_packages/bandizip-cli.zip`
+
+然后运行项目根目录的 `prepare_extract_tools.bat`。脚本会把 ZIP 解包到 `tools/rar/`、`tools/bandizip/`，并把找到的 EXE 路径写回 `config.json`。
+
+注意：WinRAR/RAR 与 Bandizip 是第三方软件。提交 ZIP 到 Git 前请确认许可证允许分发，不要提交个人授权文件，例如 `rarreg.key`。
 
 ## Apate 伪装还原（解密准备）
 
