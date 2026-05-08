@@ -72,7 +72,13 @@ class DefaultVolumeGroupingStrategy(VolumeGroupingStrategy):
             base_norm = self._normalizer.normalize_for_grouping(base)
             return f"num:{base_norm}"
 
-        # 6) 主文件也要与老式分卷共用同一个分组键
+        # 6) 处理 .001.pdf / .002.txt 这类数字分卷后面混入伪尾缀的情况。
+        m = re.match(r"^(?P<base>.+)\.(?P<idx>\d{3})\.[^.]+$", name, flags=re.IGNORECASE)
+        if m:
+            base_norm = self._normalizer.normalize_for_grouping(m.group("base"))
+            return f"num:{base_norm}"
+
+        # 7) 主文件也要与老式分卷共用同一个分组键
         suffix = p.suffix.lower()
         if suffix == ".rar":
             stem_norm = self._normalizer.normalize_for_grouping(p.stem)
@@ -81,7 +87,7 @@ class DefaultVolumeGroupingStrategy(VolumeGroupingStrategy):
             stem_norm = self._normalizer.normalize_for_grouping(p.stem)
             return f"zxx:{stem_norm}.zip"
 
-        # 7) 单卷：按 stem+suffix
+        # 8) 单卷：按 stem+suffix
         stem_norm = self._normalizer.normalize_for_grouping(p.stem)
         return f"single:{stem_norm}{suffix}"
 
@@ -106,6 +112,9 @@ class DefaultVolumeGroupingStrategy(VolumeGroupingStrategy):
                 return p
         for p in members:
             if p.suffix.lower() == ".001":
+                return p
+        for p in members:
+            if re.search(r"\.001\.[^.]+$", p.name, flags=re.IGNORECASE):
                 return p
         for p in members:
             if p.suffix.lower() == ".rar":

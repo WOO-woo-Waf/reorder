@@ -36,6 +36,8 @@ class ArchiveDiscoveryService:
             return True
         if re.fullmatch(r"\.\d{3}", suf):
             return True
+        if re.search(r"\.\d{3}\.[^.]+$", p.name, flags=re.IGNORECASE):
+            return True
         if p.name.lower().endswith((".7z.001", ".zip.001")):
             return True
         if suf.startswith(".r") and len(suf) == 4 and suf[2:].isdigit():

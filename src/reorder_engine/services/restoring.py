@@ -201,6 +201,7 @@ class ArchiveSignatureInspector:
             r"\.7z\.001",
             r"\.zip\.001",
             r"\.part\d{1,3}\.(rar|zip|7z)",
+            r"\.\d{3}",
             r"\.rar",
             r"\.zip",
             r"\.7z",

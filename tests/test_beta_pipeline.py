@@ -147,6 +147,34 @@ class BetaPipelineTests(unittest.TestCase):
             self.assertTrue(sfx.exists())
             self.assertTrue(second.exists())
 
+    def test_numbered_tail_volume_set_trims_disguised_suffix(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = root / "p.001.pdf"
+            second = root / "p.002"
+            fourth = root / "p.004"
+            first.write_bytes(b"one")
+            second.write_bytes(b"two")
+            fourth.write_bytes(b"four")
+            pipeline = self._make_pipeline(root)
+
+            normalized = pipeline._normalize_numbered_tail_volume_set(
+                VolumeSet(entry=first, members=(first, second, fourth), group_key="num:p"),
+                dry_run=False,
+            )
+
+            self.assertIsNotNone(normalized)
+            normalized_vs, session = normalized
+            self.assertEqual(normalized_vs.entry.name, "p.001")
+            self.assertEqual({path.name for path in normalized_vs.members}, {"p.001", "p.002", "p.004"})
+            self.assertFalse(first.exists())
+
+            session.rollback_best_effort()
+
+            self.assertTrue(first.exists())
+            self.assertTrue(second.exists())
+            self.assertTrue(fourth.exists())
+
     def test_partial_single_output_moves_to_error_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

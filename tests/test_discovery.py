@@ -26,6 +26,16 @@ class DiscoveryTests(unittest.TestCase):
 
             self.assertEqual({path.name for path in discovered}, {path.name for path in paths})
 
+    def test_discovery_accepts_numbered_part_with_extra_tail_suffix(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            part = root / "p.001.pdf"
+            part.write_text("x", encoding="utf-8")
+
+            discovered = ArchiveDiscoveryService().discover(root, recursive=False)
+
+            self.assertIn(part, discovered)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -73,6 +73,21 @@ class GroupingTests(unittest.TestCase):
             self.assertEqual(groups[0].entry.name, "A1651.7z.exe")
             self.assertEqual({member.name for member in groups[0].members}, {"A1651.7z.exe", "A1651.7z.002"})
 
+    def test_grouping_merges_numbered_volumes_with_disguised_entry_suffix(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = root / "p.001.pdf"
+            second = root / "p.002"
+            fourth = root / "p.004"
+            for path in (first, second, fourth):
+                path.write_text("x", encoding="utf-8")
+
+            groups = DefaultVolumeGroupingStrategy(DefaultGroupingNormalizer()).group([first, second, fourth])
+
+            self.assertEqual(len(groups), 1)
+            self.assertEqual(groups[0].entry.name, "p.001.pdf")
+            self.assertEqual({member.name for member in groups[0].members}, {"p.001.pdf", "p.002", "p.004"})
+
 
 if __name__ == "__main__":
     unittest.main()

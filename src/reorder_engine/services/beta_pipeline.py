@@ -245,6 +245,27 @@ class BetaFolderPipeline:
             )
             return result, None
 
+        numbered_tail_normalized = self._normalize_numbered_tail_volume_set(vs, dry_run=dry_run)
+        if numbered_tail_normalized is not None:
+            normalized_vs, session = numbered_tail_normalized
+            self._emit(
+                f"VOLUME-RENAME-TRY: {vs.entry.name} -> {normalized_vs.entry.name} rule=numbered-tail-volume"
+            )
+            result, normalized_out_dir = self._extract_with_variant_attempts(
+                normalized_vs,
+                layer_root / "attempt_1_numbered_tail_renamed",
+                dry_run=dry_run,
+                preferred_password=preferred_password,
+            )
+            if result.ok or (normalized_out_dir is not None and self._has_any_file(normalized_out_dir)):
+                return result, normalized_out_dir
+
+            session.rollback_best_effort(dry_run=dry_run)
+            self._emit(
+                f"VOLUME-RENAME-ROLLBACK: {normalized_vs.entry.name} -> {vs.entry.name} rule=numbered-tail-volume"
+            )
+            return result, None
+
         last, out_dir = self._extract_with_variant_attempts(
             vs,
             layer_root / "attempt_1",
@@ -485,6 +506,65 @@ class BetaFolderPipeline:
             return None
         self._emit(f"APATE-FORCE-TRY: {path.name}")
         return CandidateAttempt(restored, tuple(rollbacks))
+
+    def _normalize_numbered_tail_volume_set(
+        self,
+        vs: VolumeSet,
+        *,
+        dry_run: bool,
+    ) -> tuple[VolumeSet, RenameSession] | None:
+        if len(vs.members) < 2:
+            return None
+
+        plans: list[tuple[Path, Path]] = []
+        changed = False
+        for member in vs.members:
+            target = self._numbered_tail_volume_target(member)
+            if target is None:
+                return None
+            if target != member:
+                changed = True
+            if target.exists() and target not in vs.members:
+                self._emit(f"VOLUME-RENAME-SKIP: target exists {target.name}")
+                return None
+            plans.append((member, target))
+
+        if not changed:
+            return None
+
+        targets = [target for _src, target in plans]
+        if len(set(targets)) != len(targets):
+            return None
+
+        session = RenameSession.create(self._renamer)
+        renamed_members: list[Path] = []
+        entry: Path | None = None
+        try:
+            for src, dst in plans:
+                renamed = session.rename(src, dst, dry_run=dry_run)
+                renamed_members.append(renamed)
+                if src == vs.entry:
+                    entry = renamed
+        except OSError:
+            session.rollback_best_effort(dry_run=dry_run)
+            raise
+
+        return (
+            VolumeSet(
+                entry=entry or renamed_members[0],
+                members=tuple(renamed_members),
+                group_key=vs.group_key,
+            ),
+            session,
+        )
+
+    def _numbered_tail_volume_target(self, path: Path) -> Path | None:
+        if re.match(r"^.+\.\d{3}$", path.name, flags=re.IGNORECASE):
+            return path
+        match = re.match(r"^(?P<base>.+)\.(?P<idx>\d{3})\.[^.]+$", path.name, flags=re.IGNORECASE)
+        if match is None:
+            return None
+        return path.with_name(f"{match.group('base')}.{match.group('idx')}")
 
     def _normalize_middle_numbered_volume_set(
         self,

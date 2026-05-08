@@ -150,6 +150,20 @@ class RestoringTests(unittest.TestCase):
             seven_zip_plan = next(plan for plan in plans if plan.target.suffix == ".7z")
             self.assertEqual(seven_zip_plan.preferred_tool, "bandizip")
 
+    def test_numbered_tail_suffix_is_trimmed_as_variant_not_direct_archive(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "p.001.pdf"
+            source.write_bytes(b"plain")
+            service = RestorationService([SuffixVariantBuilder(ArchiveSignatureInspector())])
+
+            probe = service.identify(source)
+            plans = service.variant_plans(source)
+
+            self.assertEqual(probe.kind, ArchiveKind.VARIANT)
+            self.assertEqual(probe.embedded_archive_name, "p.001")
+            self.assertIn(root / "p.001", [plan.target for plan in plans])
+
     def test_jpg_and_exe_variants_try_rar_before_zip_and_7z(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
