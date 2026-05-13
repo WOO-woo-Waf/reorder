@@ -30,7 +30,7 @@ class ApateProbe:
     reason: str | None = None
 
 
-def probe_apate_file(file_path: str | os.PathLike[str], *, max_mask_length: int = 8 * 1024 * 1024) -> ApateProbe:
+def probe_apate_file(file_path: str | os.PathLike[str], *, max_mask_length: int = 64 * 1024 * 1024) -> ApateProbe:
     src = Path(file_path)
     if not src.is_file():
         return ApateProbe(ok=False, reason="missing-file")

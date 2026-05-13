@@ -91,6 +91,35 @@ class BetaPipelineTests(unittest.TestCase):
             self.assertEqual(attempt.path, media)
             self.assertEqual(attempt.rollbacks, ("rollback",))
 
+    def test_force_apate_attempt_repeats_for_three_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            media = root / "1190-Three.mp4"
+            media.write_bytes(b"plain")
+            calls: list[Path] = []
+
+            def force(_self, path: Path, dry_run: bool = False):
+                _ = dry_run
+                calls.append(path)
+                return path, [f"rollback-{len(calls)}"]
+
+            pipeline = self._make_pipeline(root)
+            pipeline._restore = type(
+                "Restore",
+                (),
+                {
+                    "identify": lambda _self, path: ArchiveProbe(path=path, kind=ArchiveKind.UNKNOWN),
+                    "force_apate_restore_with_rollbacks": force,
+                },
+            )()
+
+            attempt = pipeline._force_apate_attempt_if_useful(media, dry_run=False)
+
+            self.assertIsNotNone(attempt)
+            self.assertEqual(len(calls), 3)
+            self.assertEqual(attempt.path, media)
+            self.assertEqual(attempt.rollbacks, ("rollback-1", "rollback-2", "rollback-3"))
+
     def test_package_name_ignores_middle_numbered_volume_tail(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -145,6 +174,32 @@ class BetaPipelineTests(unittest.TestCase):
             session.rollback_best_effort()
 
             self.assertTrue(sfx.exists())
+            self.assertTrue(second.exists())
+
+    def test_disguised_split_suffix_normalizes_to_numbered_7z_volumes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = root / "evil.7z"
+            second = root / "evil.7z.zip"
+            first.write_bytes(b"one")
+            second.write_bytes(b"two")
+            pipeline = self._make_pipeline(root)
+
+            normalized = pipeline._normalize_disguised_split_suffix_volume_set(
+                VolumeSet(entry=first, members=(first, second), group_key="split:evil.7z"),
+                dry_run=False,
+            )
+
+            self.assertIsNotNone(normalized)
+            normalized_vs, session = normalized
+            self.assertEqual(normalized_vs.entry.name, "evil.7z.001")
+            self.assertEqual({path.name for path in normalized_vs.members}, {"evil.7z.001", "evil.7z.002"})
+            self.assertFalse(first.exists())
+            self.assertFalse(second.exists())
+
+            session.rollback_best_effort()
+
+            self.assertTrue(first.exists())
             self.assertTrue(second.exists())
 
     def test_numbered_tail_volume_set_trims_disguised_suffix(self) -> None:

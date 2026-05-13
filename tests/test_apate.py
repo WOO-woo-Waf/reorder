@@ -71,6 +71,27 @@ class ApateTests(unittest.TestCase):
             self.assertTrue(probe.ok)
             self.assertEqual(probe.original_head[:4], b"PK\x03\x04")
 
+    def test_probe_and_reveal_allow_large_media_mask_head(self) -> None:
+        module = _load_apate()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mask_len = 8 * 1024 * 1024 + 1
+            mask = b"\x00\x00\x00\x20ftypisom" + (b"\x00" * (mask_len - 12))
+            original = b"PK\x03\x04" + (b"\x00" * (mask_len - 4)) + b"payload"
+            disguised = _make_disguised(original, mask)
+            src = root / "large-mask.mp4"
+            out = root / "large-mask.out"
+            src.write_bytes(disguised)
+
+            probe = module.probe_apate_file(src)
+            ok = module.apate_official_reveal(src, output_path=out, quiet=True)
+
+            self.assertTrue(probe.ok)
+            self.assertEqual(probe.mask_head_length, mask_len)
+            self.assertEqual(probe.original_head[:4], b"PK\x03\x04")
+            self.assertTrue(ok)
+            self.assertEqual(out.read_bytes(), original)
+
     def test_redisguise_in_place_restores_disguised_bytes(self) -> None:
         module = _load_apate()
         with tempfile.TemporaryDirectory() as tmp:

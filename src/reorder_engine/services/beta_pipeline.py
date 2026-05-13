@@ -224,6 +224,27 @@ class BetaFolderPipeline:
         dry_run: bool,
         preferred_password: str | None = None,
     ) -> tuple[ExtractionResult, Path | None]:
+        disguised_split_normalized = self._normalize_disguised_split_suffix_volume_set(vs, dry_run=dry_run)
+        if disguised_split_normalized is not None:
+            normalized_vs, session = disguised_split_normalized
+            self._emit(
+                f"VOLUME-RENAME-TRY: {vs.entry.name} -> {normalized_vs.entry.name} rule=disguised-split-suffix"
+            )
+            result, normalized_out_dir = self._extract_with_variant_attempts(
+                normalized_vs,
+                layer_root / "attempt_1_disguised_split_renamed",
+                dry_run=dry_run,
+                preferred_password=preferred_password,
+            )
+            if result.ok or (normalized_out_dir is not None and self._has_any_file(normalized_out_dir)):
+                return result, normalized_out_dir
+
+            session.rollback_best_effort(dry_run=dry_run)
+            self._emit(
+                f"VOLUME-RENAME-ROLLBACK: {normalized_vs.entry.name} -> {vs.entry.name} rule=disguised-split-suffix"
+            )
+            return result, None
+
         sfx_normalized = self._normalize_sfx_volume_set(vs, dry_run=dry_run)
         if sfx_normalized is not None:
             normalized_vs, session = sfx_normalized
@@ -501,11 +522,96 @@ class BetaFolderPipeline:
         fn = getattr(self._restore, "force_apate_restore_with_rollbacks", None)
         if not callable(fn):
             return None
-        restored, rollbacks = fn(path, dry_run=dry_run)
+        rounds = self._force_apate_rounds_from_name(path.name)
+        restored = path
+        all_rollbacks = []
+        for _ in range(rounds):
+            restored, rollbacks = fn(restored, dry_run=dry_run)
+            if restored is None:
+                break
+            all_rollbacks.extend(rollbacks)
         if restored is None:
             return None
         self._emit(f"APATE-FORCE-TRY: {path.name}")
-        return CandidateAttempt(restored, tuple(rollbacks))
+        return CandidateAttempt(restored, tuple(all_rollbacks))
+
+    def _force_apate_rounds_from_name(self, name: str) -> int:
+        low = name.lower()
+        markers = (
+            ("three", 3),
+            ("triple", 3),
+            ("two", 2),
+            ("double", 2),
+            ("one", 1),
+            ("single", 1),
+        )
+        for marker, rounds in markers:
+            if re.search(rf"(^|[^a-z0-9]){marker}([^a-z0-9]|$)", low):
+                return rounds
+        return 1
+
+    def _normalize_disguised_split_suffix_volume_set(
+        self,
+        vs: VolumeSet,
+        *,
+        dry_run: bool,
+    ) -> tuple[VolumeSet, RenameSession] | None:
+        if len(vs.members) != 2:
+            return None
+
+        bare: Path | None = None
+        match: re.Match[str] | None = None
+        for member in vs.members:
+            member_match = re.match(r"^(?P<base>.+)\.(?P<ext>7z|zip|rar)$", member.name, flags=re.IGNORECASE)
+            if member_match is not None:
+                bare = member
+                match = member_match
+                break
+        if bare is None or match is None:
+            return None
+
+        disguised_pattern = re.compile(
+            rf"^{re.escape(bare.name)}\.(zip|jpg|jpeg|png|webp|mp4|mkv|avi|mov|exe)$",
+            flags=re.IGNORECASE,
+        )
+        disguised = next((member for member in vs.members if member != bare and disguised_pattern.match(member.name)), None)
+        if disguised is None:
+            return None
+
+        ext = match.group("ext")
+        plans = [
+            (bare, bare.with_name(f"{bare.name}.001")),
+            (disguised, bare.with_name(f"{match.group('base')}.{ext}.002")),
+        ]
+        targets = [target for _src, target in plans]
+        if len(set(targets)) != len(targets):
+            return None
+        for target in targets:
+            if target.exists() and target not in vs.members:
+                self._emit(f"VOLUME-RENAME-SKIP: target exists {target.name}")
+                return None
+
+        session = RenameSession.create(self._renamer)
+        renamed_members: list[Path] = []
+        entry: Path | None = None
+        try:
+            for src, dst in plans:
+                renamed = session.rename(src, dst, dry_run=dry_run)
+                renamed_members.append(renamed)
+                if src == bare:
+                    entry = renamed
+        except OSError:
+            session.rollback_best_effort(dry_run=dry_run)
+            raise
+
+        return (
+            VolumeSet(
+                entry=entry or renamed_members[0],
+                members=tuple(renamed_members),
+                group_key=vs.group_key,
+            ),
+            session,
+        )
 
     def _normalize_numbered_tail_volume_set(
         self,

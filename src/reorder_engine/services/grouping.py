@@ -31,6 +31,24 @@ class DefaultVolumeGroupingStrategy(VolumeGroupingStrategy):
     def _group_key(self, p: Path) -> str:
         name = p.name
 
+        m = re.match(
+            r"^(?P<base>[^.]+)\.(?P<ext>7z|zip|rar)\.(?P<tail>zip|jpg|jpeg|png|webp|mp4|mkv|avi|mov|exe)$",
+            name,
+            flags=re.IGNORECASE,
+        )
+        if m:
+            base_norm = self._normalizer.normalize_for_grouping(m.group("base"))
+            return f"split:{base_norm}.{m.group('ext').lower()}"
+
+        m = re.match(
+            r"^(?P<base>.+)\.(?P<ext>7z|zip|rar)(?:\.(?P<tail>zip|jpg|jpeg|png|webp|mp4|mkv|avi|mov|exe))?$",
+            name,
+            flags=re.IGNORECASE,
+        )
+        if m and "." not in m.group("base") and (m.group("tail") is not None or m.group("ext").lower() == "7z"):
+            base_norm = self._normalizer.normalize_for_grouping(m.group("base"))
+            return f"split:{base_norm}.{m.group('ext').lower()}"
+
         # 1) 处理 .7z.001 / .zip.001
         m = re.match(r"^(?P<base>.+)\.(7z|zip|rar)\.(?P<idx>\d{3})$", name, flags=re.IGNORECASE)
         if m:
@@ -103,6 +121,9 @@ class DefaultVolumeGroupingStrategy(VolumeGroupingStrategy):
                 return p
         for p in members:
             if re.search(r"\.(7z|zip|rar)\.exe$", p.name, flags=re.IGNORECASE):
+                return p
+        for p in members:
+            if re.search(r"\.(7z|zip|rar)$", p.name, flags=re.IGNORECASE):
                 return p
         for p in members:
             if re.search(r"\.0*1\.(7z|zip|rar)$", p.name, flags=re.IGNORECASE):
