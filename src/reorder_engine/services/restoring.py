@@ -55,6 +55,14 @@ class ApateRollbackRecord:
     rule_name: str
 
 
+@dataclass(frozen=True)
+class EmbeddedArchiveRollbackRecord:
+    path: Path
+    prefix: bytes
+    archive_suffix: str
+    rule_name: str
+
+
 class ArchiveSignatureInspector:
     _archive_signatures: tuple[tuple[bytes, str], ...] = (
         (b"PK\x03\x04", ".zip"),
@@ -102,6 +110,13 @@ class ArchiveSignatureInspector:
     _rar_suffixes: tuple[str, ...] = (".rar",)
     _zip_suffixes: tuple[str, ...] = (".zip", ".zip.001", ".z01")
     _seven_zip_suffixes: tuple[str, ...] = (".7z", ".7z.001")
+    _embedded_signatures: tuple[tuple[bytes, str], ...] = (
+        (b"PK\x03\x04", ".zip"),
+        (b"7z\xbc\xaf'\x1c", ".7z"),
+        (b"Rar!\x1a\x07\x00", ".rar"),
+        (b"Rar!\x1a\x07\x01\x00", ".rar"),
+    )
+    _embedded_suffixes: frozenset[str] = _media_suffixes | frozenset({".pdf"}) | frozenset(_archive_suffixes)
 
     def read_header(self, path: Path, size: int = 8) -> bytes:
         try:
@@ -172,6 +187,135 @@ class ArchiveSignatureInspector:
     def looks_like_archive(self, path: Path) -> bool:
         return self.looks_like_archive_name(path.name) or self.detect_archive_suffix(path) is not None
 
+    def probe_embedded_archive(
+        self,
+        path: Path,
+        *,
+        chunk_size: int = 4 * 1024 * 1024,
+        force_scan: bool = False,
+    ) -> ArchiveProbe | None:
+        if not path.is_file() or self.detect_archive_suffix(path) is not None:
+            return None
+        if not force_scan and not self._should_scan_for_embedded_archive(path):
+            return None
+
+        max_sig_len = max(len(signature) for signature, _ in self._embedded_signatures)
+        carry = b""
+        absolute = 0
+        try:
+            with open(path, "rb") as handle:
+                while True:
+                    chunk = handle.read(chunk_size)
+                    if not chunk:
+                        return None
+                    window = carry + chunk
+                    window_start = absolute - len(carry)
+                    candidates: list[tuple[int, bytes, str]] = []
+                    for signature, archive_suffix in self._embedded_signatures:
+                        pos = window.find(signature)
+                        while pos != -1:
+                            embedded_offset = window_start + pos
+                            if embedded_offset > 0:
+                                candidates.append((embedded_offset, signature, archive_suffix))
+                            pos = window.find(signature, pos + 1)
+                    for embedded_offset, signature, archive_suffix in sorted(candidates, key=lambda item: item[0]):
+                        if self._valid_embedded_signature(
+                                handle,
+                                path,
+                                embedded_offset,
+                                signature,
+                                archive_suffix,
+                        ):
+                            return ArchiveProbe(
+                                path=path,
+                                kind=ArchiveKind.EMBEDDED,
+                                archive_suffix=archive_suffix,
+                                embedded_offset=embedded_offset,
+                                preferred_tool=self.preferred_tool_for_suffix(archive_suffix),
+                                reason="embedded-archive-signature",
+                            )
+                    absolute += len(chunk)
+                    carry = window[-(max_sig_len - 1) :] if max_sig_len > 1 else b""
+        except OSError:
+            return None
+
+    def _should_scan_for_embedded_archive(self, path: Path) -> bool:
+        suffix = path.suffix.lower()
+        if suffix and suffix not in self._embedded_suffixes:
+            return False
+        return self._has_embedded_scan_marker(path)
+
+    def _has_embedded_scan_marker(self, path: Path) -> bool:
+        try:
+            probe = _load_apate_probe()(path, max_mask_length=1024 * 1024)
+        except (OSError, RuntimeError):
+            return False
+        if not probe.ok or not probe.mask_head:
+            return False
+        if any(probe.original_head.startswith(signature) for signature, _ in self._archive_signatures):
+            return False
+        return self._looks_like_embedded_cover(path, probe.mask_head)
+
+    def _looks_like_embedded_cover(self, path: Path, header: bytes) -> bool:
+        suffix = path.suffix.lower()
+        if suffix == ".pdf" or header.startswith(b"%PDF-"):
+            return header.startswith(b"%PDF-")
+        if suffix in {".jpg", ".jpeg"}:
+            return header.startswith(b"\xff\xd8\xff")
+        if suffix == ".png":
+            return header.startswith(b"\x89PNG\r\n\x1a\n")
+        if suffix == ".gif":
+            return header.startswith((b"GIF87a", b"GIF89a"))
+        if suffix == ".bmp":
+            return header.startswith(b"BM")
+        if suffix == ".webp":
+            return len(header) >= 12 and header.startswith(b"RIFF") and header[8:12] == b"WEBP"
+        if suffix in {".mp4", ".mov", ".m4a"}:
+            return len(header) >= 12 and header[4:8] == b"ftyp"
+        if suffix in {".mkv", ".webm"}:
+            return header.startswith(b"\x1a\x45\xdf\xa3")
+        if suffix == ".avi":
+            return len(header) >= 12 and header.startswith(b"RIFF") and header[8:12] == b"AVI "
+        if suffix == ".wav":
+            return len(header) >= 12 and header.startswith(b"RIFF") and header[8:12] == b"WAVE"
+        if suffix == ".mp3":
+            return header.startswith((b"ID3", b"\xff\xfb", b"\xff\xf3", b"\xff\xf2"))
+        if suffix == ".flac":
+            return header.startswith(b"fLaC")
+        if suffix == ".ogg":
+            return header.startswith(b"OggS")
+        if suffix == ".flv":
+            return header.startswith(b"FLV")
+        return False
+
+    def _valid_embedded_signature(
+        self,
+        handle,
+        path: Path,
+        offset: int,
+        signature: bytes,
+        suffix: str,
+    ) -> bool:
+        try:
+            size = path.stat().st_size
+        except OSError:
+            return False
+        if offset < 1 or offset + len(signature) >= size:
+            return False
+        if suffix == ".zip":
+            current = handle.tell()
+            try:
+                handle.seek(offset)
+                header = handle.read(30)
+            finally:
+                handle.seek(current)
+            if len(header) < 30 or not header.startswith(b"PK\x03\x04"):
+                return False
+            name_len = int.from_bytes(header[26:28], "little")
+            extra_len = int.from_bytes(header[28:30], "little")
+            return name_len > 0 and offset + 30 + name_len + extra_len <= size
+        return True
+
     def probe_apate(self, path: Path) -> ArchiveProbe | None:
         probe = _load_apate_probe()(path)
         if not probe.ok:
@@ -232,19 +376,32 @@ class ArchiveSignatureInspector:
 
     def probe_path(self, path: Path) -> ArchiveProbe:
         archive_suffix = self.detect_archive_suffix(path)
-        if self.looks_like_archive_name(path.name) or archive_suffix is not None:
-            suffix = archive_suffix or self._archive_suffix_from_name(path.name)
+        if archive_suffix is not None:
             return ArchiveProbe(
                 path=path,
                 kind=ArchiveKind.ARCHIVE,
-                archive_suffix=suffix,
-                preferred_tool=self.preferred_tool_for_suffix(suffix),
-                reason="name-or-signature",
+                archive_suffix=archive_suffix,
+                preferred_tool=self.preferred_tool_for_suffix(archive_suffix),
+                reason="signature",
             )
 
         apate_probe = self.probe_apate(path)
         if apate_probe is not None:
             return apate_probe
+
+        embedded_probe = self.probe_embedded_archive(path)
+        if embedded_probe is not None:
+            return embedded_probe
+
+        if self.looks_like_archive_name(path.name):
+            suffix = self._archive_suffix_from_name(path.name)
+            return ArchiveProbe(
+                path=path,
+                kind=ArchiveKind.ARCHIVE,
+                archive_suffix=suffix,
+                preferred_tool=self.preferred_tool_for_suffix(suffix),
+                reason="name",
+            )
 
         trimmed = self.trim_embedded_archive_name(path.name)
         if trimmed is not None:
@@ -759,6 +916,93 @@ class RepeatedApateRestorer(RestorerStrategy):
         )
 
 
+class EmbeddedArchiveRestorer(RestorerStrategy):
+    def __init__(
+        self,
+        inspector: ArchiveSignatureInspector,
+        *,
+        rollback_prefix_limit: int = 64 * 1024 * 1024,
+        chunk_size: int = 4 * 1024 * 1024,
+    ):
+        self._inspector = inspector
+        self._rollback_prefix_limit = max(0, rollback_prefix_limit)
+        self._chunk_size = max(64 * 1024, chunk_size)
+
+    def can_handle(self, path: Path) -> bool:
+        return self._inspector.probe_embedded_archive(path) is not None
+
+    def restore(self, path: Path, *, workspace: Path | None = None, dry_run: bool = False) -> list[Path]:
+        restored, _ = self.restore_with_rollbacks(path, workspace=workspace, dry_run=dry_run)
+        return restored
+
+    def restore_with_rollbacks(
+        self,
+        path: Path,
+        *,
+        workspace: Path | None = None,
+        dry_run: bool = False,
+    ) -> tuple[list[Path], list[EmbeddedArchiveRollbackRecord]]:
+        if workspace is None:
+            return [path], []
+        probe = self._inspector.probe_embedded_archive(path)
+        if probe is None or probe.embedded_offset is None or probe.archive_suffix is None:
+            return [path], []
+        if probe.embedded_offset > self._rollback_prefix_limit:
+            return [path], []
+        if dry_run:
+            return [path], []
+
+        prefix = self._read_prefix(path, probe.embedded_offset)
+        if len(prefix) != probe.embedded_offset:
+            return [path], []
+        self._strip_prefix_in_place(path, probe.embedded_offset)
+        rollback = EmbeddedArchiveRollbackRecord(
+            path=path,
+            prefix=prefix,
+            archive_suffix=probe.archive_suffix,
+            rule_name="embedded-archive-strip-prefix",
+        )
+        return [path], [rollback]
+
+    def _read_prefix(self, path: Path, size: int) -> bytes:
+        with open(path, "rb") as handle:
+            return handle.read(size)
+
+    def _strip_prefix_in_place(self, path: Path, offset: int) -> None:
+        with open(path, "rb+") as handle:
+            read_pos = offset
+            write_pos = 0
+            while True:
+                handle.seek(read_pos)
+                chunk = handle.read(self._chunk_size)
+                if not chunk:
+                    break
+                handle.seek(write_pos)
+                handle.write(chunk)
+                read_pos += len(chunk)
+                write_pos += len(chunk)
+            handle.truncate(write_pos)
+
+    def rollback(self, record: EmbeddedArchiveRollbackRecord) -> None:
+        prefix_len = len(record.prefix)
+        if prefix_len == 0:
+            return
+        with open(record.path, "rb+") as handle:
+            handle.seek(0, 2)
+            size = handle.tell()
+            handle.truncate(size + prefix_len)
+            read_end = size
+            while read_end > 0:
+                read_start = max(0, read_end - self._chunk_size)
+                handle.seek(read_start)
+                chunk = handle.read(read_end - read_start)
+                handle.seek(read_start + prefix_len)
+                handle.write(chunk)
+                read_end = read_start
+            handle.seek(0)
+            handle.write(record.prefix)
+
+
 class SuffixVariantBuilder(RestorerStrategy):
     def __init__(self, inspector: ArchiveSignatureInspector, rules: list[RenameVariantRule] | None = None):
         self._inspector = inspector
@@ -838,7 +1082,7 @@ class RestorationService:
         *,
         workspace: Path | None = None,
         dry_run: bool = False,
-    ) -> tuple[list[Path], list[ApateRollbackRecord]]:
+    ) -> tuple[list[Path], list[ApateRollbackRecord | EmbeddedArchiveRollbackRecord]]:
         for restorer in self._restorers:
             if not restorer.can_handle(path):
                 continue
@@ -860,12 +1104,15 @@ class RestorationService:
             return (out or [path]), rollbacks
         return [path], []
 
-    def rollback_apate(self, records: list[ApateRollbackRecord], *, dry_run: bool = False) -> None:
+    def rollback_apate(self, records: list[ApateRollbackRecord | EmbeddedArchiveRollbackRecord], *, dry_run: bool = False) -> None:
         if dry_run:
             return
         redisguise = _load_apate_redisguise()
         for record in reversed(records):
-            redisguise(record.path, mask_head=record.mask_head, quiet=True)
+            if isinstance(record, ApateRollbackRecord):
+                redisguise(record.path, mask_head=record.mask_head, quiet=True)
+            elif isinstance(record, EmbeddedArchiveRollbackRecord):
+                EmbeddedArchiveRestorer(self._inspector).rollback(record)
 
     def force_apate_restore_with_rollbacks(
         self,

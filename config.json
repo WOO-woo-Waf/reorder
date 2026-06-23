@@ -68,10 +68,10 @@
       "install_dir": "tools/7zip"
     },
     "unrar": {
-      "exe": "D:/RAR/Rar.exe"
+      "exe": "C:\\Program Files\\WinRAR\\Rar.exe"
     },
     "bandizip": {
-      "exe": "D:/bandzip/bz.exe"
+      "exe": "C:\\Program Files\\Bandizip\\bz.exe"
     }
   }
 }

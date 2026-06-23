@@ -54,6 +54,7 @@ class ExtractionRequest:
     output_dir: Path
     passwords: tuple[str, ...] = ()
     preferred_password: str | None = None
+    method: str = "direct"
 
 
 @dataclass(frozen=True)
@@ -84,6 +85,7 @@ class ArchiveKind(str, Enum):
     UNKNOWN = "unknown"
     ARCHIVE = "archive"
     APATE = "apate"
+    EMBEDDED = "embedded"
     VARIANT = "variant"
 
 
@@ -93,6 +95,7 @@ class ArchiveProbe:
     kind: ArchiveKind
     archive_suffix: str | None = None
     embedded_archive_name: str | None = None
+    embedded_offset: int | None = None
     preferred_tool: str | None = None
     reason: str | None = None
 

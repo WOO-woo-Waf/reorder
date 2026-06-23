@@ -8,6 +8,7 @@ from reorder_engine.infrastructure.command_runner import ExternalCommandRunner
 from reorder_engine.services.beta_pipeline import BetaFolderPipeline
 from reorder_engine.services.config import ConfigManager
 from reorder_engine.services.decrypting import DecryptionService, PassthroughDecryptor
+from reorder_engine.domain.models import ExtractionRequest
 from reorder_engine.services.extracting import BandizipExtractor, ExtractionService, SevenZipExtractor, UnrarExtractor
 from reorder_engine.services.flattening import FolderFlattener, flatten_safety_check
 from reorder_engine.services.grouping import DefaultVolumeGroupingStrategy
@@ -18,6 +19,7 @@ from reorder_engine.services.passwords import PasswordRepository
 from reorder_engine.services.restoring import (
     ApateRestorer,
     ArchiveSignatureInspector,
+    EmbeddedArchiveRestorer,
     RestorationService,
     SuffixVariantBuilder,
 )
@@ -238,15 +240,23 @@ def main(argv: list[str] | None = None) -> int:
     restore_service = RestorationService(
         [
             ApateRestorer(inspector, rounds=cfg.beta.rules.max_restore_rounds),
+            EmbeddedArchiveRestorer(inspector),
             SuffixVariantBuilder(inspector),
         ],
         inspector=inspector,
     )
 
     extractors = _build_extractors(cfg, runner, ensure.exe, disable_bandizip=bool(args.disable_bandizip))
-    def attempt_sink(tool: str, entry: Path, password: str | None) -> None:
+    def attempt_sink(tool: str, request: ExtractionRequest, password: str | None) -> None:
         password_text = password if password else "<none>"
-        logger.info("TRY: tool=%s entry=%s password=%s", tool, entry.name, password_text)
+        logger.info(
+            "TRY: entry=%s method=%s tool=%s password=%s output=%s",
+            request.volume_set.entry.name,
+            request.method,
+            tool,
+            password_text,
+            request.output_dir,
+        )
 
     extraction_service = ExtractionService(extractors=extractors, attempt_sink=attempt_sink)
 

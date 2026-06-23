@@ -9,6 +9,7 @@ from reorder_engine.domain.models import ArchiveKind
 from reorder_engine.services.restoring import (
     ApateRestorer,
     ArchiveSignatureInspector,
+    EmbeddedArchiveRestorer,
     RepeatedApateRestorer,
     RestorationService,
     SuffixVariantBuilder,
@@ -19,6 +20,11 @@ class RestoringTests(unittest.TestCase):
     def _make_disguised(self, original: bytes, mask_head: bytes) -> bytes:
         head_length = len(mask_head)
         return mask_head + original[head_length:] + original[:head_length][::-1] + struct.pack("<I", head_length)
+
+    def _make_embedded_disguised(self, prefix: bytes, archive: bytes) -> tuple[bytes, bytes]:
+        fake_original_head = b"not-an-archive".ljust(len(prefix), b"\x00")
+        tail = fake_original_head[::-1] + struct.pack("<I", len(prefix))
+        return prefix + archive + tail, archive + tail
 
     def test_inspector_prefers_direct_archive_identification(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -194,6 +200,89 @@ class RestoringTests(unittest.TestCase):
             service.rollback_apate(rollbacks)
 
             self.assertEqual(source.read_bytes(), disguised)
+
+    def test_embedded_archive_is_identified_after_media_prefix(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "payload.pdf"
+            prefix = b"%PDF-1.7\nbody\n"
+            archive = b"PK\x03\x04" + b"\x14\x00\x00\x00\x00\x00" + b"\x00" * 16 + b"\x07\x00\x00\x00" + b"001.jpg"
+            source.write_bytes(self._make_embedded_disguised(prefix, archive)[0])
+
+            probe = ArchiveSignatureInspector().probe_path(source)
+
+            self.assertEqual(probe.kind, ArchiveKind.EMBEDDED)
+            self.assertEqual(probe.archive_suffix, ".zip")
+            self.assertEqual(probe.embedded_offset, len(prefix))
+
+    def test_normal_pdf_is_not_scanned_for_embedded_archives(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "normal.pdf"
+            source.write_bytes(b"%PDF-1.7\nbody\n" + b"PK\x03\x04" + b"\x14\x00\x00\x00\x00\x00" + b"\x00" * 16 + b"\x07\x00\x00\x00" + b"001.jpg")
+
+            probe = ArchiveSignatureInspector().probe_path(source)
+
+            self.assertEqual(probe.kind, ArchiveKind.UNKNOWN)
+
+    def test_embedded_archive_restore_strips_prefix_in_place_and_rolls_back(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            prefix = b"%PDF-1.7\nbody\n"
+            archive = b"PK\x03\x04" + b"\x14\x00\x00\x00\x00\x00" + b"\x00" * 16 + b"\x07\x00\x00\x00" + b"001.jpg" + b"payload"
+            source = root / "payload.pdf"
+            disguised, restored_bytes = self._make_embedded_disguised(prefix, archive)
+            source.write_bytes(disguised)
+            inspector = ArchiveSignatureInspector()
+            service = RestorationService([EmbeddedArchiveRestorer(inspector, chunk_size=8)], inspector=inspector)
+
+            restored, rollbacks = service.restore_with_rollbacks(source, workspace=root)
+
+            self.assertEqual(restored, [source])
+            self.assertEqual(source.read_bytes(), restored_bytes)
+            self.assertEqual(inspector.probe_path(source).kind, ArchiveKind.ARCHIVE)
+
+            service.rollback_apate(rollbacks)
+
+            self.assertEqual(source.read_bytes(), disguised)
+
+    def test_embedded_archive_scan_matches_across_chunk_boundary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            prefix = b"1234567"
+            archive = b"PK\x03\x04" + b"\x14\x00\x00\x00\x00\x00" + b"\x00" * 16 + b"\x07\x00\x00\x00" + b"001.jpg"
+            source = root / "payload.pdf"
+            source.write_bytes(prefix + archive)
+
+            probe = ArchiveSignatureInspector().probe_embedded_archive(source, chunk_size=8, force_scan=True)
+
+            self.assertIsNotNone(probe)
+            self.assertEqual(probe.embedded_offset, len(prefix))
+
+    def test_archive_name_without_embedded_marker_does_not_trigger_scan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "payload.zip"
+            source.write_bytes(b"%PDF-1.7\n" + b"PK\x03\x04" + b"\x14\x00\x00\x00\x00\x00" + b"\x00" * 16 + b"\x07\x00\x00\x00" + b"001.jpg")
+
+            probe = ArchiveSignatureInspector().probe_path(source)
+
+            self.assertEqual(probe.kind, ArchiveKind.ARCHIVE)
+            self.assertEqual(probe.archive_suffix, ".zip")
+            self.assertEqual(probe.reason, "name")
+
+    def test_embedded_archive_marker_takes_precedence_over_archive_name_guess(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "payload.zip"
+            prefix = b"%PDF-1.7\n"
+            archive = b"PK\x03\x04" + b"\x14\x00\x00\x00\x00\x00" + b"\x00" * 16 + b"\x07\x00\x00\x00" + b"001.jpg"
+            source.write_bytes(self._make_embedded_disguised(prefix, archive)[0])
+
+            probe = ArchiveSignatureInspector().probe_path(source)
+
+            self.assertEqual(probe.kind, ArchiveKind.EMBEDDED)
+            self.assertEqual(probe.archive_suffix, ".zip")
 
     def test_force_apate_restore_allows_non_archive_restored_head(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

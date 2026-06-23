@@ -279,6 +279,60 @@ class BetaPipelineTests(unittest.TestCase):
 
             self.assertEqual(extractor.seen, "secret")
 
+    def test_run_extract_attempt_logs_method_password_and_output_context(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            archive = root / "payload.7z"
+            archive.write_bytes(b"7z")
+            vs = VolumeSet(entry=archive, members=(archive,), group_key="g")
+            messages: list[str] = []
+
+            class _Extractor:
+                def extract_one(self, request, *, preference="auto", probe=None, dry_run=False):
+                    return ExtractionResult(volume_set=request.volume_set, ok=True, tool="fake", password="pw")
+
+            pipeline = self._make_pipeline(root)
+            pipeline._emit = messages.append
+            pipeline._extractor = _Extractor()
+            pipeline._log_passwords = True
+
+            pipeline._run_extract_attempt(
+                vs,
+                probe=ArchiveProbe(path=archive, kind=ArchiveKind.ARCHIVE, archive_suffix=".7z"),
+                output_dir=root / "out",
+                dry_run=False,
+                prefix="TEST",
+                preferred_password="secret",
+                method="embedded-archive-strip-prefix",
+            )
+
+            joined = "\n".join(messages)
+            self.assertIn("TEST-TRY: entry=payload.7z method=embedded-archive-strip-prefix", joined)
+            self.assertIn("preferred_password=secret", joined)
+            self.assertIn("TEST[OK] entry=payload.7z method=embedded-archive-strip-prefix tool=fake password=pw", joined)
+            self.assertIn(str(root / "out"), joined)
+
+    def test_unknown_candidate_without_restore_logs_as_direct_method(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            payload = root / "payload.bin"
+            payload.write_bytes(b"plain")
+            pipeline = self._make_pipeline(root)
+            pipeline._restore = type(
+                "Restore",
+                (),
+                {"restore_with_rollbacks": lambda _self, path, workspace=None, dry_run=False: ([path], [])},
+            )()
+
+            attempts = pipeline._candidate_chain(
+                payload,
+                probe=ArchiveProbe(path=payload, kind=ArchiveKind.UNKNOWN),
+                workspace=root / "workspace",
+                dry_run=False,
+            )
+
+            self.assertEqual([attempt.method for attempt in attempts], ["direct"])
+
     def test_defer_volume_fragment_moves_to_group_folder(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -291,6 +345,30 @@ class BetaPipelineTests(unittest.TestCase):
             self.assertEqual(moved, root / "deferred_volumes" / "payload.zip" / "payload.zip.001")
             self.assertTrue(moved.exists())
             self.assertFalse(fragment.exists())
+
+    def test_missing_top_level_split_zip_fragments_are_deferred(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = root / "payload.z01"
+            second = root / "payload.z02"
+            first.write_bytes(b"one")
+            second.write_bytes(b"two")
+            pipeline = self._make_pipeline(root)
+
+            moved = pipeline._defer_missing_volume_set(
+                VolumeSet(entry=first, members=(first, second), group_key="split:payload.zip"),
+                dry_run=False,
+            )
+
+            self.assertEqual(
+                {path.relative_to(root).as_posix() for path in moved},
+                {
+                    "deferred_volumes/payload.zip/payload.z01",
+                    "deferred_volumes/payload.zip/payload.z02",
+                },
+            )
+            self.assertFalse(first.exists())
+            self.assertFalse(second.exists())
 
     def test_continue_after_extract_defers_nested_volume_fragment_without_extracting(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

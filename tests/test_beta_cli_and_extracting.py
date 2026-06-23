@@ -160,6 +160,26 @@ class BetaCliAndExtractingTests(unittest.TestCase):
             self.assertTrue(result.ok)
             self.assertEqual(first.calls, ["pw2"])
 
+    def test_attempt_sink_receives_request_method_context(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            archive = root / "a.7z"
+            archive.write_text("x", encoding="utf-8")
+            vs = VolumeSet(entry=archive, members=(archive,), group_key="g")
+            seen: list[tuple[str, str | None, str]] = []
+            ok = ExtractionResult(volume_set=vs, ok=True, tool="7z", message="ok")
+            first = _FakeExtractor("7z", [ok])
+            service = ExtractionService(
+                [first],
+                attempt_sink=lambda tool, request, password: seen.append((tool, password, request.method)),
+            )
+            req = ExtractionRequest(volume_set=vs, output_dir=root / "out", method="embedded-archive-strip-prefix")
+
+            result = service.extract_one(req)
+
+            self.assertTrue(result.ok)
+            self.assertEqual(seen, [("7z", None, "embedded-archive-strip-prefix")])
+
     def test_streaming_runner_aborts_on_first_password_error_line(self) -> None:
         seen: list[str] = []
         runner = ExternalCommandRunner(

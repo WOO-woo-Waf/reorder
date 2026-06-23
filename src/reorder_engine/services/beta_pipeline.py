@@ -30,6 +30,8 @@ class BetaRunResult:
 class CandidateAttempt:
     path: Path
     rollbacks: tuple = ()
+    method: str = "direct"
+    source: Path | None = None
 
 
 class BetaFolderPipeline:
@@ -140,6 +142,13 @@ class BetaFolderPipeline:
                 continue
 
             if self._is_missing_volume(result.message):
+                moved = self._defer_missing_volume_set(volume_set, dry_run=dry_run)
+                if moved:
+                    ok += 1
+                    self._emit(
+                        f"MISSING-VOLUME: deferred entry={volume_set.entry.name} files={len(moved)}"
+                    )
+                    continue
                 self._emit(f"MISSING-VOLUME: keep-in-place entry={volume_set.entry.name}")
                 continue
 
@@ -171,6 +180,9 @@ class BetaFolderPipeline:
                 if candidate in seen:
                     continue
                 seen.add(candidate)
+                self._emit(
+                    f"CANDIDATE: source={item.name} entry={candidate.name} method={attempt.method}"
+                )
                 out.append(attempt)
         return out or [CandidateAttempt(vs.entry)]
 
@@ -195,6 +207,7 @@ class BetaFolderPipeline:
                 layer_root / f"attempt_{index}",
                 dry_run=dry_run,
                 preferred_password=preferred_password,
+                method=attempt.method,
             )
             last = res
             if res.ok:
@@ -209,6 +222,7 @@ class BetaFolderPipeline:
                 layer_root / f"attempt_{len(candidates) + 1}_force_apate",
                 dry_run=dry_run,
                 preferred_password=preferred_password,
+                method=force_attempt.method,
             )
             last = res
             if res.ok:
@@ -377,6 +391,7 @@ class BetaFolderPipeline:
                     dry_run=dry_run,
                     prefix="DEEP-EXTRACT",
                     preferred_password=current_password,
+                    method=attempt.method,
                 )
                 if res.ok:
                     if res.password:
@@ -422,6 +437,9 @@ class BetaFolderPipeline:
                 if attempt.path in seen:
                     continue
                 seen.add(attempt.path)
+                self._emit(
+                    f"CANDIDATE: source={candidate.name} entry={attempt.path.name} method={attempt.method}"
+                )
                 out.append(attempt)
         return out
 
@@ -433,6 +451,7 @@ class BetaFolderPipeline:
         dry_run: bool,
         prefix: str = "EXTRACT",
         preferred_password: str | None = None,
+        method: str = "direct",
     ) -> tuple[ExtractionResult, Path | None]:
         probe = self._restore.identify(volume_set.entry)
         attempt_vs = volume_set
@@ -443,6 +462,7 @@ class BetaFolderPipeline:
             dry_run=dry_run,
             prefix=prefix,
             preferred_password=preferred_password,
+            method=method,
         )
         if direct_result.ok or len(volume_set.members) > 1:
             return direct_result, direct_dir
@@ -467,6 +487,7 @@ class BetaFolderPipeline:
                 dry_run=dry_run,
                 prefix=prefix,
                 preferred_password=preferred_password,
+                method=f"{method}+rename:{plan.rule_name}",
             )
             last = result
             if result.ok:
@@ -485,33 +506,53 @@ class BetaFolderPipeline:
         dry_run: bool,
         prefix: str,
         preferred_password: str | None = None,
+        method: str = "direct",
     ) -> tuple[ExtractionResult, Path | None]:
+        preferred = preferred_password if preferred_password else "<none>"
+        self._emit(
+            f"{prefix}-TRY: entry={volume_set.entry.name} method={method} "
+            f"kind={probe.kind.value} suffix={probe.archive_suffix or '-'} "
+            f"preferred_password={preferred} output={output_dir}"
+        )
         req = ExtractionRequest(
             volume_set=volume_set,
             output_dir=output_dir,
             passwords=self._passwords,
             preferred_password=preferred_password,
+            method=method,
         )
         result = self._extractor.extract_one(req, preference="auto", probe=probe, dry_run=dry_run)
-        self._emit_extract_result(prefix, volume_set.entry.name, result)
+        self._emit_extract_result(prefix, volume_set.entry.name, result, output_dir=output_dir, method=method)
         if result.ok or self._has_any_file(output_dir):
             return result, output_dir
         return result, None
 
     def _candidate_chain(self, path: Path, *, probe: ArchiveProbe, workspace: Path, dry_run: bool) -> list[CandidateAttempt]:
         if probe.kind == ArchiveKind.ARCHIVE:
-            return [CandidateAttempt(path)]
-        if probe.kind == ArchiveKind.APATE:
-            restored, rollbacks = self._restore.restore_with_rollbacks(path, workspace=workspace, dry_run=dry_run)
-            return [CandidateAttempt(candidate, tuple(rollbacks)) for candidate in (restored or [path])]
+            return [CandidateAttempt(path, method="direct", source=path)]
         restored, rollbacks = self._restore.restore_with_rollbacks(path, workspace=workspace, dry_run=dry_run)
-        return [CandidateAttempt(candidate, tuple(rollbacks)) for candidate in (restored or [path])]
+        method = self._restore_method(probe, tuple(rollbacks))
+        return [
+            CandidateAttempt(candidate, tuple(rollbacks), method=method, source=path)
+            for candidate in (restored or [path])
+        ]
 
     def _rollback_attempt(self, attempt: CandidateAttempt, *, dry_run: bool) -> None:
         if not attempt.rollbacks:
             return
         self._restore.rollback_apate(list(attempt.rollbacks), dry_run=dry_run)
-        self._emit(f"APATE-ROLLBACK: {attempt.path.name}")
+        self._emit(f"RESTORE-ROLLBACK: entry={attempt.path.name} method={attempt.method}")
+
+    def _restore_method(self, probe: ArchiveProbe, rollbacks: tuple) -> str:
+        names = [getattr(record, "rule_name", "") for record in rollbacks]
+        names = [name for name in names if name]
+        if names:
+            return "+".join(dict.fromkeys(names))
+        if probe.kind == ArchiveKind.APATE:
+            return "apate-reveal"
+        if probe.kind == ArchiveKind.EMBEDDED:
+            return "embedded-archive-strip-prefix"
+        return "direct"
 
     def _force_apate_attempt_if_useful(self, path: Path, *, dry_run: bool) -> CandidateAttempt | None:
         probe = self._restore.identify(path)
@@ -533,7 +574,7 @@ class BetaFolderPipeline:
         if restored is None:
             return None
         self._emit(f"APATE-FORCE-TRY: {path.name}")
-        return CandidateAttempt(restored, tuple(all_rollbacks))
+        return CandidateAttempt(restored, tuple(all_rollbacks), method="apate-force-reveal", source=path)
 
     def _force_apate_rounds_from_name(self, name: str) -> int:
         low = name.lower()
@@ -799,6 +840,16 @@ class BetaFolderPipeline:
         self._remove_empty_dirs(path.parent)
         return target
 
+    def _defer_missing_volume_set(self, vs: VolumeSet, *, dry_run: bool) -> list[Path]:
+        moved: list[Path] = []
+        for member in list(vs.members):
+            if not member.exists():
+                continue
+            target = self._defer_volume_fragment(member, dry_run=dry_run)
+            if target is not None:
+                moved.append(target)
+        return moved
+
     def _promote_final_dir(self, current_dir: Path, final_root: Path, *, package_name: str, dry_run: bool) -> Path:
         leaf = deepest_wrapper_dir(current_dir) if self._path_compress else current_dir
         target_name = leaf.name if self._preserve_payload_names and leaf != current_dir else package_name
@@ -937,10 +988,25 @@ class BetaFolderPipeline:
             )
         )
 
-    def _emit_extract_result(self, prefix: str, entry_name: str, result: ExtractionResult) -> None:
+    def _emit_extract_result(
+        self,
+        prefix: str,
+        entry_name: str,
+        result: ExtractionResult,
+        *,
+        output_dir: Path,
+        method: str,
+    ) -> None:
         status = "OK" if result.ok else "FAIL"
-        pw = f" password={result.password}" if result.ok and self._log_passwords and result.password else ""
-        self._emit(f"{prefix}[{status}] entry={entry_name} tool={result.tool}{pw}")
+        if self._log_passwords:
+            password = result.password if result.password else "<none>"
+            pw = f" password={password}"
+        else:
+            pw = ""
+        self._emit(
+            f"{prefix}[{status}] entry={entry_name} method={method} "
+            f"tool={result.tool}{pw} output={output_dir}"
+        )
         if result.message:
             self._emit(f"  msg: {self._summarize_message(result.message)}")
 

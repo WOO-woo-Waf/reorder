@@ -135,7 +135,7 @@ class ExtractionService:
         extractors: list[ExtractorStrategy],
         *,
         compatibility_policy: ToolCompatibilityPolicy | None = None,
-        attempt_sink: Callable[[str, Path, str | None], None] | None = None,
+        attempt_sink: Callable[[str, ExtractionRequest, str | None], None] | None = None,
     ):
         self._extractors = extractors
         self._compatibility_policy = compatibility_policy or DefaultToolCompatibilityPolicy()
@@ -229,7 +229,7 @@ class ExtractionService:
 
     def _try_extract(self, extractor: ExtractorStrategy, request: ExtractionRequest, password: str | None, *, dry_run: bool) -> ExtractionResult:
         if self._attempt_sink:
-            self._attempt_sink(extractor.name(), request.volume_set.entry, password)
+            self._attempt_sink(extractor.name(), request, password)
         fn = getattr(extractor, "extract_with_password", None)
         if callable(fn):
             return fn(request, password, dry_run=dry_run)
