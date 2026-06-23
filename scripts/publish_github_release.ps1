@@ -12,11 +12,29 @@ $ErrorActionPreference = "Stop"
 $repo = Resolve-Path (Join-Path $PSScriptRoot "..")
 $releaseRoot = Join-Path $repo "releases"
 
-if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
+function Resolve-Gh {
+  $cmd = Get-Command gh -ErrorAction SilentlyContinue
+  if ($cmd) {
+    return $cmd.Source
+  }
+  $candidates = @(
+    "C:\Program Files\GitHub CLI\gh.exe",
+    "C:\Program Files (x86)\GitHub CLI\gh.exe"
+  )
+  foreach ($candidate in $candidates) {
+    if (Test-Path $candidate) {
+      return $candidate
+    }
+  }
+  return $null
+}
+
+$gh = Resolve-Gh
+if (-not $gh) {
   throw "GitHub CLI 'gh' is not installed. Install it first: https://cli.github.com/"
 }
 
-& gh auth status
+& $gh auth status
 if ($LASTEXITCODE -ne 0) {
   throw "GitHub CLI is not authenticated. Run: gh auth login"
 }
@@ -67,19 +85,19 @@ if ($Prerelease) {
   $args += "--prerelease"
 }
 
-& gh @args
+& $gh @args
 if ($LASTEXITCODE -ne 0) {
   if (-not $Clobber) {
     throw "Failed to create release. If the tag already exists, rerun with -Clobber to upload/replace the asset."
   }
 
   $uploadArgs = @("release", "upload", $Tag, $zip, "--clobber")
-  & gh @uploadArgs
+  & $gh @uploadArgs
   if ($LASTEXITCODE -ne 0) {
     throw "Failed to upload release asset with exit code $LASTEXITCODE"
   }
 }
 
-$repoName = (& gh repo view --json nameWithOwner --jq ".nameWithOwner").Trim()
+$repoName = (& $gh repo view --json nameWithOwner --jq ".nameWithOwner").Trim()
 Write-Host "Release page: https://github.com/$repoName/releases/tag/$Tag"
 Write-Host "Download URL: https://github.com/$repoName/releases/download/$Tag/$($zipFile.Name)"

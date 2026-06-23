@@ -2,6 +2,8 @@
 
 本文档说明如何使用、重新编译和发布 `reorder-extract-windows` 便携版。
 
+最终使用者下载 ZIP 后的具体操作，见 [Windows 便携版用户使用指南](portable_user_guide.md)。
+
 如果要把 ZIP 上传到 GitHub Release 并提供公网下载链接，见 [GitHub Release 下载与使用说明](github_release_download.md)。
 
 ## 产物结构

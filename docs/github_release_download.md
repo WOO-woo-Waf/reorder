@@ -2,6 +2,8 @@
 
 本文档说明如何把 Windows 便携版 ZIP 发布到 GitHub，并让别人通过公网链接下载使用。
 
+最终使用者下载 ZIP 后的具体操作，见 [Windows 便携版用户使用指南](portable_user_guide.md)。
+
 ## 发布方式选择
 
 推荐使用 **GitHub Releases**，不要把编译产物提交到 Git。
