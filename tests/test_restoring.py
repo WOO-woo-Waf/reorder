@@ -57,6 +57,21 @@ class RestoringTests(unittest.TestCase):
 
             self.assertEqual(probe.kind, ArchiveKind.UNKNOWN)
 
+    def test_inspector_accepts_apate_layout_when_restored_head_is_mp4(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            original = b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 32
+            mask = b"\x00\x00\x00\x18ftypisom"
+            source = root / "video.mp4"
+            source.write_bytes(self._make_disguised(original, mask))
+            inspector = ArchiveSignatureInspector()
+
+            probe = inspector.probe_path(source)
+
+            self.assertEqual(probe.kind, ArchiveKind.APATE)
+            self.assertEqual(probe.archive_suffix, ".mp4")
+            self.assertFalse(inspector.is_valid_final_media(source))
+
     def test_inspector_detects_valid_media_without_overriding_archive(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -196,6 +211,34 @@ class RestoringTests(unittest.TestCase):
             self.assertEqual(len(restored), 1)
             self.assertEqual(restored[0], source)
             self.assertEqual(source.read_bytes(), original)
+
+            service.rollback_apate(rollbacks)
+
+            self.assertEqual(source.read_bytes(), disguised)
+
+    def test_apate_restore_repeats_through_mp4_layers_to_sfx(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workspace = root / "workspace"
+            mask = b"\x00\x00\x00\x18ftypmp42"
+            final = b"MZ" + (b"\x00" * 32) + b"self extracting archive"
+            layer1 = self._make_disguised(final, mask)
+            layer2 = self._make_disguised(layer1, mask)
+            disguised = self._make_disguised(layer2, mask)
+            source = root / "001-Three.mp4"
+            source.write_bytes(disguised)
+            inspector = ArchiveSignatureInspector()
+            service = RestorationService([ApateRestorer(inspector, rounds=3)], inspector=inspector)
+
+            probe = inspector.probe_path(source)
+            restored, rollbacks = service.restore_with_rollbacks(source, workspace=workspace)
+
+            self.assertEqual(probe.kind, ArchiveKind.APATE)
+            self.assertEqual(probe.archive_suffix, ".mp4")
+            self.assertEqual(restored, [source])
+            self.assertEqual(len(rollbacks), 3)
+            self.assertEqual(source.read_bytes(), final)
+            self.assertEqual(inspector.probe_path(source).kind, ArchiveKind.UNKNOWN)
 
             service.rollback_apate(rollbacks)
 

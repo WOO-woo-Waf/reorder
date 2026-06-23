@@ -115,7 +115,7 @@ class ConfigManager:
 
     def load_or_create_default(self) -> dict[str, Any]:
         if self._config_file.exists():
-            self._data = json.loads(self._config_file.read_text(encoding="utf-8"))
+            self._data = json.loads(self._config_file.read_text(encoding="utf-8-sig"))
             return self._data
         self._config_file.parent.mkdir(parents=True, exist_ok=True)
 

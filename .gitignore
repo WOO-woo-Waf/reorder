@@ -19,6 +19,7 @@ Thumbs.db
 # Build
 build/
 dist/
+releases/
 
 # Archive outputs (generated during runs)
 success/

@@ -135,6 +135,9 @@ class ArchiveSignatureInspector:
     def detect_media_suffix(self, path: Path) -> str | None:
         header = self.read_header(path, size=16)
         suffix = path.suffix.lower()
+        return self._media_suffix_from_header(header, suffix=suffix)
+
+    def _media_suffix_from_header(self, header: bytes, *, suffix: str) -> str | None:
         if suffix in {".jpg", ".jpeg"} and header.startswith(b"\xff\xd8\xff"):
             return ".jpg"
         if suffix == ".png" and header.startswith(b"\x89PNG\r\n\x1a\n"):
@@ -161,6 +164,17 @@ class ArchiveSignatureInspector:
             return ".ogg"
         if suffix == ".flv" and header.startswith(b"FLV"):
             return ".flv"
+        return None
+
+    def _apate_revealed_suffix(self, path: Path, header: bytes) -> tuple[str, str | None] | None:
+        for signature, suffix in self._archive_signatures:
+            if header.startswith(signature):
+                return suffix, self.preferred_tool_for_suffix(suffix)
+        if header.startswith(b"MZ"):
+            return ".exe", self.preferred_tool_for_suffix(".exe")
+        suffix = self._media_suffix_from_header(header, suffix=path.suffix.lower())
+        if suffix is not None:
+            return suffix, None
         return None
 
     def is_valid_final_media(self, path: Path) -> bool:
@@ -321,15 +335,10 @@ class ArchiveSignatureInspector:
         if not probe.ok:
             return None
 
-        archive_suffix = None
-        preferred_tool = None
-        for signature, suffix in self._archive_signatures:
-            if probe.original_head.startswith(signature):
-                archive_suffix = suffix
-                preferred_tool = self.preferred_tool_for_suffix(suffix)
-                break
-        if archive_suffix is None:
+        restored = self._apate_revealed_suffix(path, probe.original_head)
+        if restored is None:
             return None
+        archive_suffix, preferred_tool = restored
 
         return ArchiveProbe(
             path=path,
@@ -371,6 +380,8 @@ class ArchiveSignatureInspector:
         if low.endswith(self._seven_zip_suffixes):
             return "7z"
         if low.endswith(self._zip_suffixes):
+            return "7z"
+        if low == ".exe":
             return "7z"
         return None
 
