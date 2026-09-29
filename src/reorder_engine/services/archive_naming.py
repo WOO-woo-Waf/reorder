@@ -37,6 +37,20 @@ def split_archive_name(filename: str) -> ArchiveNameParts:
             end=f".{m.group('idx')}",
         )
 
+    # Some downloaders disguise the first volume with a media suffix:
+    # name.zip.jpg pairs with name.zip.002.
+    m = re.match(
+        r"^(?P<base>.+)\.(?P<mid>7z|zip|rar)\.(?P<tail>zip|jpg|jpeg|png|webp|mp4|mkv|avi|mov|exe)$",
+        filename,
+        flags=re.IGNORECASE,
+    )
+    if m:
+        return ArchiveNameParts(
+            base=m.group("base"),
+            mid=f".{m.group('mid')}",
+            end=f".{m.group('tail')}",
+        )
+
     m = re.match(r"^(?P<base>.+)\.(?P<idx>\d{3})\.(?P<ext>7z|zip|rar)$", filename, flags=re.IGNORECASE)
     if m:
         return ArchiveNameParts(

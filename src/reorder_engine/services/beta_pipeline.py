@@ -608,8 +608,67 @@ class BetaFolderPipeline:
                 bare = member
                 match = member_match
                 break
+
         if bare is None or match is None:
-            return None
+            # Variant seen in the wild: the first volume is disguised as a
+            # media file, while the next volume keeps its .002 suffix, e.g.
+            # name.zip.jpg + name.zip.002.
+            numbered = next(
+                (
+                    (member, member_match)
+                    for member in vs.members
+                    for member_match in [
+                        re.match(
+                            r"^(?P<base>.+)\.(?P<ext>7z|zip|rar)\.(?P<idx>\d{3})$",
+                            member.name,
+                            flags=re.IGNORECASE,
+                        )
+                    ]
+                    if member_match is not None and member_match.group("idx") == "002"
+                ),
+                None,
+            )
+            if numbered is None:
+                return None
+
+            numbered_path, numbered_match = numbered
+            disguised_pattern = re.compile(
+                rf"^{re.escape(numbered_match.group('base'))}\.{numbered_match.group('ext')}\.(zip|jpg|jpeg|png|webp|mp4|mkv|avi|mov|exe)$",
+                flags=re.IGNORECASE,
+            )
+            disguised = next(
+                (member for member in vs.members
+                 if member != numbered_path and member.parent == numbered_path.parent
+                 and disguised_pattern.match(member.name)),
+                None,
+            )
+            if disguised is None:
+                return None
+
+            target = numbered_path.with_name(
+                f"{numbered_match.group('base')}.{numbered_match.group('ext')}.001"
+            )
+            if target.exists() and target not in vs.members:
+                self._emit(f"VOLUME-RENAME-SKIP: target exists {target.name}")
+                return None
+
+            session = RenameSession.create(self._renamer)
+            try:
+                renamed_disguised = session.rename(disguised, target, dry_run=dry_run)
+            except OSError:
+                session.rollback_best_effort(dry_run=dry_run)
+                raise
+            renamed_members = tuple(
+                renamed_disguised if member == disguised else member for member in vs.members
+            )
+            return (
+                VolumeSet(
+                    entry=renamed_disguised,
+                    members=renamed_members,
+                    group_key=vs.group_key,
+                ),
+                session,
+            )
 
         disguised_pattern = re.compile(
             rf"^{re.escape(bare.name)}\.(zip|jpg|jpeg|png|webp|mp4|mkv|avi|mov|exe)$",

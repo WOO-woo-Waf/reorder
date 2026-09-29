@@ -102,6 +102,20 @@ class GroupingTests(unittest.TestCase):
             self.assertEqual(groups[0].entry.name, "p.001.pdf")
             self.assertEqual({member.name for member in groups[0].members}, {"p.001.pdf", "p.002", "p.004"})
 
+    def test_grouping_uses_disguised_first_zip_volume_as_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = root / "小初.zip.jpg"
+            second = root / "小初.zip.002"
+            for path in (first, second):
+                path.write_bytes(b"x")
+
+            groups = DefaultVolumeGroupingStrategy(DefaultGroupingNormalizer()).group([first, second])
+
+            self.assertEqual(len(groups), 1)
+            self.assertEqual(groups[0].entry.name, "小初.zip.jpg")
+            self.assertEqual({member.name for member in groups[0].members}, {first.name, second.name})
+
 
 if __name__ == "__main__":
     unittest.main()
