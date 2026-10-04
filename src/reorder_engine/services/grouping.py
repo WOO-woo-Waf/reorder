@@ -126,6 +126,16 @@ class DefaultVolumeGroupingStrategy(VolumeGroupingStrategy):
             if re.search(r"\.(7z|zip|rar)$", p.name, flags=re.IGNORECASE):
                 return p
         for p in members:
+            if re.search(
+                r"\.(7z|zip|rar)\.(zip|jpg|jpeg|png|webp|mp4|mkv|avi|mov|exe)$",
+                p.name,
+                flags=re.IGNORECASE,
+            ) and any(
+                other.parent == p.parent and other.name.lower() == f"{p.stem.lower()}.002"
+                for other in members
+            ):
+                return p
+        for p in members:
             if re.search(r"\.0*1\.(7z|zip|rar)$", p.name, flags=re.IGNORECASE):
                 return p
         for p in members:

@@ -36,6 +36,28 @@ class DiscoveryTests(unittest.TestCase):
 
             self.assertIn(part, discovered)
 
+    def test_discovery_accepts_disguised_first_zip_volume(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = root / "小初.zip.jpg"
+            second = root / "小初.zip.002"
+            first.write_bytes(b"first")
+            second.write_bytes(b"second")
+
+            discovered = ArchiveDiscoveryService().discover(root, recursive=False)
+
+            self.assertEqual({path.name for path in discovered}, {first.name, second.name})
+
+    def test_discovery_ignores_plain_media_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            photo = root / "photo.jpg"
+            photo.write_bytes(b"\xff\xd8\xff")
+
+            discovered = ArchiveDiscoveryService().discover(root, recursive=False)
+
+            self.assertNotIn(photo, discovered)
+
 
 if __name__ == "__main__":
     unittest.main()

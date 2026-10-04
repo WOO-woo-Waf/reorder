@@ -1,13 +1,70 @@
 from __future__ import annotations
 
+import io
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 from reorder_engine.domain.models import ArchiveKind, ArchiveProbe, VolumeSet
 from reorder_engine.domain.models import ExtractionResult
 from reorder_engine.services.beta_pipeline import BetaFolderPipeline, CandidateAttempt
 from reorder_engine.services.config import BetaDeepExtractConfig
+
+
+def _write_synthetic_split_zip(
+    root: Path,
+    first_name: str,
+    second_name: str,
+    *,
+    member: str = "hello.txt",
+    payload: bytes = b"reorder-synthetic-payload",
+) -> tuple[bytes, Path, Path]:
+    """Build a real ZIP in memory and split its bytes across two named files."""
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr(member, payload)
+    data = buffer.getvalue()
+    midpoint = len(data) // 2
+    first = root / first_name
+    second = root / second_name
+    first.write_bytes(data[:midpoint])
+    second.write_bytes(data[midpoint:])
+    return data, first, second
+
+
+class _SyntheticZipRecombiningExtractor:
+    """Simulated split-volume extractor, NOT a real 7-Zip/Bandizip run.
+
+    It only concatenates the numbered volumes handed to it and opens the bytes
+    with ``zipfile`` so the pipeline routing can be checked end to end.
+    """
+
+    def __init__(self, *, succeed: bool) -> None:
+        self.succeed = succeed
+        self.seen_entries: list[str] = []
+        self.verified_members: list[str] = []
+
+    def extract_one(self, request, *, preference="auto", probe=None, dry_run=False):
+        _ = (preference, probe, dry_run)
+        entry = request.volume_set.entry
+        self.seen_entries.append(entry.name)
+        if not self.succeed:
+            return ExtractionResult(
+                volume_set=request.volume_set,
+                ok=False,
+                tool="synthetic-zip",
+                message="simulated extraction failure",
+            )
+        data = b"".join(path.read_bytes() for path in sorted(request.volume_set.members, key=lambda p: p.name))
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            names = archive.namelist()
+            self.verified_members.extend(names)
+            request.output_dir.mkdir(parents=True, exist_ok=True)
+            for name in names:
+                (request.output_dir / name).write_bytes(archive.read(name))
+        return ExtractionResult(volume_set=request.volume_set, ok=True, tool="synthetic-zip")
 
 
 class BetaPipelineTests(unittest.TestCase):
@@ -201,6 +258,50 @@ class BetaPipelineTests(unittest.TestCase):
 
             self.assertTrue(first.exists())
             self.assertTrue(second.exists())
+
+    def test_disguised_first_zip_volume_is_normalized_with_numbered_second_volume(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = root / "小初.zip.jpg"
+            second = root / "小初.zip.002"
+            first.write_bytes(b"one")
+            second.write_bytes(b"two")
+            pipeline = self._make_pipeline(root)
+
+            normalized = pipeline._normalize_disguised_split_suffix_volume_set(
+                VolumeSet(entry=first, members=(first, second), group_key="split:小初.zip"),
+                dry_run=False,
+            )
+
+            self.assertIsNotNone(normalized)
+            normalized_vs, session = normalized
+            self.assertEqual(normalized_vs.entry.name, "小初.zip.001")
+            self.assertEqual(
+                {path.name for path in normalized_vs.members},
+                {"小初.zip.001", "小初.zip.002"},
+            )
+            self.assertFalse(first.exists())
+            self.assertTrue(second.exists())
+
+            session.rollback_best_effort()
+
+            self.assertTrue(first.exists())
+            self.assertTrue(second.exists())
+
+    def test_disguised_first_volume_without_numbered_sibling_is_not_renamed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = root / "小初.zip.jpg"
+            first.write_bytes(b"one")
+            pipeline = self._make_pipeline(root)
+
+            normalized = pipeline._normalize_disguised_split_suffix_volume_set(
+                VolumeSet(entry=first, members=(first,), group_key="split:小初.zip"),
+                dry_run=False,
+            )
+
+            self.assertIsNone(normalized)
+            self.assertTrue(first.exists())
 
     def test_numbered_tail_volume_set_trims_disguised_suffix(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -399,6 +500,111 @@ class BetaPipelineTests(unittest.TestCase):
             self.assertIsNone(final_dir)
             self.assertIn("deferred-volume-fragments", message or "")
             self.assertTrue((root / "deferred_volumes" / "payload.zip" / "payload.zip.001").exists())
+
+
+    def test_disguised_first_volume_skips_when_numbered_target_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = root / "小初.zip.jpg"
+            second = root / "小初.zip.002"
+            existing = root / "小初.zip.001"
+            first.write_bytes(b"disguised-first")
+            second.write_bytes(b"second-part")
+            existing.write_bytes(b"unrelated-existing-001")
+            pipeline = self._make_pipeline(root)
+
+            normalized = pipeline._normalize_disguised_split_suffix_volume_set(
+                VolumeSet(entry=first, members=(first, second), group_key="split:小初.zip"),
+                dry_run=False,
+            )
+
+            self.assertIsNone(normalized)
+            self.assertEqual(first.read_bytes(), b"disguised-first")
+            self.assertEqual(second.read_bytes(), b"second-part")
+            self.assertEqual(existing.read_bytes(), b"unrelated-existing-001")
+
+    def test_disguised_first_volume_dry_run_reports_target_without_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = root / "小初.zip.jpg"
+            second = root / "小初.zip.002"
+            first.write_bytes(b"disguised-first")
+            second.write_bytes(b"second-part")
+            pipeline = self._make_pipeline(root)
+
+            normalized = pipeline._normalize_disguised_split_suffix_volume_set(
+                VolumeSet(entry=first, members=(first, second), group_key="split:小初.zip"),
+                dry_run=True,
+            )
+
+            self.assertIsNotNone(normalized)
+            normalized_vs, _session = normalized
+            self.assertEqual(normalized_vs.entry.name, "小初.zip.001")
+            self.assertEqual({path.name for path in normalized_vs.members}, {"小初.zip.001", "小初.zip.002"})
+            # dry-run only reports the intended rename; the disk stays untouched.
+            self.assertTrue(first.exists())
+            self.assertEqual(first.read_bytes(), b"disguised-first")
+            self.assertEqual(second.read_bytes(), b"second-part")
+            self.assertFalse((root / "小初.zip.001").exists())
+
+    def test_extract_volume_set_first_success_recombines_disguised_zip_via_001(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data, first, second = _write_synthetic_split_zip(root, "小初.zip.jpg", "小初.zip.002")
+            pipeline = self._make_pipeline(root)
+            pipeline._restore = type(
+                "Restore",
+                (),
+                {"identify": lambda _self, path: ArchiveProbe(path=path, kind=ArchiveKind.ARCHIVE)},
+            )()
+            extractor = _SyntheticZipRecombiningExtractor(succeed=True)
+            pipeline._extractor = extractor
+
+            result, out_dir = pipeline._extract_volume_set_first_success(
+                VolumeSet(entry=first, members=(first, second), group_key="split:小初.zip"),
+                root / "L1",
+                dry_run=False,
+            )
+
+            self.assertTrue(result.ok)
+            self.assertEqual(extractor.seen_entries, ["小初.zip.001"])
+            self.assertIn("hello.txt", extractor.verified_members)
+            renamed = root / "小初.zip.001"
+            self.assertTrue(renamed.exists())
+            self.assertFalse(first.exists())
+            self.assertEqual(renamed.read_bytes() + second.read_bytes(), data)
+            self.assertIsNotNone(out_dir)
+            self.assertEqual((out_dir / "hello.txt").read_bytes(), b"reorder-synthetic-payload")
+
+    def test_extract_volume_set_first_success_rolls_back_disguised_rename_on_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data, first, second = _write_synthetic_split_zip(root, "小初.zip.jpg", "小初.zip.002")
+            first_bytes = first.read_bytes()
+            second_bytes = second.read_bytes()
+            pipeline = self._make_pipeline(root)
+            pipeline._restore = type(
+                "Restore",
+                (),
+                {"identify": lambda _self, path: ArchiveProbe(path=path, kind=ArchiveKind.ARCHIVE)},
+            )()
+            extractor = _SyntheticZipRecombiningExtractor(succeed=False)
+            pipeline._extractor = extractor
+
+            result, out_dir = pipeline._extract_volume_set_first_success(
+                VolumeSet(entry=first, members=(first, second), group_key="split:小初.zip"),
+                root / "L1",
+                dry_run=False,
+            )
+
+            self.assertFalse(result.ok)
+            self.assertIsNone(out_dir)
+            self.assertEqual(extractor.seen_entries, ["小初.zip.001"])
+            self.assertFalse((root / "小初.zip.001").exists())
+            self.assertTrue(first.exists())
+            self.assertEqual(first.read_bytes(), first_bytes)
+            self.assertEqual(second.read_bytes(), second_bytes)
+            self.assertEqual(first.read_bytes() + second.read_bytes(), data)
 
 
 if __name__ == "__main__":

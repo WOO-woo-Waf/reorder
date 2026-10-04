@@ -72,6 +72,7 @@ The ZIP contains:
 - _internal Python runtime files
 - tools/7zip, tools/rar, tools/bandizip
 - resources/passwords.txt and resources/keywords.txt
+- resources/restoreAB.exe (optional manual GUI for merge_ab files)
 - extract_here.bat and target_folder.txt
 
 See docs/windows_portable_release.md and docs/github_release_download.md for usage.

@@ -38,6 +38,12 @@ class ArchiveDiscoveryService:
             return True
         if re.search(r"\.\d{3}\.[^.]+$", p.name, flags=re.IGNORECASE):
             return True
+        if re.search(
+            r"\.(?:7z|zip|rar)\.(?:zip|jpg|jpeg|png|webp|mp4|mkv|avi|mov|exe)$",
+            p.name,
+            flags=re.IGNORECASE,
+        ):
+            return True
         if p.name.lower().endswith((".7z.001", ".zip.001")):
             return True
         if suf.startswith(".r") and len(suf) == 4 and suf[2:].isdigit():

@@ -23,6 +23,7 @@ from reorder_engine.services.restoring import (
     RestorationService,
     SuffixVariantBuilder,
 )
+from reorder_engine.services.restore_ab import RestoreABRestorer
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -239,6 +240,7 @@ def main(argv: list[str] | None = None) -> int:
     inspector = ArchiveSignatureInspector()
     restore_service = RestorationService(
         [
+            RestoreABRestorer(),
             ApateRestorer(inspector, rounds=cfg.beta.rules.max_restore_rounds),
             EmbeddedArchiveRestorer(inspector),
             SuffixVariantBuilder(inspector),

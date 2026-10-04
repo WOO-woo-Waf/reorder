@@ -74,6 +74,7 @@ D:\DownloadLink\unzip-buff
 
 - 展平子目录里的文件。
 - 识别 ZIP、RAR、7Z、分卷、伪装扩展名、部分嵌套压缩包。
+- 识别 restoreAB 合并文件（PDF/图片/媒体前缀 + 尾部 ZIP、RAR 或 7z），并自动恢复后再解压；ZIP AES 继续使用密码库轮询。
 - 按密码库逐个尝试密码。
 - 调用随包的 7-Zip、RAR、Bandizip 命令行工具解压。
 - 尽量递归处理大文件中的嵌套压缩包。
@@ -194,3 +195,5 @@ config.json
 reorder-extract.exe
 extract_here.bat
 ```
+
+如果要手动处理 restoreAB 合并文件，也可以直接打开工具目录中的 `resources\restoreAB.exe`；批处理流程本身不依赖它的 GUI。

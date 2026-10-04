@@ -23,6 +23,7 @@ dist/reorder-extract-windows/
 - `config.json`: 便携版配置，默认从产物目录读取 `resources/` 和 `tools/`。
 - `resources/passwords.txt`: 密码库，一行一个密码，支持 `#` 注释。
 - `resources/keywords.txt`: 关键字库，一行一个条目，支持 `#` 注释。
+- `resources/restoreAB.exe`: 可选的手动 GUI，用于拖放恢复 merge_ab 合并文件；批处理管线不依赖它。
 - `tools/7zip/`: 便携 7-Zip CLI。
 - `tools/rar/`: WinRAR/RAR CLI 文件。
 - `tools/bandizip/`: Bandizip CLI 文件。
@@ -122,7 +123,7 @@ dist/reorder-extract-windows/
 
 - 使用 `conda run -n reorder python -m PyInstaller` 打包 `src/reorder_engine/portable.py`。
 - 生成 `reorder-extract.exe` 和 `_internal/`。
-- 复制 `resources/passwords.txt`、`resources/keywords.txt`。
+- 复制 `resources/passwords.txt`、`resources/keywords.txt`，以及存在时的 `resources/restoreAB.exe`。
 - 复制最小可运行的 7-Zip、RAR、Bandizip CLI 文件。
 - 写入便携版 `config.json`、`extract_here.bat`、`target_folder.txt`、`README.txt`、`VERSION.txt`。
 
@@ -186,6 +187,8 @@ target_folder.txt
 resources/passwords.txt
 resources/keywords.txt
 ```
+
+需要手动查看合并文件时可打开 `resources/restoreAB.exe`；自动批处理会直接使用内置的无界面恢复策略。
 
 上传到 GitHub Release 后，公网下载链接形如：
 
