@@ -11,7 +11,7 @@
 - 阶段 3：只预留扩展点（例如：输出整理、校验、归档、二次处理），不做具体实现
 
 ## 快速运行（骨架可跑）
-> 默认不需要第三方 Python 包；建议用 `pip install -e .` 让 `src/` 布局可直接运行。
+安装项目依赖后，建议用 `pip install -e .` 让 `src/` 布局可直接运行。
 
 - 示例：扫描目录、清洗并重命名、按策略尝试解压
 
@@ -66,9 +66,16 @@ python -m reorder_engine.beta --folder D:\Downloads\data
 python -m reorder_engine.beta --folder D:\Downloads\data --no-flatten
 ```
 
+### restoreAB 合并文件
+
+项目同时支持 `resources/restoreAB.exe` 处理的合并文件格式：文件前面是 PDF、图片或媒体内容，文件尾部嵌入 ZIP、RAR 或 7z。批处理管线会在解压前自动恢复归档副本，ZIP 的 AES 加密交给 `pyzipper` 识别，实际密码仍由 `resources/passwords.txt` 按顺序轮询。原始文件不会被原地改写。
+
+该格式优先通过无界面 Python 策略处理；`restoreAB.exe` 保留为需要手动拖放和查看结果时的 Windows GUI 工具。
+
 ## 外部依赖
 - Windows 环境（优先）
 - 7-Zip（推荐）；归序可在首次运行时自动下载并配置（需要联网）
+- `pyzipper`：识别 restoreAB 合并文件中的 WinZip AES ZIP
 - 归序会把“调用外部工具”封装成类；你可以在配置里指定可执行文件路径。
 
 ### Windows 解压工具准备

@@ -24,6 +24,7 @@ from reorder_engine.services.archive_naming import split_archive_name
 from reorder_engine.services.keywords import KeywordRepository
 from reorder_engine.services.passwords import PasswordRepository
 from reorder_engine.services.restoring import PassthroughRestorer, RestorationService
+from reorder_engine.services.restore_ab import RestoreABRestorer
 from reorder_engine.services.config import ConfigManager
 
 
@@ -107,10 +108,16 @@ def main(argv: list[str] | None = None) -> int:
         prepared_paths.extend(decrypt_service.prepare(p, dry_run=opts.dry_run))
 
     # Stage 1.5 (optional): restore/repair (v0.1 默认直通)
-    restore_service = RestorationService([PassthroughRestorer()])
+    restore_service = RestorationService([RestoreABRestorer(), PassthroughRestorer()])
     restored_paths: list[Path] = []
     for p in prepared_paths:
-        restored_paths.extend(restore_service.restore(p, dry_run=opts.dry_run))
+        restored_paths.extend(
+            restore_service.restore(
+                p,
+                workspace=opts.output_dir / ".restore_ab",
+                dry_run=opts.dry_run,
+            )
+        )
 
     # Stage 2: group volumes + extract
     normalizer = DefaultGroupingNormalizer()

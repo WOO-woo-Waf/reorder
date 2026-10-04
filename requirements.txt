@@ -1,1 +1,1 @@
-# v0.1: no external deps
+pyzipper>=0.3.6

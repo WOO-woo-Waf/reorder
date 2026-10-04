@@ -8,6 +8,9 @@ version = "0.1.0"
 description = "归序（ReOrder Engine）：批量清洗命名并解压"
 requires-python = ">=3.10"
 readme = "README.md"
+dependencies = [
+    "pyzipper>=0.3.6",
+]
 
 [tool.setuptools]
 package-dir = {"" = "src"}

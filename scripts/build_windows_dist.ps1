@@ -67,6 +67,10 @@ New-Item -ItemType Directory -Force -Path `
 
 Copy-Item -LiteralPath (Join-Path $repo "resources\passwords.txt") -Destination (Join-Path $appDir "resources\passwords.txt") -Force
 Copy-Item -LiteralPath (Join-Path $repo "resources\keywords.txt") -Destination (Join-Path $appDir "resources\keywords.txt") -Force
+$restoreAb = Join-Path $repo "resources\restoreAB.exe"
+if (Test-Path $restoreAb) {
+  Copy-Item -LiteralPath $restoreAb -Destination (Join-Path $appDir "resources\restoreAB.exe") -Force
+}
 
 $sevenRoot = Join-Path $repo "tools\7zip\Files\7-Zip"
 $sevenDest = Join-Path $appDir "tools\7zip"
@@ -199,12 +203,14 @@ Editable files:
 - target_folder.txt: default "." means this portable tool folder. Absolute paths such as D:\DownloadLink\unzip-buff are supported.
 - resources\passwords.txt: password library, one password per line. Lines starting with # are ignored.
 - resources\keywords.txt: keyword library, one item per line. Lines starting with # are ignored.
+- resources\restoreAB.exe: optional GUI for manually restoring merge_ab polyglot files.
 
 Do not remove:
 - reorder-extract.exe
 - _internal\
 - config.json
 - tools\
+- resources\restoreAB.exe (optional manual GUI)
 
 CLI:
   reorder-extract.exe --folder D:\path\to\archives
