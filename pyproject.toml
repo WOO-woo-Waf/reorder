@@ -12,6 +12,9 @@ dependencies = [
     "pyzipper>=0.3.6",
 ]
 
+[project.optional-dependencies]
+desktop = ["pydantic>=2.10,<3", "keyring>=25,<26"]
+
 [tool.setuptools]
 package-dir = {"" = "src"}
 

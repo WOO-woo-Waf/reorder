@@ -1,0 +1,26 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "ReOrder",
+  "version": "0.2.0",
+  "identifier": "io.reorder.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [{ "label": "main", "title": "归序 · ReOrder", "width": 1080, "height": 760, "minWidth": 860, "minHeight": 620 }],
+    "security": {
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'",
+      "capabilities": ["main"]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "resources": { "resources/engine/": "engine/", "resources/docs/": "docs/", "resources/licenses/": "licenses/" },
+    "windows": { "nsis": { "displayLanguageSelector": false, "languages": ["SimpChinese", "English"], "installMode": "currentUser" } },
+    "icon": ["icons/icon.png", "icons/icon.ico"]
+  }
+}

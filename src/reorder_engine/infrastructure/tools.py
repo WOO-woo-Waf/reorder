@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shutil
+import os
 from pathlib import Path
 
 from reorder_engine.infrastructure.command_runner import ExternalCommandRunner
@@ -29,7 +30,7 @@ def _resolve_tool(exe: str | None, candidates: list[str]) -> str | None:
 class SevenZipCli:
     def __init__(self, runner: ExternalCommandRunner, exe: str | None = None):
         self._runner = runner
-        self._exe = _resolve_tool(exe, ["7z.exe", "7za.exe", "7z", "7za"])
+        self._exe = _resolve_tool(exe, ["7z.exe", "7za.exe", "7zz", "7z", "7za"])
 
     def is_available(self) -> bool:
         return bool(self._exe)
@@ -78,7 +79,7 @@ class UnrarCli:
         return bool(self._exe)
 
     def extract(self, archive: Path, output_dir: Path, *, password: str | None = None):
-        out_dir = str(output_dir) + "\\"
+        out_dir = str(output_dir) + os.sep
 
         # rar/unrar: x -y -p<password>|-p- <archive> <outdir>\\
         args = [self._exe, "x", "-y"]

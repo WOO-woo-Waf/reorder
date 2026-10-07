@@ -20,10 +20,19 @@ from reorder_engine.services.restoring import RestorationService
 
 
 @dataclass(frozen=True)
+class BetaPackageResult:
+    entry: Path
+    state: str
+    category: str | None = None
+    message: str = ""
+
+
+@dataclass(frozen=True)
 class BetaRunResult:
     ok_count: int
     fail_count: int
     total: int
+    packages: tuple[BetaPackageResult, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -92,6 +101,7 @@ class BetaFolderPipeline:
 
         ok = 0
         fail = 0
+        outcomes: list[BetaPackageResult] = []
         for volume_set in volume_sets:
             if self._is_in_result_dirs(volume_set, {success_dir, intermediate_dir, final_root, error_dir, deferred_volume_dir}):
                 continue
@@ -119,6 +129,8 @@ class BetaFolderPipeline:
                 )
                 if deep_ok:
                     ok += 1
+                    state = "partial" if "deferred-volume" in (message or "") else "succeeded"
+                    outcomes.append(BetaPackageResult(volume_set.entry, state, message=message or ""))
                     self._move_original_members(source_volume_set, archives_dir, package_name=package_name, dry_run=dry_run)
                     if message:
                         self._emit(f"FINAL: {message}")
@@ -140,21 +152,25 @@ class BetaFolderPipeline:
                 if moved_dir is not None:
                     self._emit(f"ERROR-PARTIAL-DIR: {moved_dir}")
                 ok += 1
+                outcomes.append(BetaPackageResult(volume_set.entry, "partial", fail_category, result.message or ""))
                 continue
 
             if self._is_missing_volume(result.message):
                 moved = self._defer_missing_volume_set(source_volume_set, dry_run=dry_run)
                 if moved:
                     ok += 1
+                    outcomes.append(BetaPackageResult(volume_set.entry, "deferred", "missing_volume", result.message or ""))
                     self._emit(
                         f"MISSING-VOLUME: deferred entry={volume_set.entry.name} files={len(moved)}"
                     )
                     continue
                 self._emit(f"MISSING-VOLUME: keep-in-place entry={volume_set.entry.name}")
+                outcomes.append(BetaPackageResult(volume_set.entry, "deferred", "missing_volume", result.message or ""))
                 continue
 
             fail += 1
             fail_category = self._failure_category(result, source_volume_set.entry)
+            outcomes.append(BetaPackageResult(volume_set.entry, "failed", fail_category, result.message or ""))
             self._move_original_members(source_volume_set, error_dir / fail_category, package_name=package_name, dry_run=dry_run)
             if result.message:
                 self._emit(f"ERROR-FILE[{fail_category}]: {self._summarize_message(result.message)}")
@@ -165,7 +181,7 @@ class BetaFolderPipeline:
             self._remove_empty_dirs(error_dir)
             self._remove_empty_dirs(success_dir)
             self._remove_empty_dirs(deferred_volume_dir)
-        return BetaRunResult(ok_count=ok, fail_count=fail, total=ok + fail)
+        return BetaRunResult(ok_count=ok, fail_count=fail, total=ok + fail, packages=tuple(outcomes))
 
     def _entry_candidates(self, vs: VolumeSet, workspace: Path, *, dry_run: bool) -> list[CandidateAttempt]:
         if len(vs.members) > 1:

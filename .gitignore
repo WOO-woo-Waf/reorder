@@ -20,6 +20,16 @@ Thumbs.db
 build/
 dist/
 releases/
+artifacts/
+runtime/
+node_modules/
+target/
+apps/desktop/src-tauri/resources/engine/
+apps/desktop/src-tauri/resources/docs/
+apps/desktop/src-tauri/resources/licenses/
+apps/desktop/src-tauri/gen/
+apps/desktop/dist/
+.svelte-kit/
 
 # Archive outputs (generated during runs)
 success/
@@ -27,6 +37,8 @@ intermediate/
 final/
 failed/
 archives_success/
+error_files/
+deferred_volumes/
 
 # Test outputs
 *.bak
