@@ -314,14 +314,15 @@ Rust 的宿主代码在 `apps/desktop/src-tauri/src/`。核心文件是 `engine_
 
 ```rust
 pub struct EngineBridge {
-    input: Mutex<Option<ChildStdin>>,
-    child: Mutex<Option<Child>>,
+    sender: Mutex<Option<mpsc::SyncSender<Vec<u8>>>>,
+    child: Arc<Mutex<Option<Child>>>,
     pending: Pending,
     sequence: AtomicU64,
+    health: Arc<Health>,
 }
 
 impl EngineBridge {
-    pub fn start(app: &AppHandle) -> Result<Self, String> { ... }
+    pub fn start(app: &AppHandle, portable: bool) -> Result<Self, String> { ... }
     pub fn request(&self, method: &str, params: Value) -> Reply { ... }
     pub fn stop(&self) { ... }
 }
@@ -330,7 +331,7 @@ impl EngineBridge {
 * `struct` 只放数据，方法放在 `impl` 块里。没有构造函数关键字，约定用关联函数 `EngineBridge::start(...)` 充当"工厂/构造器"（`engine_bridge.rs:31`）。
 * 字段默认**私有**，写了 `pub` 才对外可见。这里结构体本身 `pub`，字段不写 `pub` 就仅本模块可见。
 * Rust **没有继承**。复用靠组合与 trait（见 3.2），`EngineBridge` 直接"持有"子进程句柄而不是"是一个"进程管理器，和 [desktop-design.md](desktop-design.md) 里"组合优先"的原则一致。
-* `&self` 表示"以不可变借用的方式调用"（借出对象只读，见 3.6）；`pub fn start(app: &AppHandle)` 里的 `&AppHandle` 同样是借用，不夺走所有权。
+* `&self` 表示以不可变借用调用（内部仍可通过 Mutex 管理可变状态，见 3.6）；`start(app: &AppHandle, portable: bool)` 里的 `&AppHandle` 同样是借用，不夺走所有权。
 
 ### 3.2 `trait`：接口 + 编译期多态
 
@@ -344,14 +345,14 @@ impl EngineBridge {
 
 ```rust
 pub struct EngineBridge {
-    input: Mutex<Option<ChildStdin>>,
-    child: Mutex<Option<Child>>,
+    sender: Mutex<Option<mpsc::SyncSender<Vec<u8>>>>,
+    child: Arc<Mutex<Option<Child>>>,
     ...
 }
 ```
 
-* `Option<T>` 是 `Some(T)` 或 `None`，用来表达"可能为空"。项目里 `input`/`child` 用 `Option` 是因为引擎可能还没启动或已停止。
-* 对比：Java 用 `null`、C++ 用空指针；Rust **没有 null**，要表达缺失必须用 `Option`，于是"忘记判空"变成编译错误而不是运行时崩溃。
+* `Option<T>` 是 `Some(T)` 或 `None`。项目里 `sender`/`child` 用它表示发送队列或引擎句柄已被释放；应用层 `EngineState.engine` 的 `None` 表示尚未持有桥接实例。
+* 对比：Java 常用 `null`、C++ 常用空指针。Rust 的普通引用不能为 null，安全接口通常用 `Option` 表示缺失；原始指针仍可以为空，解引用涉及 unsafe。
 * `is_some_and(...)`（`lib.rs:31`）是 `Option` 的常用组合子：`Some` 时对内部值求条件，类似 Java `Optional.filter(...).isPresent()`。
 * `unwrap_or_else(...)`、`and_then(...)`、`map(...)` 都是同族方法，把"取值 + 兜底"写成链式，避免层层 `if let`。
 
@@ -360,7 +361,7 @@ pub struct EngineBridge {
 ```rust
 type Reply = Result<Value, String>;
 
-pub fn start(app: &AppHandle) -> Result<Self, String> {
+pub fn start(app: &AppHandle, portable: bool) -> Result<Self, String> {
     let resource_dir = app.path().resource_dir().map_err(|_| "无法定位软件资源目录")?;
     ...
 }
@@ -405,7 +406,10 @@ pub fn request(&self, method: &str, params: Value) -> Reply { ... }
 ```rust
 type Pending = Arc<Mutex<HashMap<u64, mpsc::Sender<Reply>>>>;
 ...
-pub struct EngineState(Mutex<Option<Arc<EngineBridge>>>);   // lib.rs:9
+pub struct EngineState {
+    engine: Mutex<Option<Arc<EngineBridge>>>,
+    portable: bool,
+}
 ```
 
 * `Arc<T>` = 原子引用计数智能指针，可安全地在多线程间共享所有权（单线程版是 `Rc<T>`）。类比 C++ `std::shared_ptr`，但引用计数是原子的且由类型系统保证线程安全。
@@ -414,7 +418,7 @@ pub struct EngineState(Mutex<Option<Arc<EngineBridge>>>);   // lib.rs:9
 ### 3.8 `Mutex`：共享可变状态的进出证
 
 ```rust
-input: Mutex<Option<ChildStdin>>,
+sender: Mutex<Option<mpsc::SyncSender<Vec<u8>>>>,
 pending: Pending,
 ...
 self.pending.lock().map_err(|_| "引擎请求锁异常")?.insert(id, sender);
@@ -443,8 +447,8 @@ let result = receiver.recv_timeout(Duration::from_secs(60));
 impl Drop for EngineBridge { fn drop(&mut self) { self.stop(); } }
 ```
 
-* `Drop` trait 等价于 C++ 析构函数 / Java `AutoCloseable.close`，但 Rust 保证**只要值离开作用域就一定被调用**（不会像 C++ 因异常路径被跳过，也不会像 Java 依赖手写 finally）。
-* 于是 `EngineBridge` 被丢弃时自动 `stop()`：关 stdin、必要时结束子进程。这种"资源获取即初始化、离开即释放"的模式就是 **RAII**，Rust 把它作为默认而非可选。
+* `Drop` 类似 C++ 析构函数。Rust 与 C++ 的正常作用域退出、异常展开都会释放相应资源；abort、强杀、故意遗忘对象等路径不保证执行析构。Java `AutoCloseable` 需要 try-with-resources 等机制，不能把它等同于垃圾回收。
+* `EngineBridge` 正常被丢弃时会调用 `stop()`：关闭发送队列，让 writer 释放 stdin，再等待引擎安全收尾，必要时结束子进程。这种资源归属与释放方式沿用了 RAII。
 * 锁守卫（`MutexGuard`）、文件句柄、`ChildStdin` 都靠 `Drop` 自动收尾；不需要手动 free/close。
 * 额外入口在 `lib.rs:54`：应用退出（`RunEvent::Exit`）时主动取走并 `stop()` 引擎，作为对 `Drop` 之外的一次显式兜底。
 

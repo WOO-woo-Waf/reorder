@@ -201,6 +201,8 @@ classDiagram
 Rust 的 EngineBridge 与 Python 的 EngineFacade 属于不同进程，不是互相继承的类。
 跨进程只能传序列化 DTO，不能共享 Python 对象指针或 Rust 引用。
 
+类图仅列主要参数；完整关键字参数与构造函数资源以源码为准。`ExternalCommandRunner` 的 cancel_event/guard 属于构造依赖，`EngineBridge.start(app, portable)` 选择默认用户目录或显式便携数据目录。
+
 ## 4. 数据模型与不变量
 
 ### ProcessingPlan

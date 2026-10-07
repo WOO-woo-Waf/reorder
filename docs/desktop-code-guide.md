@@ -87,7 +87,7 @@ App.svelte
 ### 3.2 谁工作，谁监管
 
 - **引擎监管工具**：一次工具调用生成一个 `ExternalCommandRunner`，它在 [command_runner.py:59-61](../src/reorder_engine/infrastructure/command_runner.py) `Popen` 一个子进程，输出由一个后台线程读入有界队列，期限检查在主循环里独立进行。
-- **宿主监管引擎**：Rust 的 `EngineBridge::start`（[engine_bridge.rs:31](../apps/desktop/src-tauri/src/engine_bridge.rs)）拉起 Python 子进程，并起两个读线程分别处理 stdout（协议）和 stderr（诊断日志）。
+- **宿主监管引擎**：Rust 的 `EngineBridge::start`（[engine_bridge.rs](../apps/desktop/src-tauri/src/engine_bridge.rs)）拉起 Python 子进程；独立 writer 持有 stdin 并消费有界队列，两个读线程分别处理 stdout 协议和 stderr 诊断。连接失效会释放 pending，下一业务请求可建立新引擎，旧任务按 SQLite 中断记录处理。
 - **一个工作线程**：`JobRunner` 只开一个 `reorder-worker` 线程（[jobs.py:25-26](../src/reorder_engine/application/jobs.py)），**协议线程与工作线程是分开的**，所以取消能立刻被读到。
 
 ### 3.3 前端的“所有权”是订阅，不是资源
@@ -277,9 +277,9 @@ prepared → copied / published → source_removed → committed
 - 涉及这些动作的包 → `needs_review`（需要人工核对）；其余处于中间态（`queued/preparing/extracting/publishing/archiving`）的包 → `interrupted`。
 - 对应任务 → `needs_review` 或 `interrupted`。
 
-**明确一点**：代码里**没有**自动 reconcile、自动回滚或自动重跑。设计文档 [desktop-design.md](desktop-design.md) 第 3 节的类图里画过一个概念上的 `FileTransaction.reconcile()`，但**实际源码里不存在这个方法**（全仓库搜索 `reconcile` 无实现命中）。真实的恢复只有上面的“标记待人工检查” + 用户手动重试。不要把它当成自动对账。
+代码里没有自动回滚、自动重做文件或 `FileTransaction.reconcile()`。正式类图已经对齐实现；恢复只更新任务/包状态、登记保留工作区，再由用户人工核对或明确重试。未决动作按 `(job_id, package_id)` 区分，不能把旧任务动作套到同包 ID 的新任务。
 
-【概念，不是实际源码】设计稿里的 `reconcile()` 只是表达“需要一次恢复协调”的占位；落地实现是 `recover_interrupted()` + `incomplete_actions()`。
+落地实现是 `recover_interrupted()` + `incomplete_actions()`；`JobRunner._register_retained_workspaces` 将中断副本登记为已提交的 `recovery_note`，让结果查询可返回人工检查位置。日志设备失败只写通用 stderr 诊断，不阻断文件处理或终态。
 
 ## 7. 错误层级与状态机
 
@@ -332,16 +332,22 @@ npm run tauri dev  # 同时起 Tauri 宿主
 
 开发态下 Python 引擎是**直接跑源码**，不是冻结 exe。看 `EngineBridge::start`（[engine_bridge.rs:39-51](../apps/desktop/src-tauri/src/engine_bridge.rs)）：如果找不到打包好的 `resources/engine/reorder-engine(.exe)`，且是 debug 构建，就用 `REORDER_PYTHON`（默认 `python`）执行 `-m reorder_engine.desktop_engine`，并把 `PYTHONPATH` 指向 `<repo>/src`。因此本机需要能 import 到 `reorder_engine`，依赖见 [pyproject.toml](../pyproject.toml) 的 `desktop` extras（`pydantic`、`keyring`）与 `pyzipper`。
 
-Rust 与前端配置：[tauri.conf.json](../apps/desktop/src-tauri/tauri.conf.json)（窗口、CSP、bundle）、[capabilities/main.json](../apps/desktop/src-tauri/capabilities/main.json)（只放行 `core:default`、`dialog:allow-open`、`dialog:allow-confirm`，**没有 shell/fs 插件权限**）、[Cargo.toml](../apps/desktop/src-tauri/Cargo.toml)、[vite.config.ts](../apps/desktop/vite.config.ts)、[svelte.config.js](../apps/desktop/svelte.config.js)、[tsconfig.json](../apps/desktop/tsconfig.json)、[index.html](../apps/desktop/index.html)、[build.rs](../apps/desktop/src-tauri/build.rs)。
+Rust 与前端配置：[tauri.conf.json](../apps/desktop/src-tauri/tauri.conf.json)（窗口、CSP、bundle）、[capabilities/main.json](../apps/desktop/src-tauri/capabilities/main.json)（`core:default`、`core:window:allow-destroy`、文件对话框与确认；没有 shell/fs 插件权限）、[Cargo.toml](../apps/desktop/src-tauri/Cargo.toml)、[vite.config.ts](../apps/desktop/vite.config.ts)、[svelte.config.js](../apps/desktop/svelte.config.js)、[tsconfig.json](../apps/desktop/tsconfig.json)、[index.html](../apps/desktop/index.html)、[build.rs](../apps/desktop/src-tauri/build.rs)。
 
 ### 8.2 构建（Windows 首交付）
 
-一键脚本 [scripts/build_desktop_windows.ps1](../scripts/build_desktop_windows.ps1) 的步骤（脚本行 5-36）：
+构建脚本 [scripts/build_desktop_windows.ps1](../scripts/build_desktop_windows.ps1) 的步骤：
 
 1. 建/复用 `runtime/desktop-build-venv`，按 [scripts/requirements-desktop-windows.lock.txt](../scripts/requirements-desktop-windows.lock.txt) 安装。
 2. 跑 [scripts/stage_desktop_engine.py](../scripts/stage_desktop_engine.py)：用 PyInstaller `--onedir` 冻结引擎，把结果拷到 `apps/desktop/src-tauri/resources/engine`，并带上 7-Zip（含 `License.txt`，缺 license 会报错，脚本行 51-56）。
-3. 在 `apps/desktop` 里 `npm ci` → `npm run check` → `npm run tauri build`（`-PortableOnly` 时加 `--no-bundle`）。
-4. 组装 `artifacts/desktop/ReOrder-portable` 并压缩为 ZIP。
+3. 收集第三方许可；[stage_desktop_resources.py](../scripts/stage_desktop_resources.py) 按具名指南、图表与许可 manifest 暂存资源，旧资源先保存快照。在 `apps/desktop` 里 `npm ci` → `npm run check` → Tauri build，显式使用 `custom-protocol`、Cargo jobs=2 和项目 `target/.tauri` 工具缓存（`-PortableOnly` 时加 `--no-bundle`）。
+4. [package_desktop.py](../scripts/package_desktop.py) 从明确的 EXE、引擎、指南和许可输入组装新便携目录与 ZIP，生成逐文件 manifest 和发行包 SHA-256；已有运行目录不会被覆盖。
+
+默认执行完整步骤。`-SkipDependencies`、`-SkipEngineStage`、`-SkipFrontendBuild` 只供确认对应输入仍是当前源码的制作者复用有效产物；改 Python 后必须重新 stage，改前端后必须重新 build。`-TauriCli` 可指定另一个已安装 CLI，避免 WSL 与 Windows 原生 npm 依赖互相替换。
+
+`-SkipEngineStage` 仍检查 7-Zip 本体/DLL、许可、Apate 和冻结运行时核心文件；NSIS 与 ZIP 使用同一资源清单。当前构建脚本交付 Windows x64，其他平台的冻结与打包仍待对应平台实现和验收。
+
+正常启动将数据放入 Tauri 用户目录；`ReOrder.exe --portable`（或 `Start-Portable.cmd`）将数据放入 EXE 旁 `data/`，验证可写，并强制密码仅保存在会话中。
 
 冻结入口是 [scripts/desktop_engine_entry.py](../scripts/desktop_engine_entry.py) → [desktop_engine.py](../src/reorder_engine/desktop_engine.py) 的 `main()`。发布包**不含** `passwords.txt`、用户 `config.json`、`restoreAB.exe`、Bandizip、UnRAR——见 [stage_desktop_engine.py:60-62](../scripts/stage_desktop_engine.py) 的 `manifest.excluded`。
 
