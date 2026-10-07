@@ -1,5 +1,14 @@
 # 归序（ReOrder Engine）
 
+## Windows 桌面首版
+
+已按 Tauri 2 + Svelte 5 + TypeScript + Vite、Rust 宿主、Python 引擎和 SQLite 实施手动批处理桌面版，Windows x64 首交付。当前产物与检查记录见 [实施状态](docs/desktop-status.md)，操作与真实文件人工验收见 [用户指南](docs/desktop-user-guide.md)。
+
+- 制作方：[代码阅读指南](docs/desktop-code-guide.md)、[语言指南](docs/desktop-language-guide.md)。
+- 面向对象设计：[职责、类图、时序和状态图](docs/desktop-design.md)。
+- 构建：Windows 下 `scripts/build_desktop_windows.ps1`，生成 NSIS 安装包与便携 ZIP。
+- [完整产品方案](docs/product_plan.md) 保留跨平台路线；浏览器、目录监听和 Agent 留后续。原 CLI 继续保留。
+
 “归序”是一个面向 **离线下载数据整理** 的自动化流水线：对杂乱的压缩包集合进行 **识别 → 统一命名 →（可选）解密准备 → 调用本地解压工具解压**，并为大量不可预期的文件名/分卷格式提供可扩展的策略体系。
 
 > 你原来叫“解压助手”。这里换成更委婉抽象的名字：**归序**（把混乱归于秩序）。

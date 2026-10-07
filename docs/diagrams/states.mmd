@@ -1,0 +1,19 @@
+stateDiagram-v2
+  direction LR
+  [*] --> queued
+  queued --> running : 工作线程取出
+  queued --> cancelling : jobs.cancel
+  running --> cancelling : jobs.cancel
+  cancelling --> cancelled
+  running --> succeeded : 全部包 succeeded
+  running --> partial : 其余组合
+  running --> failed : 全部 failed / interrupted
+  running --> interrupted : 引擎异常退出
+  running --> needs_review : 存在未完成文件动作
+  succeeded --> [*]
+  partial --> [*]
+  failed --> [*]
+  cancelled --> [*]
+  interrupted --> [*]
+  needs_review --> [*]
+  note right of cancelling : 仅任务级状态；包状态没有 cancelling，重试会新建 job（retry_of）

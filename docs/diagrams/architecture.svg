@@ -1,0 +1,137 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 950" width="1100" height="950" data-generator="fireworks-tech-graph" data-schema-version="1" data-text-metrics="heuristic-v1" data-style-id="1" data-visual-theme="Flat Icon" data-diagram-type="architecture" data-motion-scene="" data-semantic-profile="generic" data-semantic-valid="true" data-quality-profile="standard" data-max-bends-per-edge="12" data-max-total-bends="100" data-max-route-stretch="5.0" data-max-bridged-crossings="8" data-min-node-gap="0.0" data-min-container-gutter="0.0" data-min-label-clearance="2.0" data-min-segment-length="0.0">
+  <defs>
+    <marker id="arrowA" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#7c3aed"/>
+    </marker>
+    <marker id="arrowB" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#10b981"/>
+    </marker>
+    <marker id="arrowC" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#2563eb"/>
+    </marker>
+    <marker id="arrowE" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#f97316"/>
+    </marker>
+    <marker id="arrowF" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#7c3aed"/>
+    </marker>
+    <marker id="arrowG" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#ef4444"/>
+    </marker>
+    <marker id="arrowH" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#6b7280"/>
+    </marker>
+    <filter id="shadowSoft" x="-20%" y="-20%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="3" stdDeviation="6" flood-color="#0f172a" flood-opacity="0.12"/>
+    </filter>
+    <filter id="shadowGlass" x="-20%" y="-20%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="10" stdDeviation="16" flood-color="#020617" flood-opacity="0.28"/>
+    </filter>
+    <style>
+    text { font-family: 'Helvetica Neue', Helvetica, Arial, 'PingFang SC', 'Noto Sans CJK SC', 'Microsoft YaHei', 'Microsoft JhengHei', 'SimHei', sans-serif; }
+    .title { font-size: 30px; font-weight: 700; fill: #111827; }
+    .subtitle { font-size: 14px; font-weight: 500; fill: #6b7280; }
+    .section { font-size: 13px; font-weight: 700; fill: #2563eb; letter-spacing: 1.4px; }
+    .section-sub { font-size: 12px; font-weight: 500; fill: #64748b; }
+    .node-title { font-weight: 700; fill: #111827; }
+    .node-sub { font-weight: 500; fill: #6b7280; }
+    .node-type { font-size: 12px; font-weight: 700; fill: #64748b; letter-spacing: 0.08em; }
+    .arrow-label { font-size: 12px; font-weight: 600; fill: #6b7280; }
+    .legend { font-size: 12px; font-weight: 500; fill: #6b7280; }
+    .footnote { font-size: 12px; font-weight: 500; fill: #64748b; }
+    .metric-label { font-size: 8.5px; font-weight: 700; fill: #64748b; text-transform: uppercase; }
+    .metric-value { font-size: 9.5px; font-weight: 700; fill: #111827; }
+    </style>
+  </defs>
+  <rect data-graph-role="background" width="1100.0" height="950.0" fill="#ffffff"/>
+  <text x="550.0" y="56" text-anchor="middle" class="title">ReOrder Desktop Architecture</text>
+  <text x="550.0" y="82" text-anchor="middle" class="subtitle">As-is object graph / Windows first / Rust host + Python business core</text>
+  <path id="invoke" data-graph-role="edge" data-edge-id="invoke" data-source="ui" data-target="host" data-edge-kind="flow" data-topic-id="" data-flow="data" data-motion-role="" data-motion-stage="" data-motion-order="" data-protocol="" data-via="" data-critical-path-id="" data-critical-hop="" data-critical-hops="" data-critical="false" data-bends="0" data-route-stretch="1.0" data-bridges="" d="M 480,195 L 620,195" fill="none" stroke="#f97316" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrowE)"/>
+  <path id="rpc" data-graph-role="edge" data-edge-id="rpc" data-source="host" data-target="facade" data-edge-kind="flow" data-topic-id="" data-flow="data" data-motion-role="" data-motion-stage="" data-motion-order="" data-protocol="" data-via="" data-critical-path-id="" data-critical-hop="" data-critical-hops="" data-critical="false" data-bends="0" data-route-stretch="1.0" data-bridges="" d="M 830,240 L 830,350" fill="none" stroke="#f97316" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrowE)"/>
+  <path id="queue" data-graph-role="edge" data-edge-id="queue" data-source="facade" data-target="jobs" data-edge-kind="flow" data-topic-id="" data-flow="data" data-motion-role="" data-motion-stage="" data-motion-order="" data-protocol="" data-via="" data-critical-path-id="" data-critical-hop="" data-critical-hops="" data-critical="false" data-bends="0" data-route-stretch="1.0" data-bridges="" d="M 620,395 L 480,395" fill="none" stroke="#f97316" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrowE)"/>
+  <path id="process" data-graph-role="edge" data-edge-id="process" data-source="jobs" data-target="processor" data-edge-kind="flow" data-topic-id="" data-flow="data" data-motion-role="" data-motion-stage="" data-motion-order="" data-protocol="" data-via="" data-critical-path-id="" data-critical-hop="" data-critical-hops="" data-critical="false" data-bends="0" data-route-stretch="1.0" data-bridges="" d="M 270,440 L 270,550" fill="none" stroke="#f97316" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrowE)"/>
+  <path id="state" data-graph-role="edge" data-edge-id="state" data-source="facade" data-target="store" data-edge-kind="flow" data-topic-id="" data-flow="data" data-motion-role="" data-motion-stage="" data-motion-order="" data-protocol="" data-via="" data-critical-path-id="" data-critical-hop="" data-critical-hops="" data-critical="false" data-bends="0" data-route-stretch="1.0" data-bridges="" d="M 830,440 L 830,550" fill="none" stroke="#f97316" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrowE)"/>
+  <path id="journal" data-graph-role="edge" data-edge-id="journal" data-source="processor" data-target="store" data-edge-kind="flow" data-topic-id="" data-flow="data" data-motion-role="" data-motion-stage="" data-motion-order="" data-protocol="" data-via="" data-critical-path-id="" data-critical-hop="" data-critical-hops="" data-critical="false" data-bends="0" data-route-stretch="1.0" data-bridges="" d="M 480,595 L 620,595" fill="none" stroke="#f97316" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrowE)"/>
+  <path id="native" data-graph-role="edge" data-edge-id="native" data-source="processor" data-target="tools" data-edge-kind="flow" data-topic-id="" data-flow="data" data-motion-role="" data-motion-stage="" data-motion-order="" data-protocol="" data-via="" data-critical-path-id="" data-critical-hop="" data-critical-hops="" data-critical="false" data-bends="0" data-route-stretch="1.0" data-bridges="" d="M 270,640 L 270,750" fill="none" stroke="#f97316" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrowE)"/>
+  <path id="publish" data-graph-role="edge" data-edge-id="publish" data-source="tools" data-target="results" data-edge-kind="flow" data-topic-id="" data-flow="data" data-motion-role="" data-motion-stage="" data-motion-order="" data-protocol="" data-via="" data-critical-path-id="" data-critical-hop="" data-critical-hops="" data-critical="false" data-bends="0" data-route-stretch="1.0" data-bridges="" d="M 480,795 L 620,795" fill="none" stroke="#f97316" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrowE)"/>
+  <path id="query" data-graph-role="edge" data-edge-id="query" data-source="store" data-target="results" data-edge-kind="flow" data-topic-id="" data-flow="data" data-motion-role="" data-motion-stage="" data-motion-order="" data-protocol="" data-via="" data-critical-path-id="" data-critical-hop="" data-critical-hops="" data-critical="false" data-bends="0" data-route-stretch="1.0" data-bridges="" d="M 830,640 L 830,750" fill="none" stroke="#f97316" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrowE)"/>
+  <g id="node-ui" data-graph-role="node" data-node-id="ui" data-semantic-role="rect" data-motion-role="" data-motion-stage="" data-motion-order="" data-parent="" data-deployment-id="" data-topic-id="" data-span-id="" data-station-order="" data-status="" data-start-ms="" data-duration-ms="" data-parent-span="" data-graph-bounds="60,150,480,240">
+  <rect x="60.0" y="150.0" width="420.0" height="90.0" rx="10.0" fill="#ffffff" stroke="#d1d5db" stroke-width="1.8"/>
+  <text data-text-role="title" data-full-text="DesktopController" data-text-max-width="396.0" x="270.0" y="195.0" text-anchor="middle" class="node-title" font-size="18">DesktopController</text>
+  <text data-text-role="subtitle" data-full-text="Svelte UI / EngineClient" data-text-max-width="396.0" x="270.0" y="217.0" text-anchor="middle" class="node-sub" font-size="12">Svelte UI / EngineClient</text>
+  </g>
+  <g id="node-host" data-graph-role="node" data-node-id="host" data-semantic-role="rect" data-motion-role="" data-motion-stage="" data-motion-order="" data-parent="" data-deployment-id="" data-topic-id="" data-span-id="" data-station-order="" data-status="" data-start-ms="" data-duration-ms="" data-parent-span="" data-graph-bounds="620,150,1040,240">
+  <rect x="620.0" y="150.0" width="420.0" height="90.0" rx="10.0" fill="#ffffff" stroke="#d1d5db" stroke-width="1.8"/>
+  <text data-text-role="title" data-full-text="EngineBridge" data-text-max-width="396.0" x="830.0" y="195.0" text-anchor="middle" class="node-title" font-size="18">EngineBridge</text>
+  <text data-text-role="subtitle" data-full-text="Tauri + Rust / stdio supervisor" data-text-max-width="396.0" x="830.0" y="217.0" text-anchor="middle" class="node-sub" font-size="12">Tauri + Rust / stdio supervisor</text>
+  </g>
+  <g id="node-jobs" data-graph-role="node" data-node-id="jobs" data-semantic-role="rect" data-motion-role="" data-motion-stage="" data-motion-order="" data-parent="" data-deployment-id="" data-topic-id="" data-span-id="" data-station-order="" data-status="" data-start-ms="" data-duration-ms="" data-parent-span="" data-graph-bounds="60,350,480,440">
+  <rect x="60.0" y="350.0" width="420.0" height="90.0" rx="10.0" fill="#ffffff" stroke="#d1d5db" stroke-width="1.8"/>
+  <text data-text-role="title" data-full-text="JobRunner" data-text-max-width="396.0" x="270.0" y="395.0" text-anchor="middle" class="node-title" font-size="18">JobRunner</text>
+  <text data-text-role="subtitle" data-full-text="single worker / cancel + retry" data-text-max-width="396.0" x="270.0" y="417.0" text-anchor="middle" class="node-sub" font-size="12">single worker / cancel + retry</text>
+  </g>
+  <g id="node-facade" data-graph-role="node" data-node-id="facade" data-semantic-role="rect" data-motion-role="" data-motion-stage="" data-motion-order="" data-parent="" data-deployment-id="" data-topic-id="" data-span-id="" data-station-order="" data-status="" data-start-ms="" data-duration-ms="" data-parent-span="" data-graph-bounds="620,350,1040,440">
+  <rect x="620.0" y="350.0" width="420.0" height="90.0" rx="10.0" fill="#ffffff" stroke="#d1d5db" stroke-width="1.8"/>
+  <text data-text-role="title" data-full-text="EngineFacade" data-text-max-width="396.0" x="830.0" y="395.0" text-anchor="middle" class="node-title" font-size="18">EngineFacade</text>
+  <text data-text-role="subtitle" data-full-text="Python / JSON-RPC whitelist" data-text-max-width="396.0" x="830.0" y="417.0" text-anchor="middle" class="node-sub" font-size="12">Python / JSON-RPC whitelist</text>
+  </g>
+  <g id="node-processor" data-graph-role="node" data-node-id="processor" data-semantic-role="rect" data-motion-role="" data-motion-stage="" data-motion-order="" data-parent="" data-deployment-id="" data-topic-id="" data-span-id="" data-station-order="" data-status="" data-start-ms="" data-duration-ms="" data-parent-span="" data-graph-bounds="60,550,480,640">
+  <rect x="60.0" y="550.0" width="420.0" height="90.0" rx="10.0" fill="#ffffff" stroke="#d1d5db" stroke-width="1.8"/>
+  <text data-text-role="title" data-full-text="PackageProcessor" data-text-max-width="396.0" x="270.0" y="595.0" text-anchor="middle" class="node-title" font-size="18">PackageProcessor</text>
+  <text data-text-role="subtitle" data-full-text="workspace copy / pipeline / publish" data-text-max-width="396.0" x="270.0" y="617.0" text-anchor="middle" class="node-sub" font-size="12">workspace copy / pipeline / publish</text>
+  </g>
+  <g id="node-store" data-graph-role="node" data-node-id="store" data-semantic-role="rect" data-motion-role="" data-motion-stage="" data-motion-order="" data-parent="" data-deployment-id="" data-topic-id="" data-span-id="" data-station-order="" data-status="" data-start-ms="" data-duration-ms="" data-parent-span="" data-graph-bounds="620,550,1040,640">
+  <rect x="620.0" y="550.0" width="420.0" height="90.0" rx="10.0" fill="#ecfdf5" stroke="#10b981" stroke-width="1.8"/>
+  <text data-text-role="title" data-full-text="JobRepository" data-text-max-width="396.0" x="830.0" y="595.0" text-anchor="middle" class="node-title" font-size="18">JobRepository</text>
+  <text data-text-role="subtitle" data-full-text="SQLite / jobs + action journal" data-text-max-width="396.0" x="830.0" y="617.0" text-anchor="middle" class="node-sub" font-size="12">SQLite / jobs + action journal</text>
+  </g>
+  <g id="node-tools" data-graph-role="node" data-node-id="tools" data-semantic-role="rect" data-motion-role="" data-motion-stage="" data-motion-order="" data-parent="" data-deployment-id="" data-topic-id="" data-span-id="" data-station-order="" data-status="" data-start-ms="" data-duration-ms="" data-parent-span="" data-graph-bounds="60,750,480,840">
+  <rect x="60.0" y="750.0" width="420.0" height="90.0" rx="10.0" fill="#ffffff" stroke="#d1d5db" stroke-width="1.8"/>
+  <text data-text-role="title" data-full-text="IO Adapters" data-text-max-width="396.0" x="270.0" y="795.0" text-anchor="middle" class="node-title" font-size="18">IO Adapters</text>
+  <text data-text-role="subtitle" data-full-text="FileTransaction / ExternalCommandRunner" data-text-max-width="396.0" x="270.0" y="817.0" text-anchor="middle" class="node-sub" font-size="12">FileTransaction / ExternalCommandRunner</text>
+  </g>
+  <g id="node-results" data-graph-role="node" data-node-id="results" data-semantic-role="rect" data-motion-role="" data-motion-stage="" data-motion-order="" data-parent="" data-deployment-id="" data-topic-id="" data-span-id="" data-station-order="" data-status="" data-start-ms="" data-duration-ms="" data-parent-span="" data-graph-bounds="620,750,1040,840">
+  <rect x="620.0" y="750.0" width="420.0" height="90.0" rx="10.0" fill="#ffffff" stroke="#d1d5db" stroke-width="1.8"/>
+  <text data-text-role="title" data-full-text="Registered Results" data-text-max-width="396.0" x="830.0" y="795.0" text-anchor="middle" class="node-title" font-size="18">Registered Results</text>
+  <text data-text-role="subtitle" data-full-text="final / archives / errors / deferred" data-text-max-width="396.0" x="830.0" y="817.0" text-anchor="middle" class="node-sub" font-size="12">final / archives / errors / deferred</text>
+  </g>
+  <g id="invoke-label" data-graph-role="label" data-owner="invoke" data-graph-bounds="532,164,568,184">
+  <rect x="532.0" y="164.0" width="36.0" height="20" rx="6" fill="#ffffff" opacity="0.94"/>
+  <text x="550.0" y="178.0" text-anchor="middle" class="arrow-label">IPC</text>
+  </g>
+  <g id="rpc-label" data-graph-role="label" data-owner="rpc" data-graph-bounds="757.32,281,827,301">
+  <rect x="757.32" y="281.0" width="69.67999999999999" height="20" rx="6" fill="#ffffff" opacity="0.94"/>
+  <text x="792.16" y="295.0" text-anchor="middle" class="arrow-label">JSON-RPC</text>
+  </g>
+  <g id="queue-label" data-graph-role="label" data-owner="queue" data-graph-bounds="523.68,364,576.32,384">
+  <rect x="523.68" y="364.0" width="52.64" height="20" rx="6" fill="#ffffff" opacity="0.94"/>
+  <text x="550.0" y="378.0" text-anchor="middle" class="arrow-label">submit</text>
+  </g>
+  <g id="process-label" data-graph-role="label" data-owner="process" data-graph-bounds="204.28,481,267,501">
+  <rect x="204.28" y="481.0" width="62.72" height="20" rx="6" fill="#ffffff" opacity="0.94"/>
+  <text x="235.64" y="495.0" text-anchor="middle" class="arrow-label">process</text>
+  </g>
+  <g id="state-label" data-graph-role="label" data-owner="state" data-graph-bounds="778.2,481,827,501">
+  <rect x="778.2" y="481.0" width="48.8" height="20" rx="6" fill="#ffffff" opacity="0.94"/>
+  <text x="802.6" y="495.0" text-anchor="middle" class="arrow-label">state</text>
+  </g>
+  <g id="journal-label" data-graph-role="label" data-owner="journal" data-graph-bounds="520.2,564,579.8,584">
+  <rect x="520.2" y="564.0" width="59.599999999999994" height="20" rx="6" fill="#ffffff" opacity="0.94"/>
+  <text x="550.0" y="578.0" text-anchor="middle" class="arrow-label">journal</text>
+  </g>
+  <g id="native-label" data-graph-role="label" data-owner="native" data-graph-bounds="174.04,681,267,701">
+  <rect x="174.04" y="681.0" width="92.96000000000001" height="20" rx="6" fill="#ffffff" opacity="0.94"/>
+  <text x="220.52" y="695.0" text-anchor="middle" class="arrow-label">publish / run</text>
+  </g>
+  <g id="publish-label" data-graph-role="label" data-owner="publish" data-graph-bounds="518.64,764,581.36,784">
+  <rect x="518.64" y="764.0" width="62.72" height="20" rx="6" fill="#ffffff" opacity="0.94"/>
+  <text x="550.0" y="778.0" text-anchor="middle" class="arrow-label">outputs</text>
+  </g>
+  <g id="query-label" data-graph-role="label" data-owner="query" data-graph-bounds="707.4,681,827,701">
+  <rect x="707.4" y="681.0" width="119.60000000000001" height="20" rx="6" fill="#ffffff" opacity="0.94"/>
+  <text x="767.2" y="695.0" text-anchor="middle" class="arrow-label">registered paths</text>
+  </g>
+  <g id="footer" data-graph-role="reserved" data-graph-bounds="60,908,648,924">
+  <text x="60.0" y="920.0" class="footnote">Business rules remain in Python; Rust owns the desktop host and process supervision.</text>
+  </g>
+</svg>

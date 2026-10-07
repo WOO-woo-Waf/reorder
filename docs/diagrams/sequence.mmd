@@ -1,0 +1,49 @@
+sequenceDiagram
+  autonumber
+  actor User as 用户
+  participant UI as DesktopController
+  participant Host as EngineBridge (Rust)
+  participant API as EngineFacade
+  participant Job as JobRunner
+  participant Core as PackageProcessor
+  participant FS as FileTransaction
+  participant DB as JobRepository
+  User->>UI: 拖放目录或文件
+  UI->>Host: plans.create(input_paths, output_root)
+  Host->>API: JSON-RPC over stdio
+  API->>API: PlanService.create 只读扫描 / 分组
+  API->>DB: save_plan(plan)
+  API-->>UI: 只读计划（package 摘要）
+  User->>UI: 开始
+  UI->>Host: jobs.start(plan_id, idempotency_key)
+  Host->>API: JSON-RPC
+  API->>Job: submit(plan, key) 入队
+  Job->>DB: create_job -> queued
+  Job-->>API: JobSnapshot(queued)
+  API-->>UI: JobSnapshot(queued)
+  Job->>DB: update_job -> running
+  loop 每个 package
+    Job->>Core: process(package, options, cancel, job_id, output_root, log, progress)
+    Core-->>Job: progress(preparing)
+    Job->>DB: update_package(preparing)
+    Core->>Core: 复核源、复制工作副本、恢复 / 解压
+    Core-->>Job: progress(extracting)
+    Job->>DB: update_package(extracting)
+    Core->>Core: BetaFolderPipeline.run()
+    Core-->>Job: progress(publishing)
+    Job->>DB: update_package(publishing)
+    Core->>FS: publish_children(workspace, output_root)
+    FS->>DB: record_action(publish) -> published -> committed
+    Core-->>Job: progress(archiving)
+    Job->>DB: update_package(archiving)
+    Core->>FS: route_sources(package, 归档 / 错误 / 缺卷目录)
+    FS->>DB: record_action(route_source) -> copied
+    FS->>FS: 全部成员复制校验后再删除源
+    Core-->>Job: PackageOutcome(state)
+    Job->>DB: update_package(终态)
+  end
+  Job->>DB: update_job -> succeeded / partial / failed / cancelled / needs_review
+  UI->>Host: jobs.get(job_id)
+  Host->>API: JSON-RPC
+  API-->>UI: JobSnapshot + 登记路径
+  Note over Job,FS: jobs.cancel 置 cancelling；发布事务内不响应取消，只在安全边界结束

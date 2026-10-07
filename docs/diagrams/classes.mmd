@@ -1,0 +1,112 @@
+classDiagram
+  class EngineClient {
+    <<interface>>
+    +request(method, params) Promise
+    +openResult(jobId, path) Promise
+  }
+  class TauriEngineClient {
+    +request(method, params) Promise
+    +openResult(jobId, path) Promise
+  }
+  class DesktopController {
+    -EngineClient client
+    +initialize()
+    +addInputs(paths)
+    +setOutput(path)
+    +prepare()
+    +start()
+    +cancel()
+    +retry()
+    +refresh(force)
+    +loadHistory()
+    +saveSettings(settings)
+    +replacePasswords(passwords)
+    +openResult(path)
+  }
+  class EngineBridge {
+    <<Rust host>>
+    +start(app) EngineBridge
+    +request(method, params) Value
+    +stop()
+  }
+  class JsonRpcServer {
+    +handle(frame) dict
+    +serve(reader, writer)
+  }
+  class EngineFacade {
+    -PlanService planner
+    -JobRunner runner
+    -PackageProcessor processor
+    -JobRepository repository
+    -SettingsRepository settings
+    -SecretStore secrets
+    +dispatch(method, params) dict
+    +settings_info() dict
+  }
+  class PlanService {
+    +create(request) ProcessingPlan
+    +validate_sources(plan)
+  }
+  class JobRunner {
+    +submit(plan, key, retry_of) JobSnapshot
+    +cancel(job_id) dict
+    +retry(request) JobSnapshot
+    +busy bool
+    +close()
+  }
+  class PackageProcessor {
+    +process(package, options, cancel) PackageOutcome
+  }
+  class FileTransaction {
+    +publish(source, target) str
+    +publish_children(source, destination) list
+    +route_sources(package, destination) list
+  }
+  class JobRepository {
+    +save_plan(plan)
+    +create_job(plan, key, retry_of) JobSnapshot
+    +update_job(job_id, state)
+    +update_package(job_id, package_id, state) JobSnapshot
+    +record_action(action) str
+    +action_phase(action_id, phase)
+    +recover_interrupted()
+    +get_job(job_id) JobSnapshot
+    +list_jobs(limit) list
+  }
+  class SettingsRepository {
+    +get() DesktopSettings
+    +update(settings)
+    +resolve_tool(name) str
+  }
+  class SecretStore {
+    +load() tuple
+    +replace(values) dict
+    +redact(text) str
+    +mode str
+  }
+  class ExternalCommandRunner {
+    +run(args, timeout_sec, output_sink) CommandResult
+  }
+  class BetaFolderPipeline {
+    +run(dry_run) BetaRunResult
+  }
+  EngineClient <|.. TauriEngineClient
+  DesktopController --> EngineClient : uses
+  TauriEngineClient ..> EngineBridge : Tauri command
+  EngineBridge ..> JsonRpcServer : JSON-RPC over stdio
+  JsonRpcServer --> EngineFacade : dispatch
+  EngineFacade *-- PlanService
+  EngineFacade *-- JobRunner
+  EngineFacade *-- PackageProcessor
+  EngineFacade *-- JobRepository
+  EngineFacade *-- SettingsRepository
+  EngineFacade *-- SecretStore
+  JobRunner --> PackageProcessor
+  JobRunner --> JobRepository
+  PackageProcessor --> BetaFolderPipeline
+  PackageProcessor --> FileTransaction
+  PackageProcessor --> SecretStore
+  FileTransaction --> JobRepository : records
+  BetaFolderPipeline --> ExternalCommandRunner : through extractors
+  note for EngineBridge "Rust 独立进程；监管 Python 引擎"
+  note for EngineFacade "跨进程只传序列化 DTO，不共享对象指针"

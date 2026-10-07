@@ -1,0 +1,190 @@
+{
+  "schema_version": 1,
+  "mode": "architecture",
+  "template_type": "architecture",
+  "style": 1,
+  "quality_profile": "standard",
+  "text_policy": "strict",
+  "width": 1100,
+  "height": 950,
+  "title": "ReOrder Desktop Architecture",
+  "subtitle": "As-is object graph / Windows first / Rust host + Python business core",
+  "nodes": [
+    {
+      "id": "ui",
+      "kind": "rect",
+      "x": 60,
+      "y": 150,
+      "width": 420,
+      "height": 90,
+      "label": "DesktopController",
+      "sublabel": "Svelte UI / EngineClient",
+      "flat": true
+    },
+    {
+      "id": "host",
+      "kind": "rect",
+      "x": 620,
+      "y": 150,
+      "width": 420,
+      "height": 90,
+      "label": "EngineBridge",
+      "sublabel": "Tauri + Rust / stdio supervisor",
+      "flat": true
+    },
+    {
+      "id": "jobs",
+      "kind": "rect",
+      "x": 60,
+      "y": 350,
+      "width": 420,
+      "height": 90,
+      "label": "JobRunner",
+      "sublabel": "single worker / cancel + retry",
+      "flat": true
+    },
+    {
+      "id": "facade",
+      "kind": "rect",
+      "x": 620,
+      "y": 350,
+      "width": 420,
+      "height": 90,
+      "label": "EngineFacade",
+      "sublabel": "Python / JSON-RPC whitelist",
+      "flat": true
+    },
+    {
+      "id": "processor",
+      "kind": "rect",
+      "x": 60,
+      "y": 550,
+      "width": 420,
+      "height": 90,
+      "label": "PackageProcessor",
+      "sublabel": "workspace copy / pipeline / publish",
+      "flat": true
+    },
+    {
+      "id": "store",
+      "kind": "rect",
+      "x": 620,
+      "y": 550,
+      "width": 420,
+      "height": 90,
+      "label": "JobRepository",
+      "sublabel": "SQLite / jobs + action journal",
+      "flat": true,
+      "fill": "#ecfdf5",
+      "stroke": "#10b981"
+    },
+    {
+      "id": "tools",
+      "kind": "rect",
+      "x": 60,
+      "y": 750,
+      "width": 420,
+      "height": 90,
+      "label": "IO Adapters",
+      "sublabel": "FileTransaction / ExternalCommandRunner",
+      "flat": true
+    },
+    {
+      "id": "results",
+      "kind": "rect",
+      "x": 620,
+      "y": 750,
+      "width": 420,
+      "height": 90,
+      "label": "Registered Results",
+      "sublabel": "final / archives / errors / deferred",
+      "flat": true
+    }
+  ],
+  "arrows": [
+    {
+      "id": "invoke",
+      "source": "ui",
+      "target": "host",
+      "source_port": "right",
+      "target_port": "left",
+      "label": "IPC",
+      "flow": "data"
+    },
+    {
+      "id": "rpc",
+      "source": "host",
+      "target": "facade",
+      "source_port": "bottom",
+      "target_port": "top",
+      "label": "JSON-RPC",
+      "flow": "data"
+    },
+    {
+      "id": "queue",
+      "source": "facade",
+      "target": "jobs",
+      "source_port": "left",
+      "target_port": "right",
+      "label": "submit",
+      "flow": "data"
+    },
+    {
+      "id": "process",
+      "source": "jobs",
+      "target": "processor",
+      "source_port": "bottom",
+      "target_port": "top",
+      "label": "process",
+      "flow": "data"
+    },
+    {
+      "id": "state",
+      "source": "facade",
+      "target": "store",
+      "source_port": "bottom",
+      "target_port": "top",
+      "label": "state",
+      "flow": "data"
+    },
+    {
+      "id": "journal",
+      "source": "processor",
+      "target": "store",
+      "source_port": "right",
+      "target_port": "left",
+      "label": "journal",
+      "flow": "data"
+    },
+    {
+      "id": "native",
+      "source": "processor",
+      "target": "tools",
+      "source_port": "bottom",
+      "target_port": "top",
+      "label": "publish / run",
+      "flow": "data"
+    },
+    {
+      "id": "publish",
+      "source": "tools",
+      "target": "results",
+      "source_port": "right",
+      "target_port": "left",
+      "label": "outputs",
+      "flow": "data"
+    },
+    {
+      "id": "query",
+      "source": "store",
+      "target": "results",
+      "source_port": "bottom",
+      "target_port": "top",
+      "label": "registered paths",
+      "flow": "data"
+    }
+  ],
+  "footer": "Business rules remain in Python; Rust owns the desktop host and process supervision.",
+  "footer_x": 60,
+  "footer_y": 920
+}

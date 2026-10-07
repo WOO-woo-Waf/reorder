@@ -1,0 +1,29 @@
+stateDiagram-v2
+  direction LR
+  [*] --> queued
+  queued --> preparing
+  preparing --> extracting
+  extracting --> publishing
+  publishing --> archiving
+  archiving --> succeeded
+  extracting --> partial
+  extracting --> failed
+  extracting --> deferred
+  queued --> cancelled : 取消时未处理
+  preparing --> cancelled
+  extracting --> cancelled
+  publishing --> needs_review : 发布 / 归档无法确定完成
+  archiving --> needs_review
+  queued --> interrupted : 重启恢复
+  preparing --> interrupted
+  extracting --> interrupted
+  publishing --> interrupted
+  archiving --> interrupted
+  succeeded --> [*]
+  partial --> [*]
+  failed --> [*]
+  deferred --> [*]
+  cancelled --> [*]
+  interrupted --> [*]
+  needs_review --> [*]
+  note left of cancelled : 包状态没有 cancelling；取消只在安全边界生效

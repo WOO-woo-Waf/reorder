@@ -1,0 +1,44 @@
+flowchart TB
+  subgraph FE["前端进程 · Svelte 5 / TypeScript"]
+    UI["App.svelte"]
+    Controller["DesktopController"]
+    Client["EngineClient（接口）"]
+    Adapter["TauriEngineClient"]
+  end
+  subgraph HOST["宿主进程 · Tauri 2 / Rust"]
+    Bridge["EngineBridge · stdio 监管"]
+  end
+  subgraph ENGINE["引擎进程 · Python"]
+    Server["JsonRpcServer"]
+    Facade["EngineFacade"]
+    Planner["PlanService"]
+    Jobs["JobRunner · 单工作线程"]
+    Processor["PackageProcessor"]
+    Files["FileTransaction"]
+    Secrets["SecretStore"]
+    Settings["SettingsRepository"]
+    Repo["JobRepository"]
+    Pipeline["BetaFolderPipeline · 策略集合"]
+    Runner["ExternalCommandRunner"]
+  end
+  UI --> Controller
+  Controller --> Client
+  Client --> Adapter
+  Adapter -->|Tauri command| Bridge
+  Bridge -->|JSON-RPC / stdio| Server
+  Server --> Facade
+  Facade --> Planner
+  Facade --> Jobs
+  Facade --> Settings
+  Facade --> Secrets
+  Jobs --> Processor
+  Jobs --> Repo
+  Processor --> Pipeline
+  Processor --> Files
+  Processor --> Secrets
+  Files -->|动作日志| Repo
+  Pipeline --> Runner
+  Repo --> DB[("SQLite jobs.sqlite3")]
+  Settings --> Cfg[("设置 · 用户数据目录")]
+  Secrets --> OS[("OS 凭据后端 / 会话内存")]
+  Files --> Out[("final / archives / errors / deferred")]
