@@ -106,6 +106,7 @@ class BetaFolderPipeline:
                 dry_run=dry_run,
                 preferred_password=None,
             )
+            source_volume_set = result.source_volume_set or result.volume_set
 
             if result.ok and layer1_dir is not None:
                 deep_ok, final_dir, message = self._continue_after_extract(
@@ -118,7 +119,7 @@ class BetaFolderPipeline:
                 )
                 if deep_ok:
                     ok += 1
-                    self._move_original_members(result.volume_set, archives_dir, package_name=package_name, dry_run=dry_run)
+                    self._move_original_members(source_volume_set, archives_dir, package_name=package_name, dry_run=dry_run)
                     if message:
                         self._emit(f"FINAL: {message}")
                     if final_dir is not None:
@@ -133,7 +134,7 @@ class BetaFolderPipeline:
                     package_name=package_name,
                     dry_run=dry_run,
                 )
-                self._move_original_members(result.volume_set, archives_dir, package_name=package_name, dry_run=dry_run)
+                self._move_original_members(source_volume_set, archives_dir, package_name=package_name, dry_run=dry_run)
                 if result.message:
                     self._emit(f"ERROR-PARTIAL[{fail_category}]: {self._summarize_message(result.message)}")
                 if moved_dir is not None:
@@ -142,7 +143,7 @@ class BetaFolderPipeline:
                 continue
 
             if self._is_missing_volume(result.message):
-                moved = self._defer_missing_volume_set(volume_set, dry_run=dry_run)
+                moved = self._defer_missing_volume_set(source_volume_set, dry_run=dry_run)
                 if moved:
                     ok += 1
                     self._emit(
@@ -153,8 +154,8 @@ class BetaFolderPipeline:
                 continue
 
             fail += 1
-            fail_category = self._failure_category(result, volume_set.entry)
-            self._move_original_members(volume_set, error_dir / fail_category, package_name=package_name, dry_run=dry_run)
+            fail_category = self._failure_category(result, source_volume_set.entry)
+            self._move_original_members(source_volume_set, error_dir / fail_category, package_name=package_name, dry_run=dry_run)
             if result.message:
                 self._emit(f"ERROR-FILE[{fail_category}]: {self._summarize_message(result.message)}")
 
@@ -196,7 +197,13 @@ class BetaFolderPipeline:
         preferred_password: str | None = None,
     ) -> tuple[ExtractionResult, Path | None]:
         if len(vs.members) > 1:
-            return self._extract_volume_set_first_success(vs, layer_root, dry_run=dry_run, preferred_password=preferred_password)
+            result, out_dir = self._extract_volume_set_first_success(
+                vs, layer_root, dry_run=dry_run, preferred_password=preferred_password
+            )
+            # Successful/partial normalized volumes retain their new names;
+            # empty failures have already rolled those names back.
+            source_vs = result.volume_set if result.ok or out_dir is not None else vs
+            return replace(result, source_volume_set=source_vs), out_dir
 
         last = ExtractionResult(volume_set=vs, ok=False, tool="none", message="No candidate executed")
         for index, attempt in enumerate(candidates, start=1):
@@ -209,8 +216,12 @@ class BetaFolderPipeline:
                 preferred_password=preferred_password,
                 method=attempt.method,
             )
+            # A separate preparation/restoration copy does not replace the
+            # original. In-place suffix renames, however, do replace its path.
+            source_vs = vs if candidate != vs.entry else res.volume_set
+            res = replace(res, source_volume_set=source_vs)
             last = res
-            if res.ok:
+            if res.ok or (out_dir is not None and self._has_any_file(out_dir)):
                 return res, out_dir
             self._rollback_attempt(attempt, dry_run=dry_run)
 
@@ -224,11 +235,13 @@ class BetaFolderPipeline:
                 preferred_password=preferred_password,
                 method=force_attempt.method,
             )
+            source_vs = vs if force_attempt.path != vs.entry else res.volume_set
+            res = replace(res, source_volume_set=source_vs)
             last = res
-            if res.ok:
+            if res.ok or (out_dir is not None and self._has_any_file(out_dir)):
                 return res, out_dir
             self._rollback_attempt(force_attempt, dry_run=dry_run)
-        return last, None
+        return replace(last, source_volume_set=vs), None
 
     def _extract_volume_set_first_success(
         self,
@@ -307,7 +320,7 @@ class BetaFolderPipeline:
             dry_run=dry_run,
             preferred_password=preferred_password,
         )
-        if last.ok:
+        if last.ok or (out_dir is not None and self._has_any_file(out_dir)):
             return last, out_dir
 
         normalized = self._normalize_middle_numbered_volume_set(vs, dry_run=dry_run)
@@ -464,7 +477,7 @@ class BetaFolderPipeline:
             preferred_password=preferred_password,
             method=method,
         )
-        if direct_result.ok or len(volume_set.members) > 1:
+        if direct_result.ok or len(volume_set.members) > 1 or (direct_dir is not None and self._has_any_file(direct_dir)):
             return direct_result, direct_dir
 
         last = direct_result
@@ -490,12 +503,13 @@ class BetaFolderPipeline:
                 method=f"{method}+rename:{plan.rule_name}",
             )
             last = result
-            if result.ok:
+            if result.ok or (out_dir is not None and self._has_any_file(out_dir)):
                 return result, out_dir
             session.rollback_best_effort(dry_run=dry_run)
             self._emit(f"RENAME-ROLLBACK: {renamed_entry.name} -> {volume_set.entry.name} rule={plan.rule_name}")
 
-        return last, None
+        # Failed suffix attempts were rolled back to the input volume set.
+        return replace(last, volume_set=volume_set), None
 
     def _run_extract_attempt(
         self,

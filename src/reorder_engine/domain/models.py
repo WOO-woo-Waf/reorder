@@ -65,6 +65,9 @@ class ExtractionResult:
     exit_code: int | None = None
     message: str | None = None
     password: str | None = None
+    # The pipeline routes these files after extraction. A recovered working
+    # copy can be the extraction entry while its original still needs archiving.
+    source_volume_set: VolumeSet | None = None
 
 
 @dataclass(frozen=True)
