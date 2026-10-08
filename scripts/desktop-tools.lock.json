@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "platform": "windows-x64",
+  "tools": [
+    {
+      "id": "unrar",
+      "name": "UnRAR",
+      "version": "7.13.0",
+      "url": "https://www.rarlab.com/rar_add.htm",
+      "sha256": "8d609ae919a1cf1d29ae3d5072f58b030d69a234f9f56de8730924c93a014a1d",
+      "archive_format": "zip",
+      "vendored_archive": "tools/desktop-vendor/unrar-7.13-windows-x64.zip",
+      "license": "UnRAR freeware redistribution licence (RAR compression algorithm restriction)",
+      "files": [
+        {
+          "path": "UnRAR.exe",
+          "sha256": "8bc2ed3a734be9e90c63f3acf6adcf6e1f1e64ddbc6643ce2190d0401d98efb5"
+        },
+        {
+          "path": "UnRAR-License.txt",
+          "sha256": "48c3ebe5e74e4b9312cdf6b337b04f87f220416cb54ca4f4df01a1f504859d09"
+        },
+        {
+          "path": "WinRAR-License.txt",
+          "sha256": "1bb38de240481ebfbc2dfd593971ed4a2cc3c1394e4579418d1d0f7b1f8664d1"
+        }
+      ],
+      "license_files": [
+        "UnRAR-License.txt",
+        "WinRAR-License.txt"
+      ],
+      "provenance": {
+        "binary_source": "Windows host, C:\\Program Files\\WinRAR\\UnRAR.exe",
+        "file_version": "7.13.0",
+        "publisher": "win.rar GmbH",
+        "authenticode": "Valid (Windows inventory 2026-10-08)",
+        "utility_license_source": "https://www.rarlab.com/rar/unrarw64.exe",
+        "matching_eula_source": "Windows WinRAR 7.13 installation License.txt",
+        "note": "Vendored ZIP assembled from the unchanged signed stable CLI and two public license texts; upstream addon is currently beta and not used."
+      }
+    }
+  ],
+  "not_bundled": [
+    {
+      "id": "bandizip",
+      "reason": "Bandisoft EULA 2.3/2.4 requires written redistribution permission; none provided. Use an independently installed bz.exe if desired.",
+      "license_source": "https://www.bandisoft.com/bandizip/eula/eula.en.pdf"
+    }
+  ]
+}

@@ -83,6 +83,31 @@
 
 这轮完成前置工程检查，不等于业务验收通过。原生 `invoke` 参数绑定、WebView UUID、拖放/对话框、OS 凭据、真实强杀恢复、实际文件效果与安装卸载仍交由用户验收；读取端点探针也未覆盖 Rust 系统打开操作。
 
+### 2026-10-08 Windows 固定解压依赖
+
+用户要求最终 Windows 包固定携带可用解压器，本轮沿用前置验证边界：检查代码、纯 fake 测试、CLI 帮助与发行资源，不启动 GUI、不处理用户文件或内容样本。基线 `b9f275e`；main 原有工作保留。
+
+- 随包固定 **7-Zip 25.01 + UnRAR 7.13.0 x64**。UnRAR 使用宿主 `C:\Program Files\WinRAR\UnRAR.exe` 的有效签名原始 EXE；Git 中保存三个公开文件组成的 [vendor ZIP](../tools/desktop-vendor/unrar-7.13-windows-x64.zip)，[工具锁](../scripts/desktop-tools.lock.json) 固定包和逐文件 SHA-256。缺输入、哈希不符或缺许可直接失败，不用 PATH 或上游最新 beta 顶替。
+- UnRAR 自身许可明确允许放进其他软件包。随包保留 `UnRAR-License.txt` 和对应 WinRAR 7.13 的公开 `WinRAR-License.txt`；不包含 WinRAR GUI、`Rar.exe`、注册信息或用户配置。
+- 宿主找到 Bandizip `bz.exe` 7.40.0.1，签名和帮助检查正常；官方 EULA 2.3/2.4 要求书面分发许可，目前未取得，故不随包。已安装的 `bz.exe` 仍可在设置里指定，默认 7-Zip/UnRAR 不依赖它。宿主 `tar.exe` 为 bsdtar/libarchive 3.8.8，仅作为候选记录，未复制系统 EXE 或新增适配器。具体来源见 [第三方说明](desktop-third-party.md#8-unrar-固定依赖与未随包工具)。
+- 新增备用工具后，纯 fake 复现发现 7-Zip 的密码错误被最后 UnRAR 的格式不兼容消息覆盖。`ExtractionService` 现在仅在最终为明确格式不兼容时保留此前密码失败；成功回退、全工具×密码矩阵、缺卷早停保持，最后磁盘/写入错误仍保留。
+- 已重新冻结 Windows Python 引擎，`--help` 退出 0，验证加载且未构造任务/SQLite。Rust 宿主、前端和 7-Zip 字节未改，复用已有对应检查。旧引擎内容 smoke 的结果不能当作本次新冻结引擎的业务验收。
+- 两轮新建且驻留的 DeepSeek/high 完成锁→暂存→许可→打包边界审查及错误保留修复审查，无阻断；复用本聊天有效 V1 正文与运行元数据，没有恢复迁移前旧子线程。临时解包目录已移到 engine 同级，避免硬杀残留进入资源映射。
+
+证据根：ignored 的 `artifacts/desktop/fixed-tools-20261008/`。检查均使用 `rtk`，本轮没有全库测试、浏览器检查或真实内容管线运行。
+
+| 范围 | 命令 / 方式 | 结果与证据 |
+|---|---|---|
+| 锁、离线输入与暂存 | `PYTHONPATH=src /root/miniforge3/bin/python -m pytest tests/test_desktop_tool_staging.py -q` | worker 57 passed，退出 0；`staging-tests-rev2.json`。后续临时目录小修只重查 `-k 'stage_from_cache_then_validate or stage_repairs_tampered_target_and_backs_up_old'`，2 passed / 55 deselected、退出 0，`temp-stage-check.json`；属于原套子集，不累加 |
+| 密码失败保留与回退 | 同环境 `pytest tests/test_fixed_tool_fallback.py -q`；`pytest tests/test_beta_cli_and_extracting.py -k extraction_service -q` | 8 passed；4 passed / 3 deselected，各退出 0；`fallback-tests.log`。全部 fake；原红复现 `fallback-diagnostic-red.log` 退出 1 |
+| Windows 工具发现 | 隔离临时设置目录，默认解析 7-Zip/UnRAR，校验锁哈希；UnRAR `-?` | 退出 0；`windows-tool-probe.json`、`host-cli-help.json`。只帮助，不解压；没有保存设置、凭据或建立引擎/SQLite |
+| Windows 最终冻结 | build venv `scripts/stage_desktop_engine.py`；暂存引擎 `--help` | 各退出 0；`freeze-stage.log`、`artifacts/desktop/engine-build/freeze.log`、`frozen-engine-help.log` |
+| 许可与构建脚本 | Windows build venv `scripts/collect_desktop_licenses.py`；PowerShell Parser 读取 PS1 | 各退出 0；641 entries（366 text / 67 metadata / 208 unresolved），UnRAR 两份 text；`collect-licenses-final.log`、`powershell-parse.log` |
+
+发行入口沿用 `artifacts/desktop/ReOrder_0.2.0_x64-setup.exe`、`ReOrder-0.2.0-windows-x64.zip` 与 `SHA256SUMS.txt`。新便携目录由打包脚本选择，不覆盖旧目录或 `data/`；实际路径、NSIS/ZIP 最终检查结果及发行哈希记录分别保存在 `package-result.json`、`windows-bundle.log`、`package-check-final.json`。本段已通过检查只覆盖上表；最终发行产物结果以这些记录与交付回复为准。
+
+UnRAR 中文帮助编码未统一成 UTF-8；没有通过增加 `-scfc` 解决此问题。真实 RAR/密码/分卷兼容性、安装卸载、干净 Windows 与界面体验仍待用户人工验收，新增工具不能当作这些验收已通过。
+
 ### 人工验收与明确限制
 
 按 [用户指南第 12 节](desktop-user-guide.md#12-真实文件人工验收清单) 使用副本样本，逐项核对操作步骤和预期结果：

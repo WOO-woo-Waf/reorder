@@ -349,7 +349,7 @@ Rust 与前端配置：[tauri.conf.json](../apps/desktop/src-tauri/tauri.conf.js
 
 正常启动将数据放入 Tauri 用户目录；`ReOrder.exe --portable`（或 `Start-Portable.cmd`）将数据放入 EXE 旁 `data/`，验证可写，并强制密码仅保存在会话中。
 
-冻结入口是 [scripts/desktop_engine_entry.py](../scripts/desktop_engine_entry.py) → [desktop_engine.py](../src/reorder_engine/desktop_engine.py) 的 `main()`。发布包**不含** `passwords.txt`、用户 `config.json`、`restoreAB.exe`、Bandizip、UnRAR——见 [stage_desktop_engine.py:60-62](../scripts/stage_desktop_engine.py) 的 `manifest.excluded`。
+冻结入口是 [scripts/desktop_engine_entry.py](../scripts/desktop_engine_entry.py) → [desktop_engine.py](../src/reorder_engine/desktop_engine.py) 的 `main()`。发布包不含 `passwords.txt`、用户 `config.json`、`restoreAB.exe` 或未获分发许可的 Bandizip。开源 7-Zip 与可分发的 UnRAR 固定随包；[desktop-tools.lock.json](../scripts/desktop-tools.lock.json) 记录 UnRAR 版本、Git 构建输入及逐文件 SHA-256，[stage_desktop_tools.py](../scripts/stage_desktop_tools.py) 在暂存、校验和打包时拒绝缺失/变更的工具。补工具资源可用 `stage_desktop_engine.py --tools-only`，无需重新冻结未变的 Python 引擎。
 
 ### 8.3 检查与测试入口
 

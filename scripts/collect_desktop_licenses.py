@@ -14,7 +14,7 @@ It gathers, for the locked desktop dependency set:
 * frozen Python distributions from
   ``scripts/requirements-desktop-windows.lock.txt`` + the build venv
   ``site-packages`` metadata;
-* the 7-Zip redistribution license shipped beside the bundled ``7z`` binary.
+* the 7-Zip redistribution license and locked UnRAR/Bandizip license texts.
 
 Every entry is classified as one of:
 
@@ -23,8 +23,7 @@ Every entry is classified as one of:
 * ``unresolved`` - neither a license id nor a text file was found.
 
 The main thread performs final package integration. This script does not decide
-the project's own root LICENSE and does not bundle Bandizip, UnRAR or
-restoreAB.
+the project's own root LICENSE and does not bundle restoreAB.
 
 Reproduce (WSL or Windows):
 
@@ -572,6 +571,28 @@ def collect_seven_zip(repo: Path, evidence_root: Path, override: Path | None) ->
     return entry
 
 
+def collect_fixed_tools(repo: Path, evidence_root: Path) -> list[dict]:
+    """Copy license texts from the validated, version-locked desktop tools."""
+    from stage_desktop_tools import validate_fixed_tools
+
+    stage = repo / "apps/desktop/src-tauri/resources/engine"
+    validate_fixed_tools(repo, stage)
+    lock = json.loads((repo / "scripts/desktop-tools.lock.json").read_text(encoding="utf-8"))
+    entries = []
+    for tool in lock["tools"]:
+        directory = stage / "tools" / tool["id"]
+        sources = [directory / path for path in tool["license_files"]]
+        entries.append({
+            "ecosystem": tool["id"], "name": tool["name"], "version": tool["version"],
+            "license": tool.get("license", "See bundled upstream license text"),
+            "scope": "bundled-tool", "installed": True,
+            "source": tool["url"], "archive_sha256": tool["sha256"],
+            "license_files": _copy_license_files(sources, evidence_root / tool["id"], evidence_root),
+            "status": "text",
+        })
+    return entries
+
+
 # --------------------------------------------------------------------------- #
 # Output
 # --------------------------------------------------------------------------- #
@@ -696,6 +717,7 @@ def main() -> int:
     entries.extend(collect_cargo(repo, evidence_root, registry_src))
     entries.extend(collect_python(repo, evidence_root, site_packages, python_lock))
     entries.append(collect_seven_zip(repo, evidence_root, args.seven_zip))
+    entries.extend(collect_fixed_tools(repo, evidence_root))
     attach_upstream(entries, upstream_dir, upstream_index)
 
     if windows_graph is not None:
@@ -704,8 +726,7 @@ def main() -> int:
                 entry["windows_graph"] = f"{entry['name']}@{entry['version']}" in windows_graph
 
     not_bundled = [
-        "Bandizip (commercial/proprietary) - not bundled",
-        "UnRAR (restricted redistribution licence) - not bundled",
+        "Bandizip (Bandisoft EULA 2.3/2.4 requires written redistribution permission) - not bundled",
         "restoreAB.exe (legacy user tool) - not bundled in the desktop package",
         "The project's own root LICENSE is decided by the main thread, not here.",
     ]

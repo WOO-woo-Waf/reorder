@@ -25,6 +25,7 @@ runtime/
 node_modules/
 target/
 apps/desktop/src-tauri/resources/engine/
+apps/desktop/src-tauri/resources/.desktop-tool-staging-*/
 apps/desktop/src-tauri/resources/docs/
 apps/desktop/src-tauri/resources/licenses/
 apps/desktop/src-tauri/gen/

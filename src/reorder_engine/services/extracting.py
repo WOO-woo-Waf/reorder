@@ -130,6 +130,41 @@ class DefaultToolCompatibilityPolicy(ToolCompatibilityPolicy):
 
 
 class ExtractionService:
+    # An earlier password failure is more actionable than a later "this tool cannot
+    # read the archive" message and must not be masked by it. Any other final error
+    # (for example a disk or write error) is kept as-is.
+    _PASSWORD_FAILURE_MARKERS = (
+        "wrong password",
+        "password is incorrect",
+        "incorrect password",
+        "invalid password",
+        "illegal password",
+        "encrypted",
+        "data error",
+        "crc failed",
+        "密码错误",
+        "密码不正确",
+        "口令错误",
+        "非法密码",
+        "加密",
+    )
+    _FORMAT_MISMATCH_MARKERS = (
+        "not a rar archive",
+        "not rar archive",
+        "is not rar",
+        "not a rar",
+        "can not open the file as archive",
+        "cannot open the file as archive",
+        "is not archive",
+        "not archive",
+        "unsupported archive type",
+        "不是 rar",
+        "不是rar",
+        "不是压缩文件",
+        "不是有效的压缩文件",
+        "无法作为压缩文件打开",
+    )
+
     def __init__(
         self,
         extractors: list[ExtractorStrategy],
@@ -140,6 +175,19 @@ class ExtractionService:
         self._extractors = extractors
         self._compatibility_policy = compatibility_policy or DefaultToolCompatibilityPolicy()
         self._attempt_sink = attempt_sink
+
+    @staticmethod
+    def _message_contains(message: str | None, markers: tuple[str, ...]) -> bool:
+        if not message:
+            return False
+        lowered = message.lower()
+        return any(marker in lowered for marker in markers)
+
+    def _looks_like_password_failure(self, message: str | None) -> bool:
+        return self._message_contains(message, self._PASSWORD_FAILURE_MARKERS)
+
+    def _looks_like_format_mismatch(self, message: str | None) -> bool:
+        return self._message_contains(message, self._FORMAT_MISMATCH_MARKERS)
 
     def _failure_disposition(self, message: str | None) -> str:
         """Classify failures while preserving the full tool x password matrix.
@@ -190,18 +238,28 @@ class ExtractionService:
         passwords = self._password_attempt_order(request)
 
         last: ExtractionResult | None = None
+        password_failure: ExtractionResult | None = None
         for ext in ordered:
             for pwd in passwords:
                 last = self._try_extract(ext, request, pwd, dry_run=dry_run)
                 if last.ok:
                     return last
+                if self._looks_like_password_failure(last.message):
+                    password_failure = last
                 disp = self._failure_disposition(last.message)
                 if disp == "stop_all":
                     return last
                 if disp == "next_tool":
                     break
 
-        return last or ExtractionResult(volume_set=request.volume_set, ok=False, tool="none", message="No attempt executed")
+        if last is None:
+            return ExtractionResult(volume_set=request.volume_set, ok=False, tool="none", message="No attempt executed")
+        # The final tool may only be able to say "not an archive" while an earlier
+        # attempt already showed the archive needs a password. Report that earlier,
+        # more actionable failure instead of the format message.
+        if password_failure is not None and self._looks_like_format_mismatch(last.message):
+            return password_failure
+        return last
 
     def _password_attempt_order(self, request: ExtractionRequest) -> list[str | None]:
         ordered: list[str | None] = []

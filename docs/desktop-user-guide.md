@@ -24,7 +24,7 @@
 - Windows 10 或 Windows 11，**x64**。当前只配置了 x64 目标。
 - **WebView2 Runtime**（界面渲染依赖它，见下）。
 - 足够磁盘空间：处理时会先在内部工作区准备副本，再发布成品并归档原件。单包大概需要“原件总大小 × 2 以上”的临时空间，另外还要留出成品空间。
-- 你**不需要**自己安装 Python、Node.js、Rust、7-Zip、WinRAR 或 Bandizip。界面引擎、Python 业务引擎和 7-Zip 都随包提供；UnRAR / Bandizip 是可选的，只有在处理对应格式时才需要。
+- 你**不需要**自己安装 Python、Node.js、Rust、7-Zip 或 WinRAR。界面、Python 引擎、7-Zip 25.01 与 UnRAR 7.13 都随包提供。Bandizip 未取得随包分发许可；它是可选工具，可在设置中选择本机已安装的 `bz.exe`。
 
 ### 关于 WebView2
 
@@ -214,7 +214,8 @@ apps\desktop\src-tauri\target\release\bundle\nsis\ReOrder_0.2.0_x64-setup.exe
 ### 9.2 解压工具
 
 - **7-Zip（必需）**：默认自动查找。便携包会自带 7-Zip；如果没找到，界面底部会提示“在设置中检查 7-Zip”。可用“选择”手动指定本机的 `7z.exe` / `7zz`。
-- **UnRAR（可选）**、**Bandizip（可选）**：仅有对应格式需求时才需要，可留空。
+- **UnRAR（备用，自带）**：路径留空即可自动使用随包的固定 7.13 版本，无需安装 WinRAR。
+- **Bandizip（可选，本机安装）**：未随包分发，需要时选择本机 `bz.exe`，例如 `C:\Program Files\Bandizip\bz.exe`；保持原安装目录及 DLL。默认 7-Zip/UnRAR 不依赖它。
 
 ### 9.3 密码集与凭据后端
 

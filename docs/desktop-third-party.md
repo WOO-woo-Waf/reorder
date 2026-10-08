@@ -1,17 +1,17 @@
 # 桌面首版第三方组件与许可清单
 
-日期：2026-10-07（Asia/Shanghai）。适用范围：Windows x64 桌面首版发行包所携带的组件。
+日期：2026-10-08（Asia/Shanghai）。适用范围：Windows x64 桌面首版发行包所携带的组件。
 本文只整理第三方组件、许可与证据位置；**不决定本项目根 `LICENSE`**，最终打包集成由主线程完成。
 相关文档：[实施状态](desktop-status.md)、[工程设计](desktop-design.md)。
 
 ## 1. 目的与边界
 
-- 目标：为已将/将随桌面包分发的组件建立可复现的许可证据，覆盖前端 npm 锁、Rust Cargo 锁、冻结 Python 引擎依赖，以及随包 7-Zip 的发布许可。
+- 目标：为已将/将随桌面包分发的组件建立可复现的许可证据，覆盖前端 npm 锁、Rust Cargo 锁、冻结 Python 引擎依赖，以及随包 7-Zip / UnRAR 的发布许可。
 - 证据来源：**本地已安装依赖**的包内许可文件与元数据（`node_modules`、Cargo registry checkout、冻结 venv `site-packages`、`tools/7zip`），以及第 5.1 节固定来源的上游补充文本。脚本默认离线，只有 `--fetch-upstream` 才下载补充文本。
 - 不读取用户秘密：脚本不接触 `resources/passwords.txt`、用户 `config.json`、`.env` 或任何凭据。
 - 不编辑冻结引擎暂存目录：脚本只写 `artifacts/desktop/license-evidence/`（被 `.gitignore` 忽略），不修改 `apps/desktop/src-tauri/resources/engine/`。
-- **明确不随包分发**：Bandizip（商业/专有）、UnRAR（受限再分发许可）、`restoreAB.exe`（历史用户工具）。见第 8 节。
-- 冻结引擎 `build-info.json` 记录的 `excluded` 字段与上述一致：`passwords.txt`、`config.json`、`restoreAB.exe`、`Bandizip`、`UnRAR`。
+- **明确不随包分发**：Bandizip（官方 EULA 要求书面分发许可，当前未取得）、`restoreAB.exe`（历史用户工具）。见第 8 节。UnRAR 自身许可明确允许随其他软件分发，本次纳入固定依赖。
+- 冻结引擎 `build-info.json` 的 `excluded` 保留 `passwords.txt`、`config.json`、`restoreAB.exe`、`Bandizip`；`bundled_tools` 及 `tools/fixed-tools.json` 记录固定 UnRAR 身份。
 
 ## 2. 收集方法与复现
 
@@ -41,10 +41,10 @@ rtk proxy python3 scripts/collect_desktop_licenses.py --fetch-upstream
 
 - `artifacts/desktop/license-evidence/manifest.json`：逐条清单（生态、名称、版本、许可、作用域、是否已安装、收集到的文本文件、状态）。
 - `artifacts/desktop/license-evidence/SUMMARY.md`：分生态汇总与未完全解析条目。
-- `artifacts/desktop/license-evidence/{npm,cargo,python,7zip}/…`：完整许可文本副本。
+- `artifacts/desktop/license-evidence/{npm,cargo,python,7zip,unrar}/…`：完整许可文本副本。
 - `artifacts/desktop/license-evidence/upstream/…` + `upstream/SOURCES.json`：上游补充许可文本及其来源/commit/sha256。
 
-## 3. 本次收集结果快照
+## 3. 2026-10-07 收集快照与 10-08 工具增补
 
 在 2026-10-07 的 Windows 构建工作区（`Cargo registry` 位于 `runtime/toolchains/cargo/registry`，Python 位于 `runtime/desktop-build-venv`）执行脚本，退出码 0。
 主线程另以 `cargo metadata --filter-platform x86_64-pc-windows-msvc --locked --offline --format-version 1`（退出 0）生成 Windows 可达依赖图 `artifacts/desktop/windows-dependencies.json`；脚本据此把 Cargo 条目分为"Windows 图内 254"与"不在 Windows 图内的 208"两类（`manifest.json` 的 `cargo_scope`）：
@@ -57,6 +57,8 @@ rtk proxy python3 scripts/collect_desktop_licenses.py --fetch-upstream
 | Python（`requirements-desktop-windows.lock.txt`） | 19 | 19 | 0 | 0 |
 | 7-Zip | 1 | 1 | 0 | 0 |
 | 合计 | 640 | 365 | 67 | 208 |
+
+2026-10-08 新增 UnRAR 一项（`text`），原依赖范围不变；最新实际清单以 `manifest.json` 为准。完整上游/宿主取证在 `artifacts/desktop/fixed-tools-20261008/`，锁定构建输入及其许可字节随 Git 保存在 `tools/desktop-vendor/`。
 
 Windows 可达图内 254 个 crate **全部取得许可文本**（含 7 个通过上游补充，见第 5.1 节）。`unresolved` 208 项全部来自"不在 Windows 图内"的 Cargo 锁条目（本地无源码、非本次分发路径），见第 5、9 节。
 
@@ -173,15 +175,24 @@ unRAR 限制原文（`License.txt` 第 131–146 行）：
 
 含义：7-Zip 自带 RAR **解压**能力合法，但不得用来开发 RAR 兼容的**压缩**器。本项目只用其解压。随包必须附带 7-Zip `License.txt`；`scripts/stage_desktop_engine.py` 已强制校验 `License.txt` 存在，缺失即报错。
 
-## 8. 明确不打包的组件
+## 8. UnRAR 固定依赖与未随包工具
+
+UnRAR **7.13.0 x64** 从 Windows 宿主已签名的稳定 CLI 获取，EXE 未修改。Git 输入为 [unrar-7.13-windows-x64.zip](../tools/desktop-vendor/unrar-7.13-windows-x64.zip)，版本、来源、包及逐文件 SHA-256 由 [desktop-tools.lock.json](../scripts/desktop-tools.lock.json) 固定；stage 对缺失/哈希不符报错，不用 PATH 或最新 beta 替代。工具落在 `engine/tools/unrar/`，与两个公开许可文本一起进入 NSIS / ZIP。
+
+RARLAB 独立 UnRAR `license.txt` 原文：
+
+> The UnRAR utility may be freely distributed. It is allowed to distribute UnRAR inside of other software packages.
+
+安装版公开 EULA 同时保留 “with the exception of the UnRAR components” 的单独分发例外。随包携带 `UnRAR-License.txt` 和 `WinRAR-License.txt`；本项目仅解压，不用于重造专有 RAR 压缩算法。官方独立 addon 当前为 7.30 beta 1，本次仅用其公开免费工具许可，不用其 beta EXE。
+
+Bandizip 官方 [EULA](https://www.bandisoft.com/bandizip/eula/eula.en.pdf) 2.3/2.4 明确要求书面许可后才能复制/分发产品。已核对英文原文；11.4 约定冲突时以韩文版为准。宿主 `bz.exe` 7.40.0.1 的签名及帮助命令正常，但标准使用许可不授予捆绑分发权，未取得独立 SDK/CLI 授权或 6.29 的不同许可，故当前不打入包。本机独立安装的 `bz.exe` 仍可在设置里指定。
 
 | 组件 | 原因 | 证据 |
 |---|---|---|
-| Bandizip | 商业/专有软件 | `build-info.json` 的 `excluded`；本清单 `not_bundled` |
-| UnRAR | unRAR 许可限制再分发 | 同上 |
+| Bandizip | EULA 2.3/2.4 要求书面分发许可，当前未取得 | `scripts/desktop-tools.lock.json` 的 `not_bundled`、官方 EULA；`build-info.json.excluded` |
 | `restoreAB.exe` | 历史用户工具，不在桌面发行包 | 同上 |
 
-原生恢复逻辑改为项目自有实现复用，不依赖上述三者的二进制。
+原生恢复逻辑复用项目实现；默认解压由随包开源 7-Zip 执行，UnRAR 作为 RAR 备用。不自动安装或复制宿主 Bandizip。
 
 ## 9. 未确认 / 待核实部分
 
@@ -200,7 +211,7 @@ unRAR 限制原文（`License.txt` 第 131–146 行）：
 - 将本项目根 `LICENSE` / `NOTICE` 与你选定的许可汇总合并进发行包；本脚本不生成、不替代根许可。
 - 依据 `manifest.json` + `SUMMARY.md` 决定哪些许可文本随安装包分发，并把完整文本从 `artifacts/desktop/license-evidence/` 打入最终产物（该目录被忽略，不随 Git）。
 - 处理第 9 节的未确认项；`unresolved` / `metadata` 条目在上游补全前不得在发行文档中标注为"已验证"。
-- 不把 Bandizip / UnRAR / `restoreAB` 打入发行包。
+- 将锁定 UnRAR 与许可打入发行包；未取得书面许可前不把 Bandizip 打入发行包，继续排除 `restoreAB`。
 
 ## 11. 证据入口
 
@@ -213,6 +224,9 @@ unRAR 限制原文（`License.txt` 第 131–146 行）：
 | Cargo 文本 | `artifacts/desktop/license-evidence/cargo/<crate>-<ver>/` |
 | Python 文本 | `artifacts/desktop/license-evidence/python/<dist>-<ver>/` |
 | 7-Zip 文本 | `artifacts/desktop/license-evidence/7zip/License.txt` |
+| UnRAR 固定输入 | `scripts/desktop-tools.lock.json`、`tools/desktop-vendor/unrar-7.13-windows-x64.zip` |
+| UnRAR 许可 | `artifacts/desktop/license-evidence/unrar/{UnRAR-License.txt,WinRAR-License.txt}` |
+| Windows 工具/条款取证 | `artifacts/desktop/fixed-tools-20261008/` |
 | 上游补充文本 | `artifacts/desktop/license-evidence/upstream/<crate>-<ver>/` |
 | 上游来源与校验 | `artifacts/desktop/license-evidence/upstream/SOURCES.json`（repository/ref/commit/url/sha256） |
 | Windows 可达图（主线程） | `artifacts/desktop/windows-dependencies.json` |

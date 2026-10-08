@@ -37,7 +37,7 @@ def main() -> None:
     if not host.is_file():
         raise RuntimeError(f"Incomplete desktop inputs: missing {host}")
     # Require the real staged engine files, not just directories.
-    stage_desktop_engine.validate_staged_engine(engine)
+    stage_desktop_engine.validate_staged_engine(engine, repo=repo)
     forbidden = {"passwords.txt", "config.json", "restoreab.exe", "rarreg.key", ".env"}
     unexpected = [str(path.relative_to(engine)) for path in engine.rglob("*")
                   if path.name.lower() in forbidden]

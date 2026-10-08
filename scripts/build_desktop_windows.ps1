@@ -4,6 +4,8 @@ param(
   [switch]$PortableOnly,
   [switch]$SkipDependencies,
   [switch]$SkipEngineStage,
+  [switch]$ToolsOnly,
+  [switch]$NoToolFetch,
   [switch]$SkipFrontendBuild,
   [string]$TauriCli = ""
 )
@@ -23,7 +25,17 @@ try {
   }
   $stageArgs = @((Join-Path $PSScriptRoot "stage_desktop_engine.py"))
   if ($SevenZip) { $stageArgs += @("--seven-zip", $SevenZip) }
-  if ($SkipEngineStage) { $stageArgs += @("--validate-only") }
+  if ($SkipEngineStage) {
+    # Validate the existing stage only; never fetch or mutate the runtime cache here.
+    $stageArgs += @("--validate-only")
+  } elseif ($ToolsOnly) {
+    $stageArgs += @("--tools-only")
+    if (!$NoToolFetch) { $stageArgs += @("--fetch-tools") }
+  } elseif (!$NoToolFetch) {
+    # Normal build: use the vendored snapshot or hash-locked cache first;
+    # only a lock entry without a vendored input may need a download.
+    $stageArgs += @("--fetch-tools")
+  }
   Invoke-Checked $buildPython $stageArgs
   Invoke-Checked $buildPython @((Join-Path $PSScriptRoot "collect_desktop_licenses.py"))
   # Exact docs/diagrams/license selection shared with the portable assembler. This
