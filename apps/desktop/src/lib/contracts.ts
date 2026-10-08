@@ -5,13 +5,24 @@ export interface ProcessingOptions {
   deep_extract: boolean; max_depth: number; min_archive_mb: number; final_single_mb: number;
   preserve_payload_names: boolean; recursive: boolean; tool_timeout_sec: number;
   max_output_gb: number; keep_workspace: boolean;
-  use_builtin_passwords: boolean; clean_builtin_keywords: boolean;
+  // Legacy persisted switch, kept only so older configs round-trip; the UI no longer surfaces it.
+  use_builtin_passwords?: boolean;
+  clean_builtin_keywords: boolean;
 }
 export interface ToolPaths { seven_zip: string | null; unrar: string | null; bandizip: string | null }
-export interface DesktopSettings { version: number; options: ProcessingOptions; tools: ToolPaths }
+export interface DesktopSettings {
+  version: number; options: ProcessingOptions; tools: ToolPaths;
+  // Remembered work folder; null/absent on legacy settings.
+  work_root?: string | null;
+}
+/** Archive passwords are public: one plaintext UTF-8 file, one entry per line (empty lines skipped). */
+export interface PasswordInfo {
+  count: number; storage: 'plaintext'; path: string; values: string[];
+  error?: string; error_code?: string;
+}
 export interface SettingsInfo {
   settings: DesktopSettings; tools: ToolPaths;
-  passwords: { count: number; storage: 'system' | 'session' };
+  passwords: PasswordInfo;
   defaults?: { password_count: number; keyword_count: number; passwords_enabled: boolean;
     keyword_cleaning_enabled: boolean; version: string };
 }

@@ -1,6 +1,6 @@
 [package]
 name = "reorder-desktop"
-version = "0.3.0"
+version = "0.3.1"
 description = "Hoshiribbon cross-platform desktop host"
 edition = "2021"
 default-run = "reorder-desktop"

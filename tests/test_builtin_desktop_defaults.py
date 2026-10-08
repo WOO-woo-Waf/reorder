@@ -1,4 +1,4 @@
-"""内置 Git 词库接入：catalog 校验、开关独立、脱敏与顶层改名。
+"""内置 Git 词库接入：catalog 校验、运行期密码来源、公开明文与顶层改名。
 
 全部使用临时合成的 fake 词条，不读取真实词库、不启动内容管线、不建 SQLite、
 不跑 GUI。仅覆盖本包新增契约。
@@ -219,7 +219,7 @@ def test_injected_catalog_needs_no_manifest(tmp_path):
 
 # --- switches and private/builtin independence --------------------------------
 
-def test_replace_private_keeps_builtin_and_switch_independent(tmp_path):
+def test_runtime_passwords_are_user_library_only(tmp_path):
     app = tmp_path / "app"
     make_defaults(app, "builtin-a\nbuiltin-b\n", "kw\n")
     builtin = BuiltinDefaults(app)
@@ -228,27 +228,28 @@ def test_replace_private_keeps_builtin_and_switch_independent(tmp_path):
 
     secrets.replace([])
     assert secrets.load() == ()
-    assert processor.runtime_passwords(ProcessingOptions()) == ("builtin-a", "builtin-b")
+    assert processor.runtime_passwords(ProcessingOptions()) == ()
     assert processor.runtime_passwords(ProcessingOptions(use_builtin_passwords=False)) == ()
 
     secrets.replace(["builtin-b", "user-only"])
     assert secrets.load() == ("builtin-b", "user-only")
-    assert processor.runtime_passwords(ProcessingOptions()) == ("builtin-b", "user-only", "builtin-a")
-    assert processor.runtime_passwords(ProcessingOptions(use_builtin_passwords=False)) == ("builtin-b", "user-only")
+    # 内置默认只建库时播种一次；运行时不再拼接默认，旧开关也不会复活被删除的默认项。
+    assert processor.runtime_passwords(ProcessingOptions()) == ("builtin-b", "user-only")
+    assert processor.runtime_passwords(ProcessingOptions(use_builtin_passwords=True)) == ("builtin-b", "user-only")
+    assert processor.builtin is builtin
 
 
-def test_redact_covers_private_and_builtin_even_when_disabled(tmp_path):
+def test_redact_is_identity_for_public_passwords(tmp_path):
     app = tmp_path / "app"
     make_defaults(app, "builtin-secret\n", "kw-secret\n")
     builtin = BuiltinDefaults(app)
     secrets = SessionSecrets()
-    secrets.set_extra_secrets(builtin.passwords)
+    secrets.set_extra_secrets(builtin.passwords)  # 兼容空实现
     secrets.replace(["user-secret"])
 
     text = secrets.redact("a builtin-secret b user-secret c kw-secret")
-    assert "builtin-secret" not in text and "user-secret" not in text
-    assert "kw-secret" in text  # keywords are not secrets and stay visible
-    assert secrets.redact("x builtin-secret y") == "x [密码已隐藏] y"
+    assert secrets.redact(text) == text  # 公开明文词库不再脱敏
+    assert secrets.load() == ("user-secret",)  # 兼容调用不影响密码集
 
 
 # --- top-level output name cleaning ------------------------------------------
@@ -292,7 +293,7 @@ def test_clean_keeps_unsafe_names_with_notice(tmp_path, name, keywords):
     assert logs  # original kept and a notice emitted
 
 
-def test_clean_notice_is_redacted(tmp_path):
+def test_clean_notice_is_unmasked(tmp_path):
     folder = tmp_path / "final"
     write_entry(folder, "secretvalue.txt")
     secrets = SessionSecrets()
@@ -300,7 +301,7 @@ def test_clean_notice_is_redacted(tmp_path):
     logs: list[str] = []
     clean_output_entry_names(folder, ("secretvalue",), redact=secrets.redact, log=logs.append)
     assert (folder / "secretvalue.txt").exists()
-    assert logs and all("secretvalue" not in line for line in logs)
+    assert logs and any("secretvalue.txt" in line for line in logs)  # 公开名不再脱敏
 
 
 def test_clean_leaves_names_without_keywords_untouched(tmp_path):
@@ -362,12 +363,12 @@ def test_facade_settings_info_defaults_and_shared_object(tmp_path, isolated_faca
         info = facade.settings_info()
         assert info["defaults"] == {"password_count": 2, "keyword_count": 3,
             "passwords_enabled": True, "keyword_cleaning_enabled": False, "version": VERSION}
-        assert info["passwords"]["count"] == 0  # private library count stays independent
+        assert info["passwords"] == {"count": 0, "storage": "session", "path": "", "values": []}
         assert facade.defaults is builtin and facade.processor.builtin is builtin
-        assert secrets.redact("x b1 y") == "x [密码已隐藏] y"  # builtin values are redacted
         secrets.replace(["u1"])
         info = facade.settings_info()
-        assert info["passwords"]["count"] == 1 and info["defaults"]["password_count"] == 2
+        assert info["passwords"]["count"] == 1 and info["passwords"]["values"] == ["u1"]
+        assert info["defaults"]["password_count"] == 2
     finally:
         facade.close()
 

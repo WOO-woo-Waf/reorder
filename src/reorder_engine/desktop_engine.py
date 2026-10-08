@@ -8,19 +8,17 @@ from pathlib import Path
 from reorder_engine.application.facade import EngineFacade
 from reorder_engine.infrastructure.desktop_paths import DesktopPaths
 from reorder_engine.infrastructure.json_rpc import JsonRpcServer
-from reorder_engine.infrastructure.secret_store import SecretStore
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--app-root", type=Path)
     parser.add_argument("--data-root", type=Path)
-    parser.add_argument("--session-secrets", action="store_true", help="Keep passwords only in memory")
+    parser.add_argument("--session-secrets", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     reader, writer = sys.stdin.buffer, sys.stdout.buffer
     sys.stdout = sys.stderr
-    facade = EngineFacade(DesktopPaths.discover(app_root=args.app_root, data_root=args.data_root),
-        secrets=SecretStore(persistent=not args.session_secrets))
+    facade = EngineFacade(DesktopPaths.discover(app_root=args.app_root, data_root=args.data_root))
     try:
         JsonRpcServer(facade).serve(reader, writer)
     finally:

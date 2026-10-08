@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import queue
 import sys
+import traceback
 import threading
 from pathlib import Path
 from uuid import uuid4
@@ -11,6 +12,7 @@ from reorder_engine.application.models import ProcessingPlan, RetryRequest, TERM
 from reorder_engine.application.planning import PlanService, source_snapshot
 from reorder_engine.application.processing import PackageProcessor
 from reorder_engine.infrastructure.job_repository import JobRepository, utc_now
+from reorder_engine.infrastructure.workspace import planned_run_workspace
 
 
 class JobRunner:
@@ -103,12 +105,13 @@ class JobRunner:
     def _register_retained_workspaces(self, recovered: list[dict]) -> None:
         """Register retained interrupted workspaces for manual review; never delete them."""
         for item in recovered:
-            workspace = self.processor.paths.work_root / item["job_id"] / item["package_id"]
+            job_id, package_id = item["job_id"], item["package_id"]
             try:
-                if not workspace.is_dir() or self._workspace_registered(item["job_id"], workspace):
+                workspace = self._retained_workspace(job_id, package_id)
+                if workspace is None or self._workspace_registered(job_id, workspace):
                     continue
                 action = self.repository.record_action({
-                    "job_id": item["job_id"], "package_id": item["package_id"],
+                    "job_id": job_id, "package_id": package_id,
                     "kind": "recovery_note", "source": "", "destination": str(workspace),
                     "snapshot": None,
                 })
@@ -117,6 +120,29 @@ class JobRunner:
                 # Registration is best effort; a failure must not block engine start or
                 # delete anything. Only a generic, redacted diagnostic is printed.
                 self._stderr("中断工作区登记失败，未删除任何文件，请人工检查。")
+
+    def _retained_workspace(self, job_id: str, package_id: str) -> Path | None:
+        """Locate a package's retained work, preferring the journaled run location.
+
+        New bulk work lives under the output folder; fall back to the deterministic
+        ``<output>/intermediate/workspaces`` path and then to the legacy app-data
+        ``work`` root so tasks stranded before the upgrade are still found.
+        """
+        for action in self.repository.actions(job_id):
+            if action["kind"] == "workspace" and action["package_id"] == package_id:
+                candidate = Path(action["destination"])
+                if candidate.is_dir():
+                    return candidate
+        try:
+            plan = self.repository.get_plan(self.repository.get_job(job_id).plan_id)
+        except EngineError:
+            plan = None
+        if plan is not None:
+            candidate = planned_run_workspace(Path(plan.output_root), job_id, package_id)
+            if candidate.is_dir():
+                return candidate
+        legacy = self.processor.paths.work_root / job_id / package_id
+        return legacy if legacy.is_dir() else None
 
     def _workspace_registered(self, job_id: str, workspace: Path) -> bool:
         return any(action["kind"] == "recovery_note" and action["destination"] == str(workspace)
@@ -151,11 +177,19 @@ class JobRunner:
                         self.repository.update_package(job_id, package.package_id, state=outcome.state,
                             message=outcome.message, results=outcome.results[:32], error_code=outcome.error_code)
                     except Exception as exc:
-                        actions = [a for a in self.repository.actions(job_id) if a["package_id"] == package.package_id]
+                        # Workspace/recovery notes locate retained data; they do
+                        # not mean anything has been published or an original moved.
+                        actions = [a for a in self.repository.actions(job_id)
+                            if a["package_id"] == package.package_id
+                            and a["kind"] not in {"workspace", "recovery_note"}]
                         committed = [a["destination"] for a in actions if a["phase"] == "committed"]
                         review = any(a["phase"] not in {"committed", "abandoned"} for a in actions) or bool(committed)
                         state = "needs_review" if review else ("cancelled" if isinstance(exc, ProcessingCancelled) else "failed")
                         code = exc.code if isinstance(exc, EngineError) else "PROCESSING_FAILED"
+                        if not isinstance(exc, EngineError):
+                            # Keep a bounded local traceback for frozen-runtime
+                            # failures; the UI still gets the concise message.
+                            self._log(job_id, traceback.format_exc(limit=8))
                         message = str(exc) if isinstance(exc, EngineError) else "处理异常，原件保留；请查看诊断记录。"
                         message = self.processor.secrets.redact(message)
                         self._log(job_id, f"{code}: {message}")

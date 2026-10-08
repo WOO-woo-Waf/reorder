@@ -38,7 +38,7 @@ sequenceDiagram
     Job->>DB: update_package(archiving)
     Core->>FS: route_sources(package, 归档 / 错误 / 缺卷目录)
     FS->>DB: record_action(route_source) -> copied
-    FS->>FS: 全部成员复制校验后再删除源
+    FS->>FS: 同卷全部独占落位并复核后删源；跨卷全部复制校验后删源
     Core-->>Job: PackageOutcome(state)
     Job->>DB: update_package(终态)
   end

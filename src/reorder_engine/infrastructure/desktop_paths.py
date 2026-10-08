@@ -28,6 +28,12 @@ class DesktopPaths:
 
     @property
     def work_root(self) -> Path:
+        """Legacy AppData work root, kept only to recover stranded old tasks.
+
+        New bulk work runs under the user-chosen output folder
+        (``<output>/intermediate/workspaces``); this path is never created for new
+        tasks and is read only when scanning for pre-upgrade interrupted workspaces.
+        """
         return self.data_root / "work"
 
     @property
@@ -35,5 +41,7 @@ class DesktopPaths:
         return self.data_root / "logs"
 
     def initialize(self) -> None:
-        for directory in (self.data_root, self.work_root, self.logs_root):
+        # Small settings/SQLite/logs stay in app data; bulk work does not, so the
+        # legacy ``data_root/work`` directory is intentionally not created here.
+        for directory in (self.data_root, self.logs_root):
             directory.mkdir(parents=True, exist_ok=True)

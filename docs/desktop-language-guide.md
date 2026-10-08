@@ -539,8 +539,10 @@ Windows 上把 `REORDER_PYTHON` 指向构建用的 venv Python，在已初始化
 
 如需沿一个按钮追到具体类与文件，见 [desktop-code-guide.md](desktop-code-guide.md)；操作与验收步骤见 [desktop-user-guide.md](desktop-user-guide.md)，实际交付进度见 [desktop-status.md](desktop-status.md)。
 
-## 7. 星绫解封 0.3.0 的阅读补充
+## 7. 星绫解封 0.3.0 → 0.3.1 的阅读补充
 
-公开词库 `BuiltinDefaults` 是安装资源的只读值对象，私人 `SecretStore` 是用户资源适配器；可类比 Java 的不可变配置对象与凭据接口，或 C++ 中不同寿命的共享只读对象与资源持有者。不要把二者合成一个持久化密码列表。
+公开词库 `BuiltinDefaults` 是安装资源的只读值对象；0.3.1 起它在生产路径上只用于**首次播种**，真正在用的 `PasswordFile` 是数据目录里一个明文文件适配器，可类比 Java 的“值对象 + 文件仓库”，或 C++ 中一个持有文件句柄的资源对象。它没有凭据后端，`load()` 每次读盘、`replace()` 原子替换，所以外部编辑与界面保存看到的是同一份数据。不要把“随包默认值”误读成不可变内置库。
 
-外观 `AppearanceSettings` 为前端值对象，`appearance.ts` 用依赖注入的读取/解码/存储函数校验边界。Svelte `$state` 是代理，处理设置保存使用 `$state.snapshot(draft)` 跨DTO边界；背景data URL独立于引擎协议。具体对象与调用位置见 [代码指南第12节](desktop-code-guide.md#12-030-新对象与界面状态)、[设计补充](desktop-design.md#11-030-内置库与外观对象)。
+工作文件夹不再是纯前端状态：`DesktopSettings.work_root` 写入引擎设置，`DesktopController` 在选择目录和初始化时读写它；这属于“把界面选择持久化到后端 DTO”，不是 Svelte 局部状态。
+
+外观 `AppearanceSettings` 为前端值对象，`appearance.ts` 用依赖注入的读取/解码/存储函数校验边界。Svelte `$state` 是代理，处理设置保存使用 `$state.snapshot(draft)` 跨DTO边界；背景data URL独立于引擎协议，保存在本地存储而不进任务库。具体对象与调用位置见 [代码指南第12节](desktop-code-guide.md#12-030-新对象与界面状态)、[设计补充](desktop-design.md#11-030-内置库与外观对象) 与 [0.3.1 设计补充](desktop-design.md#12-031-公开密码文件与工作文件夹对象)。

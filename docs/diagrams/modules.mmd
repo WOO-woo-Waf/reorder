@@ -15,7 +15,7 @@ flowchart TB
     Jobs["JobRunner · 单工作线程"]
     Processor["PackageProcessor"]
     Files["FileTransaction"]
-    Secrets["SecretStore"]
+    Secrets["PasswordFile"]
     Settings["SettingsRepository"]
     Repo["JobRepository"]
     Pipeline["BetaFolderPipeline · 策略集合"]
@@ -40,5 +40,5 @@ flowchart TB
   Pipeline --> Runner
   Repo --> DB[("SQLite jobs.sqlite3")]
   Settings --> Cfg[("设置 · 用户数据目录")]
-  Secrets --> OS[("OS 凭据后端 / 会话内存")]
-  Files --> Out[("final / archives / errors / deferred")]
+  Secrets --> OS[("公开可编辑 UTF-8 passwords.txt")]
+  Files --> Out[("工作文件夹 · final / archives / intermediate")]

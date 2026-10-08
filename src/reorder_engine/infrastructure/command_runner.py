@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import codecs
 import locale
+import os
 import queue
 import subprocess
 import sys
@@ -32,7 +33,8 @@ class ExternalCommandRunner:
                  abort_on_line: Callable[[str], bool] | None = None,
                  cancel_event: threading.Event | None = None,
                  guard: Callable[[], None] | None = None,
-                 timeout_sec: int | None = None, max_output_chars: int = 256 * 1024):
+                 timeout_sec: int | None = None, max_output_chars: int = 256 * 1024,
+                 cwd: Path | None = None, env: dict[str, str] | None = None):
         self._stream = stream
         self._encoding = encoding or self._default_external_tool_encoding()
         self._line_sink = line_sink
@@ -41,6 +43,10 @@ class ExternalCommandRunner:
         self._guard = guard
         self._timeout = timeout_sec
         self._max_output = max_output_chars
+        # Defaults used when a per-call value is not supplied. ``env`` is applied to
+        # the tool process only; the parent environment is never mutated.
+        self._cwd = Path(cwd) if cwd is not None else None
+        self._env = dict(env) if env else None
 
     def _default_external_tool_encoding(self) -> str:
         if sys.platform.startswith("win"):
@@ -53,12 +59,17 @@ class ExternalCommandRunner:
             output_sink: Callable[[str], None] | None = None) -> CommandResult:
         use_stream = self._stream if stream is None else stream
         timeout = self._timeout if timeout_sec is None else timeout_sec
+        workdir = cwd if cwd is not None else self._cwd
+        environ = None
+        if self._env is not None:
+            environ = dict(os.environ)
+            environ.update(self._env)
         if self._cancel and self._cancel.is_set():
             raise ProcessingCancelled()
         try:
-            process = subprocess.Popen(args, cwd=str(cwd) if cwd else None,
+            process = subprocess.Popen(args, cwd=str(workdir) if workdir else None,
                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                shell=False, **spawn_options())
+                shell=False, env=environ, **spawn_options())
         except OSError as exc:
             raise EngineError("TOOL_START_FAILED", "无法启动解压工具，请检查工具设置。") from exc
         scope = ProcessScope(process)

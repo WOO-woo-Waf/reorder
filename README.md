@@ -4,18 +4,27 @@
 
 面向二次元收藏者的本地桌面整理工具：将下载的资源按文件组识别，在工作副本上恢复与解压，发布成品后归档原包。支持普通压缩包、分卷和部分伪装/嵌入格式；具体方式、效果和限制见 [格式支持指南](docs/desktop-format-support.md)。手动批处理优先，文件在本机处理。
 
-## Windows 桌面 0.3.0 预览
+## Windows 桌面 0.3.1（本地验收版）
 
-已发布 Windows x64 **预发布**：[Release 页面](https://github.com/WOO-woo-Waf/reorder/releases/tag/v0.3.0) · [安装包](https://github.com/WOO-woo-Waf/reorder/releases/download/v0.3.0/Hoshiribbon_0.3.0_x64-setup.exe) · [便携 ZIP](https://github.com/WOO-woo-Waf/reorder/releases/download/v0.3.0/Hoshiribbon-0.3.0-windows-x64.zip) · [SHA-256 校验和](https://github.com/WOO-woo-Waf/reorder/releases/download/v0.3.0/SHA256SUMS.txt)。
+0.3.1 提供本地验收产物；完成你的人工作业验收后再发布新版 Release。当前已发布的仍是 Windows x64 **0.3.0 预发布**，下载链接保持有效：
 
+已发布 Windows x64 **预发布（0.3.0）**：[Release 页面](https://github.com/WOO-woo-Waf/reorder/releases/tag/v0.3.0) · [安装包](https://github.com/WOO-woo-Waf/reorder/releases/download/v0.3.0/Hoshiribbon_0.3.0_x64-setup.exe) · [便携 ZIP](https://github.com/WOO-woo-Waf/reorder/releases/download/v0.3.0/Hoshiribbon-0.3.0-windows-x64.zip) · [SHA-256 校验和](https://github.com/WOO-woo-Waf/reorder/releases/download/v0.3.0/SHA256SUMS.txt)。
+
+0.3.1 的实现与人工验收要点：
+
+- **公开密码库改为一个可直接编辑的明文文件**：首次运行在数据目录生成 `passwords.txt`，写入随包的 **115 条公开密码**；之后完全由你维护——可查看、添加、编辑、删除或清空。界面的“从文件追加”是**追加**，“保存密码列表”才整体替换；空行忽略，重复、空格和 `#` 都按字面内容保留，不去重、也不当作注释。
+- **不再使用系统凭据后端，也不加密或脱敏**：密码文件是明文，日志不再把密码替换成 `[密码已隐藏]`。归档密码以公开数据处理，可直接查看和编辑。
+- **“工作文件夹”统一承载输入输出与中间目录**：所选文件夹下直接放 `final\`、`success\archives\`、`error_files\`、`deferred_volumes\`，副本、恢复与解压的临时工作区也在 `intermediate\` 下；解压工具进程的 TEMP/TMP/TMPDIR 与当前目录同样落在这个文件夹内。软件复用已存在的同名目录，但从不覆盖已有文件，冲突项安全改名或进入 `_duplicates`。
+- **伪装分卷已补齐还原路径**：逐卷还原 Apate 伪装，并对完整卷组预检；授权的 BG57 两卷副本已在 Windows 解压成功，两个原件哈希不变。其他样本效果仍由你人工验收。
+- **工作文件夹会被记住**：选择一次后写入设置，重启后自动恢复。旧数据目录 `work\` 里的历史内容按只读遗留保留，供人工恢复，软件不再往那里写入。
 - 自带 Python 引擎、**7-Zip 25.01、UnRAR 7.13、Bandizip CLI 7.40.0.1**，无需另装 Python 或解压工具。Bandizip 按所有者已取得书面分发许可的声明纳入固定依赖，包含所需 DLL 和公开许可说明。
-- 内置 Git 公开库的 **115 条默认密码、8 条关键词**。私人密码优先，默认密码可关闭；关键词仅清理成品顶层名称，**默认关闭**。内置公开库与私人系统凭据分开。
+- 内置公开库的 **8 条关键词**：关键词仅清理成品顶层名称，**默认关闭**。
 - 星夜少女背景、浅紫粉主题，可选择本地图片并调整遮罩、模糊或关闭背景；素材与来源见 [视觉说明](docs/desktop-artwork.md)。
 - 用户：[操作与人工验收指南](docs/desktop-user-guide.md)、[实际交付与机器检查记录](docs/desktop-status.md)、[第三方组件](docs/desktop-third-party.md)。
 - 制作方：[代码阅读指南](docs/desktop-code-guide.md)、[语言指南](docs/desktop-language-guide.md)、[面向对象架构图](docs/desktop-design.md)。
-- 构建：`scripts/build_desktop_windows.ps1`；Tauri 2 + Svelte 5 + TypeScript + Vite、Rust 宿主、Python 引擎、SQLite。Windows x64 首交付。
+- 构建：`scripts/build_desktop_windows.ps1`；Tauri 2 + Svelte 5 + TypeScript + Vite、Rust 宿主、Python 引擎、SQLite。桌面端包裹现有引擎策略，不缩减旧管线的分组、成品命名与嵌套整理能力。Windows x64 首交付。
 
-运行需要 Windows 10/11 x64 与系统 WebView2，安装包尚未签名。真实资源、GUI、安装卸载和主观效果待用户人工验收；工程检查范围与限制在实施状态中列明。跨平台路线保持，浏览器、监听和 Agent 留后续。
+运行需要 Windows 10/11 x64 与系统 WebView2，安装包尚未签名。0.3.1 的真实资源、GUI、安装卸载和主观效果待用户人工验收；工程检查范围与限制在实施状态中列明。跨平台路线保持，浏览器、监听和 Agent 留后续。
 
 ## 保留的 ReOrder Engine / CLI
 
@@ -139,6 +148,8 @@ Compress-Archive -Force -Path D:\bandzip\bz.exe,D:\bandzip\Bandizip.exe,D:\bandz
 - 空行会忽略
 - 以 `#` 开头的行作为注释忽略
 - 建议 UTF-8 编码保存
+
+> 这一节描述的是 **CLI/Beta** 读取的关键字与密码文件。桌面版 0.3.1 的公开密码文件是另一套规则：它只是“每行一个密码”的明文本，`#` 和空格都按字面内容保留，不去重、也不当注释；细节见 [用户指南第 9 节](docs/desktop-user-guide.md)。
 
 ### 支持的常见格式
 底层使用 7-Zip：除 `7z/zip/rar` 外，通常也支持 `tar/gz/bz2/xz/tgz/tar.gz` 等（具体以你安装的 7-Zip 版本为准）。

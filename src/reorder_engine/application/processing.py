@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 import threading
 import re
@@ -9,7 +10,7 @@ from typing import Callable
 
 from reorder_engine.application.errors import EngineError
 from reorder_engine.application.models import PlannedPackage, ProcessingOptions
-from reorder_engine.application.planning import validate_source
+from reorder_engine.application.planning import reject_links, validate_source
 from reorder_engine.domain.models import KeywordLibrary
 from reorder_engine.infrastructure.archive_safety import ArchiveSafetyInspector, GuardedExtractor, WorkspaceGuard
 from reorder_engine.infrastructure.builtin_defaults import BuiltinDefaults
@@ -19,6 +20,7 @@ from reorder_engine.infrastructure.file_transaction import FileTransaction, chec
 from reorder_engine.infrastructure.job_repository import JobRepository
 from reorder_engine.infrastructure.secret_store import SecretStore
 from reorder_engine.infrastructure.settings_repository import SettingsRepository
+from reorder_engine.infrastructure.workspace import allocate_run_workspace, guard_workspace_path
 from reorder_engine.services.beta_pipeline import BetaFolderPipeline
 from reorder_engine.services.cleaning import CleaningContext, DefaultGroupingNormalizer, KeywordStripCleaner
 from reorder_engine.services.config import BetaDeepExtractConfig
@@ -126,11 +128,14 @@ class PackageProcessor:
         self.builtin = builtin if builtin is not None else BuiltinDefaults(paths.app_root)
 
     def runtime_passwords(self, options: ProcessingOptions) -> tuple[str, ...]:
-        """私有用户库优先，其后按内置开关拼接默认库并保持有序去重。"""
-        private = self.secrets.load()
-        if not options.use_builtin_passwords:
-            return private
-        return tuple(dict.fromkeys((*private, *self.builtin.passwords)))
+        """Return only the current user password library.
+
+        Built-in defaults are a first-file seed applied when the store is created;
+        they are never appended at runtime, and the legacy ``use_builtin_passwords``
+        switch no longer resurrects values the user removed. ``options`` is retained
+        only for call-site compatibility.
+        """
+        return self.secrets.load()
 
     def apply_builtin_keyword_cleaning(self, workspace: Path, options: ProcessingOptions,
                                        state: str, *, log: Callable[[str], None]) -> None:
@@ -147,22 +152,44 @@ class PackageProcessor:
         seven_zip = self.settings.resolve_tool("seven_zip")
         if not seven_zip:
             raise EngineError("TOOL_MISSING", "没有找到 7-Zip，请在设置中选择 7z/7zz。")
-        workspace = self.paths.work_root / job_id / package.package_id
-        workspace.mkdir(parents=True, exist_ok=False)
+        output_root = Path(output_root)
+        # Re-validate the chosen-root ancestry (including ancestors above the output
+        # folder) before creating anything, in case a link appeared after scanning.
+        reject_links(output_root)
         output_root.mkdir(parents=True, exist_ok=True)
+        # Reject symlink/junction escapes before any source is copied, so bulk work
+        # cannot be redirected outside the chosen output folder.
+        guard_workspace_path(output_root, output_root)
         source_bytes = sum(member.size for member in package.members)
-        if (shutil.disk_usage(workspace).free < source_bytes * 2 + 64 * 1024 * 1024 or
-                shutil.disk_usage(output_root).free < source_bytes + 64 * 1024 * 1024):
+        # The defensive work copy and (only when the originals live on another
+        # volume) the routed archives consume new space. Publishing and same-volume
+        # routing are exclusive moves, so they are not counted twice.
+        needed = source_bytes * 2 + 64 * 1024 * 1024
+        output_device = os.stat(output_root).st_dev
+        if any(member.device != output_device for member in package.members):
+            needed += source_bytes
+        if shutil.disk_usage(output_root).free < needed:
             raise EngineError("DISK_FULL", "准备副本和归档需要的可用空间不足。")
+        workspace = allocate_run_workspace(output_root, job_id, package.package_id)
         try:
+            # Record the actual run location so recovery finds it even when a unique
+            # sibling was used because the fixed package directory was occupied.
+            workspace_action = self.repository.record_action({
+                "job_id": job_id, "package_id": package.package_id, "kind": "workspace",
+                "source": "", "destination": str(workspace), "snapshot": None})
+            self.repository.action_phase(workspace_action, "committed")
             progress("preparing")
             for member in package.members:
                 validate_source(member)
                 copy_verified(Path(member.path), workspace / Path(member.path).name, cancel_event=cancel)
+            tool_tmp = workspace / "tmp"
+            tool_tmp.mkdir(parents=True, exist_ok=True)
             quota = options.max_output_gb * 1024 ** 3
             guard = WorkspaceGuard(workspace, byte_limit=source_bytes * 4 + quota)
             runner = ExternalCommandRunner(encoding="utf-8", cancel_event=cancel,
-                guard=guard.check, timeout_sec=options.tool_timeout_sec, line_sink=log)
+                guard=guard.check, timeout_sec=options.tool_timeout_sec, line_sink=log,
+                cwd=tool_tmp, env={"TMP": str(tool_tmp), "TEMP": str(tool_tmp),
+                                   "TMPDIR": str(tool_tmp)})
             safety = ArchiveSafetyInspector(seven_zip, runner, quota)
             delegates = [SevenZipExtractor(runner, exe=seven_zip)]
             for key, cls in (("unrar", UnrarExtractor), ("bandizip", BandizipExtractor)):

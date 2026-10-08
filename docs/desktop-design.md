@@ -1,14 +1,14 @@
 # 桌面首版工程设计与实施契约
 
-日期：2026-10-07。产品依据：[产品方案](product_plan.md)。
-状态：设计已确定，用户已授权依此实施；实现、验证、人工验收分别记录在 [实施状态](desktop-status.md)。
+日期：2026-10-07；2026-10-08 增补 0.3.1 公开密码文件与工作文件夹决策。产品依据：[产品方案](product_plan.md)。
+状态：设计已确定，用户已授权依此实施；0.3.1 只在本地准备、待人工确认；实现、验证、人工验收分别记录在 [实施状态](desktop-status.md)。
 
 ## 1. 首版验收范围
 
 跨平台桌面架构，Windows x64 首交付。保留 CLI；桌面提供目录/文件拖放、只读计划、单队列执行、取消、错误重试、最近任务、密码与工具设置、结果打开。
 不在首版加入浏览器服务器、目录监听、托盘自动处理、云服务或 Agent。
 
-安全默认：不原地修改输入。需要变换的文件进入独立工作区。成品发布后再归档原件；归档不完整不报告成功。用户无需掌握工具命令或候选后缀。
+安全默认：不原地修改输入。需要变换的文件进入独立工作区（0.3.1 起位于所选工作文件夹的 `intermediate/` 下）。成品发布后再归档原件；归档不完整不报告成功。用户无需掌握工具命令或候选后缀。
 
 ## 2. 依赖方向与对象职责
 
@@ -30,7 +30,7 @@ flowchart TB
     Jobs["JobRunner · 单工作线程"]
     Processor["PackageProcessor"]
     Files["FileTransaction"]
-    Secrets["SecretStore"]
+    Secrets["PasswordFile"]
     Settings["SettingsRepository"]
     Repo["JobRepository"]
     Pipeline["BetaFolderPipeline · 策略集合"]
@@ -55,8 +55,8 @@ flowchart TB
   Pipeline --> Runner
   Repo --> DB[("SQLite jobs.sqlite3")]
   Settings --> Cfg[("设置 · 用户数据目录")]
-  Secrets --> OS[("OS 凭据后端 / 会话内存")]
-  Files --> Out[("final / archives / errors / deferred")]
+  Secrets --> PW[("passwords.txt · 公开明文库")]
+  Files --> Out[("工作文件夹：final / success/archives / error_files / deferred_volumes / intermediate")]
 ```
 
 | 对象 | 接口与责任 | 所拥有的资源 / 生命周期 |
@@ -69,11 +69,11 @@ flowchart TB
 | EngineFacade | 系统信息、计划、任务、配置、结果的稳定入口 | 组合其他对象；不实现解压规则 |
 | PlanService | 只读输入扫描、分组、源快照、冲突与路径检查 | 计划 DTO；不能移动文件或自动下载工具 |
 | JobRunner | 单执行队列、取消、重试、终态与中断恢复 | 一个执行线程、每任务取消信号；引擎级对象 |
-| PackageProcessor | 准备工作区、调用现有管线、检查输出、生成包结果 | 一个包的工作区和 Runner |
+| PackageProcessor | 准备工作区、调用现有管线、检查输出、生成包结果 | 一个包的工作区（0.3.1 起在工作文件夹 `intermediate/workspaces/` 下）和 Runner |
 | FileTransaction | 写入动作记录，发布输出，再路由真实原件 | 文件句柄、动作状态；包级对象 |
 | JobRepository | SQLite 数据版本、任务/包/事件/动作持久化与分页 | 一个受锁保护的连接；唯一数据库写入口 |
 | SettingsRepository | 读取/验证普通配置，工具路径与能力 | 用户数据目录；与项目样例 config 分离 |
-| SecretStore | 保存、读取、替换密码集；不返回明文到 UI | 系统凭据后端；不可用时仅会话内存 |
+| PasswordFile（原 SecretStore） | 读写公开密码库文件；设置 DTO 返回 values/path/count | 数据目录下的 `passwords.txt`；明文、无凭据后端 |
 | ExternalCommandRunner | 有界日志、时间期限、取消、进程树控制 | 每次工具调用的子进程和输出读取线程 |
 
 组合优先；已有 RestorerStrategy、ExtractorStrategy、VolumeGroupingStrategy 保持不变。
@@ -125,7 +125,7 @@ classDiagram
     -PackageProcessor processor
     -JobRepository repository
     -SettingsRepository settings
-    -SecretStore secrets
+    -PasswordFile secrets
     +dispatch(method, params) dict
     +settings_info() dict
   }
@@ -164,11 +164,11 @@ classDiagram
     +update(settings)
     +resolve_tool(name) str
   }
-  class SecretStore {
+  class PasswordFile {
     +load() tuple
     +replace(values) dict
-    +redact(text) str
-    +mode str
+    +info() dict
+    +path Path
   }
   class ExternalCommandRunner {
     +run(args, timeout_sec, output_sink) CommandResult
@@ -186,12 +186,12 @@ classDiagram
   EngineFacade *-- PackageProcessor
   EngineFacade *-- JobRepository
   EngineFacade *-- SettingsRepository
-  EngineFacade *-- SecretStore
+  EngineFacade *-- PasswordFile
   JobRunner --> PackageProcessor
   JobRunner --> JobRepository
   PackageProcessor --> BetaFolderPipeline
   PackageProcessor --> FileTransaction
-  PackageProcessor --> SecretStore
+  PackageProcessor --> PasswordFile
   FileTransaction --> JobRepository : records
   BetaFolderPipeline --> ExternalCommandRunner : through extractors
   note for EngineBridge "Rust 独立进程；监管 Python 引擎"
@@ -220,7 +220,7 @@ Rust 的 EngineBridge 与 Python 的 EngineFacade 属于不同进程，不是互
 - job_id、state、created_at、updated_at、counts、packages、last_seq。
 - 包状态区分 succeeded、partial、failed、deferred、cancelled、interrupted、needs_review。
 - results 保存已登记成品、原件归档与错误位置。
-- 不存储密码明文；错误和日志脱敏。
+- 任务库不存密码；公开密码只在数据目录的 `passwords.txt` 里，日志与错误不再掩码（见第 12 节）。
 - 一个源文件同一时间只能属于一个活跃执行任务。
 
 ### OperationRecord
@@ -245,9 +245,9 @@ UI 不启动任意程序，不传任意 shell 命令。Rust 与 Python 各维护
 | jobs.cancel | job_id | 是否已接受取消；终态通过快照获得 |
 | jobs.retry | job_id、package_ids、idempotency_key | 新任务；只重做明确失败/中断包 |
 | jobs.events | job_id、after_seq、limit | 有界事件页 |
-| jobs.logs | job_id、cursor、limit | 脱敏日志页 |
-| settings.get / settings.update | 受限选项 | 设置快照、工具状态、密码数量 |
-| passwords.replace | 用户主动提供的密码列表 | 数量、存储模式；不返回明文 |
+| jobs.logs | job_id、cursor、limit | 日志页；公开密码不掩码（见第 12 节） |
+| settings.get / settings.update | 受限选项、`work_root` | 设置快照、工具状态、密码 path/count/values |
+| passwords.replace | 用户主动提供的密码列表 | 数量、路径、明文列表（`storage=plaintext`） |
 | results.get | job_id | 注册的输出路径 |
 
 设置包括 7z/可选工具路径、深度上限、识别阈值、保留 payload 名称、最大输出空间、工具超时、工作区保留。
@@ -298,7 +298,7 @@ sequenceDiagram
     Job->>DB: update_package(archiving)
     Core->>FS: route_sources(package, 归档 / 错误 / 缺卷目录)
     FS->>DB: record_action(route_source) -> copied
-    FS->>FS: 全部成员复制校验后再删除源
+    FS->>FS: 同卷全部独占落位并复核后删源；跨卷全部复制校验后删源
     Core-->>Job: PackageOutcome(state)
     Job->>DB: update_package(终态)
   end
@@ -395,7 +395,7 @@ stateDiagram-v2
 - 归档成员预检、输出检查、拒绝越界路径/危险链接、空间和层数限制。
 - 引擎的路径校验不依赖前端：即使直接构造 IPC 请求也必须约束操作。
 - 不执行解出的文件，默认无网络服务。
-- 系统凭据后端不可用时不回退明文落盘，显示会话密码模式。
+- 公开密码库按明文文件处理：不再使用系统凭据后端，日志与错误不再对密码做掩码；私人密码不应写入该文件。
 - 工作目录和 Rust 的内存安全不代表操作系统沙箱；第三方解压器仍需版本维护。
 
 ## 9. 实施分工与验证边界
@@ -406,7 +406,7 @@ stateDiagram-v2
 |---|---|---|
 | 引擎数据与计划 | application/models、planning | 参数验证、选文件范围、分组、输入变化 |
 | 任务与文件事务 | application/jobs、processing；infrastructure/job_repository、file_transaction | 成功/部分/失败/取消/中断、原件字节与路径 |
-| 进程/安全/秘密 | command_runner、archive_safety、secret_store | 有界日志、超时、取消、恶意路径、密码不落盘 |
+| 进程/安全/秘密 | command_runner、archive_safety、secret_store（PasswordFile） | 有界日志、超时、取消、恶意路径、公开密码文件的读写与边界 |
 | 桌面桥接 | apps/desktop/src-tauri | Rust 编译、坏协议、进程退出、命令白名单 |
 | 界面 | apps/desktop/src | 类型/构建、Controller 状态切换、简单操作 |
 | 发布与指导 | scripts、docs | Windows 打包 smoke、产物资源与文档链接 |
@@ -454,3 +454,35 @@ classDiagram
 ```
 
 `use_builtin_passwords` 默认 true；`clean_builtin_keywords` 默认 false（用户已确认），后者不改变原件、归档名或内部路径。词库文件与清单都验证路径/链接/大小/hash/条数，源码打包锁固定身份。前端 `appearance.ts` 仅处理本地外观：白名单 data URL、类型、2 MiB、解码尺寸和存储回读，无新增 Rust 权限，不进入任务数据库。
+
+本节是 **0.3.0 历史记录**：0.3.1 起 `SecretStore` 被明文 `PasswordFile` 取代，"内置密码开关 + 私人库"两套来源合并为单一可编辑文件，见下节。关键词清理语义不变。
+
+## 12. 0.3.1 公开密码文件与工作文件夹对象
+
+```mermaid
+classDiagram
+  class PasswordFile {
+    +path string
+    +mode plaintext
+    +load() tuple
+    +replace(values) dict
+    +info() dict
+  }
+  class EngineFacade
+  class PackageProcessor
+  class DesktopSettings {
+    +work_root optional-string
+  }
+  EngineFacade --> PasswordFile : 单一公开库
+  EngineFacade --> DesktopSettings : 记忆工作文件夹
+  PackageProcessor --> PasswordFile : 运行时密码
+```
+
+要点：
+
+- `PasswordFile` 继承旧 `SecretStore` 名称以兼容注入适配器，但生产路径不再有 keyring / 会话内存后端；`mode` 固定为 `plaintext`，`info()` 返回 `path`、`count`、`values` 与 `storage`。
+- 文件只在不存在时生成并播种一次；`load()` 每次读盘，所以外部编辑在下次使用时生效，空文件表示“故意清空的空库”。
+- 密码需每行一个、UTF-8，单条上限 4096 字符、最多 10000 条、文件不超过 512 KiB；超限报 `INVALID_PASSWORD_FILE`。这些边界配合 1 MiB 协议帧，避免整库回传把响应撑爆。
+- `DesktopSettings` 增加 `work_root`；`ProcessingOptions.use_builtin_passwords` 仅作为旧配置兼容字段保留，实际以文件为准。
+
+工作文件夹的对象关系不变：`PackageProcessor` 仍在包级工作区上跑 `BetaFolderPipeline`，只是 0.3.1 起把工作区根从数据目录 `work/` 换成所选工作文件夹的 `intermediate/workspaces/<作业>/<文件组>/`，并在其中设定解压工具的 TEMP/TMP/TMPDIR 与当前目录。旧数据目录 `work/` 只保留作只读遗留恢复；发布与原件归档优先同卷独占移动/改名，跨卷或不可用时才回退到校验复制。机器证据由主线程汇总，本文不预判通过。

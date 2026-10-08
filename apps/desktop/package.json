@@ -1,6 +1,6 @@
 {
   "name": "reorder-desktop",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "星绫解封 · Hoshiribbon：二次元资源的本地恢复、解压与归档",
   "private": true,
   "type": "module",

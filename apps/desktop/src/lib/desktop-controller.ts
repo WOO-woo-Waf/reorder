@@ -52,7 +52,10 @@ export class DesktopController {
           this.client.request<JobSnapshot[]>('jobs.list', { limit: 20 }),
         ]);
         const job = history[0] ? await this.client.request<JobSnapshot>('jobs.get', { job_id: history[0].job_id }) : null;
-        this.update({ ready: true, info, settings: info, history, job });
+        // Restore the remembered work folder; keep any live choice when settings has no work_root.
+        const workRoot = info.settings.work_root ?? '';
+        this.update({ ready: true, info, settings: info, history, job, outputRoot: workRoot || this.state.outputRoot,
+          notice: info.passwords.error ? `密码文件暂时无法读取：${info.passwords.error} 请打开设置修复。原文件已保留。` : '' });
       });
     } finally { this.initializing = false; }
     if (!this.timer) this.timer = setInterval(() => { void this.refresh(); }, 1000);
@@ -70,13 +73,28 @@ export class DesktopController {
   }
   setOutput(path: string): void {
     if (this.running) return;
+    // Never show a folder we cannot persist right now; a busy controller rejects the change.
+    if (this.state.busy) { this.update({ notice: '当前操作尚未完成，请稍后再试。' }); return; }
     this.startKey = null;
     this.update({ outputRoot: path, plan: null });
+    void this.rememberWorkRoot(path);
+  }
+  /**
+   * Persist the chosen work folder so it survives a restart. Runs through the idle-guarded,
+   * serialized operation and merges the whole settings payload so no other option is dropped.
+   */
+  private async rememberWorkRoot(path: string): Promise<void> {
+    const current = this.state.settings?.settings;
+    if (!current || current.work_root === path) return;
+    await this.operation(async () => {
+      const result = await this.client.request<SettingsInfo>('settings.update', { ...current, work_root: path });
+      this.update({ settings: result });
+    });
   }
   async prepare(): Promise<void> {
     if (this.running) return;
     await this.operation(async () => {
-      if (!this.state.inputs.length || !this.state.outputRoot) throw new Error('请添加输入并选择结果目录。');
+      if (!this.state.inputs.length || !this.state.outputRoot) throw new Error('请添加输入并选择工作文件夹。');
       const plan = await this.client.request<ProcessingPlan>('plans.create', {
         input_paths: this.state.inputs, output_root: this.state.outputRoot,
         options: this.state.settings?.settings.options,
@@ -162,8 +180,17 @@ export class DesktopController {
   async saveSettings(settings: DesktopSettings): Promise<void> {
     if (this.running) return;
     await this.operation(async () => {
-      const result = await this.client.request<SettingsInfo>('settings.update', { ...settings });
+      // A dialog draft can carry a stale work_root; keep the folder the user actually chose.
+      const work_root = this.state.outputRoot || this.state.settings?.settings.work_root || null;
+      const result = await this.client.request<SettingsInfo>('settings.update', { ...settings, work_root });
       this.update({ settings: result, plan: null, notice: '设置已保存，请重新扫描。' });
+    });
+  }
+  /** Re-read settings (including the plaintext password list) to pick up external file edits. */
+  async reloadSettings(): Promise<void> {
+    if (!this.state.ready) { await this.initialize(); return; }
+    await this.operation(async () => {
+      this.update({ settings: await this.client.request<SettingsInfo>('settings.get') });
     });
   }
   async replacePasswords(passwords: string[]): Promise<void> {

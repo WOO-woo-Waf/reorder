@@ -23,7 +23,7 @@ class ProcessingOptions(Contract):
     min_archive_mb: int = Field(default=100, ge=1, le=1048576)
     final_single_mb: int = Field(default=200, ge=1, le=1048576)
     preserve_payload_names: bool = True
-    use_builtin_passwords: bool = True
+    use_builtin_passwords: bool = True  # Legacy field; the editable file is authoritative.
     clean_builtin_keywords: bool = False
     recursive: bool = False
     tool_timeout_sec: int = Field(default=3600, ge=1, le=86400)
@@ -39,6 +39,7 @@ class ToolPaths(Contract):
 
 class DesktopSettings(Contract):
     version: int = 1
+    work_root: str | None = None
     options: ProcessingOptions = Field(default_factory=ProcessingOptions)
     tools: ToolPaths = Field(default_factory=ToolPaths)
 

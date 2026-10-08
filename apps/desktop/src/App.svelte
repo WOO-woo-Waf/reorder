@@ -42,9 +42,9 @@
   const formatBytes = (bytes: number) => bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(2)} MiB` : `${Math.max(1, Math.round(bytes / 1024))} KiB`;
   const MB_LIMIT = MAX_IMAGE_BYTES / 1024 / 1024;
 
-  // The engine's settings schema grows these two switches; read and write them defensively so the
-  // screen stays valid whether or not the contracts update has landed yet.
-  type BuiltinFlag = 'use_builtin_passwords' | 'clean_builtin_keywords';
+  // The engine may omit the legacy keyword switch on older payloads; read and write it defensively.
+  // use_builtin_passwords stays only in the persisted settings round-trip, never in the UI.
+  type BuiltinFlag = 'clean_builtin_keywords';
   type OptionsWithBuiltins = ProcessingOptions & Partial<Record<BuiltinFlag, boolean>>;
   function builtinFlag(options: ProcessingOptions, key: BuiltinFlag, fallback: boolean): boolean {
     const value = (options as OptionsWithBuiltins)[key];
@@ -131,15 +131,30 @@
 
   async function pick(kind: 'files' | 'folder' | 'output') {
     try {
-      const value = await open({ directory: kind !== 'files', multiple: kind === 'files', title: kind === 'output' ? '选择结果目录' : '添加待处理文件' });
+      const value = await open({ directory: kind !== 'files', multiple: kind === 'files', title: kind === 'output' ? '选择工作文件夹' : '添加待处理文件' });
       if (!value) return;
       if (kind === 'output') controller.setOutput(value as string);
       else controller.addInputs(Array.isArray(value) ? value : [value]);
     } catch (error) { dialogError = String(error); }
   }
-  function editSettings() {
+  function passwordList(): string[] {
+    return view.settings?.passwords.values ?? [];
+  }
+  function loadPasswordEditor(): void {
+    passwordText = passwordList().join('\n');
+    dialogError = '';
+  }
+  // True while the textarea differs from the saved file, so append/reload stay blocked.
+  let passwordDirty = $derived(passwordText !== passwordList().join('\n'));
+  async function editSettings(): Promise<void> {
+    if (!view.settings || view.busy) return;
+    // Refresh before showing the editor so a slow settings.get cannot overwrite typing.
+    await controller.reloadSettings();
+    if (view.error) return;
     if (!view.settings) return;
-    draft = structuredClone($state.snapshot(view.settings.settings)); settingsOpen = true;
+    draft = structuredClone($state.snapshot(view.settings.settings));
+    loadPasswordEditor();
+    settingsOpen = true;
   }
   function clearPendingPasswords() { passwordText = ''; dialogError = ''; }
   async function pickTool(key: 'seven_zip' | 'unrar' | 'bandizip') {
@@ -151,8 +166,19 @@
   async function importPasswords() {
     try {
       const value = await open({ multiple: false, filters: [{ name: 'UTF-8 文本', extensions: ['txt'] }] });
-      if (typeof value === 'string') await controller.importPasswords(value);
+      if (typeof value !== 'string') return;
+      await controller.importPasswords(value);
+      // Show the whole merged list after an append; leave the editor untouched on failure.
+      if (!view.error) passwordText = passwordList().join('\n');
     } catch (error) { dialogError = String(error); }
+  }
+  async function reloadPasswords() {
+    await controller.reloadSettings();
+    if (settingsOpen && !view.error) passwordText = passwordList().join('\n');
+  }
+  async function savePasswords() {
+    await controller.replacePasswords(passwordText.split(/\r?\n/));
+    if (!view.error) passwordText = passwordList().join('\n');
   }
   onMount(() => {
     const unsubscribe = controller.subscribe(value => { view = value; });
@@ -191,8 +217,8 @@
       <div class="section-heading"><h2>01 <span>添加文件</span></h2><span class="muted">可拖入文件或文件夹</span></div>
       <div class="input-actions"><button onclick={() => pick('files')} disabled={running || view.busy}><FileArchive size={16} />添加文件</button><button onclick={() => pick('folder')} disabled={running || view.busy}><FolderPlus size={16} />添加文件夹</button></div>
       {#if !view.inputs.length}<div class="empty"><span class="upload-icon"><Upload size={24} /></span>把待处理的压缩包拖到这里<br /><span>支持分卷、伪装后缀、合并文件恢复和加密归档</span></div>{:else}<ul class="path-list">{#each view.inputs as path}<li><span title={path}>{path}</span><button class="text-button" onclick={() => controller.removeInput(path)} disabled={running}>移除</button></li>{/each}</ul>{/if}
-      <div class="output-row"><label for="output">结果目录</label><input id="output" readonly value={view.outputRoot} placeholder="选择保存成品和原包的位置" /><button onclick={() => pick('output')} disabled={running || view.busy}>选择</button></div>
-      <p class="hint">完成后，成品放入 final，原包移动到 success/archives。失败和缺卷会单独分类；同名文件不会覆盖。</p>
+      <div class="output-row"><label for="output">工作文件夹</label><input id="output" readonly value={view.outputRoot} placeholder="选择保存成品、原包和临时处理的位置" /><button onclick={() => pick('output')} disabled={running || view.busy}>选择</button></div>
+      <p class="hint">所选工作文件夹容纳全部产物：成品写入 final，成功原包归档到 success，失败或缺卷的文件进入 error，中间结果和临时工作区也在这里。会复用已存在的同名目录，不会覆盖已有文件。</p>
     </section>
 
     {#if view.error || dialogError}<div role="alert" class="notice error">{view.error || dialogError}<button class="text-button" onclick={() => { dialogError = ''; void controller.loadHistory(); }}>刷新任务</button></div>{/if}
@@ -200,7 +226,7 @@
 
     <section class="jobs-card">
       <div class="section-heading"><h2>02 <span>{view.job ? '处理结果' : '确认并处理'}</span></h2><div class="toolbar"><button onclick={() => controller.prepare()} disabled={!view.ready || view.busy || running || !view.inputs.length || !view.outputRoot}><ScanLine size={16} />扫描</button>{#if running}<button class="danger" onclick={() => controller.cancel()} disabled={view.job?.state === 'cancelling'}><Square size={14} />取消</button>{:else if view.job}<button onclick={() => controller.retry()} disabled={view.busy || !retryCount}><RotateCcw size={14} />重试 {retryCount ? `(${retryCount})` : ''}</button>{:else}<button class="primary" onclick={() => controller.start()} disabled={view.busy || !view.plan}><Play size={15} />开始处理</button>{/if}</div></div>
-      {#if view.job}<div class="progress-heading"><span class="status" data-state={view.job.state}>{names[view.job.state]}</span><span class="muted">{done} / {total} 个文件组</span><button class="text-button" onclick={() => controller.openResult()} disabled={view.busy}><FolderOpen size={14} />打开结果目录</button></div><progress max={Math.max(total, 1)} value={done}></progress>{/if}
+      {#if view.job}<div class="progress-heading"><span class="status" data-state={view.job.state}>{names[view.job.state]}</span><span class="muted">{done} / {total} 个文件组</span><button class="text-button" onclick={() => controller.openResult()} disabled={view.busy}><FolderOpen size={14} />打开工作文件夹</button></div><progress max={Math.max(total, 1)} value={done}></progress>{/if}
       <div class="table-wrap"><table><thead><tr><th>文件组</th><th>状态 / 大小</th><th>说明</th></tr></thead><tbody>
         {#if view.job}{#each view.job.packages as item}<tr><td title={item.name}>{item.name}</td><td><span class="status" data-state={item.state}>{names[item.state]}</span></td><td class="detail" title={item.message}>{item.message || item.error_code || '—'}</td></tr>{/each}
         {:else if view.plan}{#each view.plan.packages as item}<tr><td title={item.name}>{item.name}</td><td>{size(item.bytes)}</td><td>{item.members} 个成员</td></tr>{/each}
@@ -212,7 +238,7 @@
     <section class="history"><div class="section-heading"><h2 class="icon-label"><History size={15} />最近任务</h2><button class="text-button" onclick={() => controller.loadHistory()} disabled={view.busy}>刷新</button></div><div class="history-list">{#each view.history as job}<button class="history-item" onclick={() => controller.selectHistoryJob(job)} disabled={running}><span>{new Date(job.created_at).toLocaleString()}</span><span>{job.package_count ?? job.packages.length} 组 · {names[job.state]}</span></button>{:else}<p class="muted">处理记录保存在本机。</p>{/each}</div></section>
     <section class="support"><details><summary class="icon-label"><Info size={14} />支持方式说明</summary><p>支持的归档：ZIP、7z、RAR 及常见分卷。可尝试恢复伪装后缀、合并分片与 Apate 伪装文件。</p><p class="muted">以上为尽力恢复，个别文件不能保证 100% 成功；完整对照见用户指南。</p></details></section>
   </main>
-  <footer><span>{view.info ? `${view.info.platform} · v${view.info.version}` : '跨平台桌面工具'}</span><span>本地处理 · 用户密码 {view.settings?.passwords.count ?? 0} 个</span></footer>
+  <footer><span>{view.info ? `${view.info.platform} · v${view.info.version}` : '跨平台桌面工具'}</span><span>本地处理 · 密码 {view.settings?.passwords.count ?? 0} 条</span></footer>
 </div>
 
 <Dialog.Root bind:open={appearanceOpen} onOpenChange={(open) => { if (!open) closeAppearance(); }}>
@@ -239,15 +265,15 @@
     <label>工具超时 (秒)<input type="number" min="1" max="86400" bind:value={draft.options.tool_timeout_sec} /></label><label>嵌套归档识别下限 (MB)<input type="number" min="1" bind:value={draft.options.min_archive_mb} /></label>
     <label>单文件成品阈值 (MB)<input type="number" min="1" bind:value={draft.options.final_single_mb} /></label>
   </div>
-  <h3>内置库与关键词</h3>
-  <p class="hint">内置密码库 {defaultCount('password_count')} 个 · 用户库 {view.settings?.passwords.count ?? 0} 个 · 内置关键词 {defaultCount('keyword_count')} 条</p>
+  <h3>关键词清理</h3>
+  <p class="hint">内置关键词 {defaultCount('keyword_count')} 条。默认不清理；开启后仅清理顶层成品文件名中的关键词，归档内部内容与目录结构保持不变。</p>
   <div class="settings-grid">
-    <label class="check"><input type="checkbox" checked={builtinFlag(draft.options, 'use_builtin_passwords', true)} onchange={(event) => setBuiltinFlag(draft, 'use_builtin_passwords', event.currentTarget.checked)} />使用内置密码库</label>
     <label class="check"><input type="checkbox" checked={builtinFlag(draft.options, 'clean_builtin_keywords', false)} onchange={(event) => setBuiltinFlag(draft, 'clean_builtin_keywords', event.currentTarget.checked)} />清理内置关键词</label>
   </div>
   <h3>解压工具</h3>{#each ['seven_zip', 'unrar', 'bandizip'] as raw}{@const key = raw as 'seven_zip' | 'unrar' | 'bandizip'}<div class="tool-row"><span>{key === 'seven_zip' ? '7-Zip' : key === 'unrar' ? 'UnRAR' : 'Bandizip'}</span><input aria-label={`${key} 路径`} bind:value={draft.tools[key]} placeholder={view.settings?.tools[key] || '自动查找本机工具'} /><button onclick={() => pickTool(key)}>选择</button></div>{/each}
   <p class="hint">7-Zip、UnRAR、Bandizip 均已随软件提供，无需额外安装；也可以指定本机已有路径。</p>
-  <h3>密码集</h3><p class="hint">内置库 {defaultCount('password_count')} 个 · 用户库 {view.settings?.passwords.count ?? 0} 个 · {view.settings?.passwords.storage === 'system' ? '使用系统凭据保存' : '仅本次会话保存，退出后需重新导入'}。每行一个，只在本机使用，不会写入外观或其他本地存储。</p><textarea aria-label="归档密码，每行一个" bind:value={passwordText} spellcheck="false" rows="3" placeholder="在这里粘贴密码，或导入 UTF-8 文本"></textarea><div class="password-actions"><button onclick={importPasswords} disabled={view.busy}>导入密码文件</button><button onclick={async () => { await controller.replacePasswords(passwordText.split(/\r?\n/)); if (!view.error) passwordText = ''; }} disabled={view.busy || !passwordText}>替换密码集</button><button class="text-button" onclick={() => controller.replacePasswords([])} disabled={view.busy}>清空</button></div>
-  {#if view.error}<p role="alert" class="error">{view.error}</p>{/if}<div class="dialog-footer"><button class="primary" onclick={async () => { if (draft) await controller.saveSettings($state.snapshot(draft)); if (!view.error) { passwordText = ''; settingsOpen = false; } }} disabled={view.busy}>保存设置</button></div>
+  <h3>密码集</h3><p class="hint">这些是公开的归档密码，保存在一个明文文件里，随时可直接编辑：每行一个，UTF-8 文本，空行会被忽略，不会去重，也不会把 # 当成注释。所有处理都在本机完成。文件：{view.settings?.passwords.path || '—'}（当前 {view.settings?.passwords.count ?? 0} 条）。改完请单独点“保存密码列表”；只点“保存设置”不会写入密码文件。</p><textarea aria-label="归档密码，每行一个" bind:value={passwordText} spellcheck="false" rows="8" placeholder="每行一个密码，可直接编辑、添加或删除；清空后保存即删除全部密码"></textarea>{#if passwordDirty}<p class="hint">当前有未保存的编辑；请先“保存密码列表”，再追加或重新载入，以免覆盖这些文本。</p>{/if}<div class="password-actions"><button onclick={importPasswords} disabled={view.busy || passwordDirty}>从文件追加</button><button onclick={reloadPasswords} disabled={view.busy || passwordDirty}>重新载入</button><button class="primary" onclick={savePasswords} disabled={view.busy}>保存密码列表</button></div>
+  {#if view.settings?.passwords.error}<p role="alert" class="error">密码文件读取失败：{view.settings.passwords.error} 原文件已保留。请先用 UTF-8 修复文件，或在上方重新填写并点“保存密码列表”替换它。空白编辑框不表示原文件已清空。</p>{/if}
+  {#if view.error}<p role="alert" class="error">{view.error}</p>{/if}<div class="dialog-footer"><button class="primary" onclick={async () => { if (draft) await controller.saveSettings($state.snapshot(draft)); if (!view.error) settingsOpen = false; }} disabled={view.busy}>保存设置</button></div>
 </Dialog.Content></Dialog.Portal>{/if}
 </Dialog.Root>

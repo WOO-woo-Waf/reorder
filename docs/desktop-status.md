@@ -1,10 +1,59 @@
 # 桌面软件实施状态与新聊天交接
 
-更新时间：2026-10-08（Asia/Shanghai）。Windows x64 手动桌面首版已具备 EXE、NSIS、便携 ZIP、OO 图与制作方指南，本轮更新星绫解封 0.3.0。真实文件、体验及干净机器安装仍待用户人工验收，整体产品目标尚未验收完成。
+更新时间：2026-10-09（Asia/Shanghai）。Windows x64 手动桌面首版已具备 EXE、NSIS、便携 ZIP、OO 图与制作方指南，已发布 0.3.0，本轮继续修复 0.3.1。真实文件、体验及干净机器安装仍待用户人工验收，整体产品目标尚未验收完成。
 
 方案：[product_plan.md](product_plan.md)。正式设计：[desktop-design.md](desktop-design.md)。
 
-## 0.0 2026-10-08 星绫解封 0.3.0（当前切片）
+## 0.0.1 星绫解封 0.3.1：公开词库、工作文件夹与旧版兼容（当前目标）
+
+本节优先于下方历史记录。用户要求持续完成修复、先本地测试再 commit；**新 Release 必须等用户确认后发布**，现有 v0.3.0 保留。真实 GUI、安装和其他用户样本仍由用户继续验收。0.3.1 本轮只提供便携 ZIP，不生成新版安装器。
+
+### 已确认需求与实施范围
+
+- 归档密码是公开词库，初始 115 条。使用一份可编辑 UTF-8 `passwords.txt`，首次创建后用户可增删、清空；明文展示和保存，不使用系统凭据、不加密、不掩码，不自动补回删除项。空行忽略，其余文字（含空格、重复及 `#`）保留。导入追加，保存替换整份列表。
+- 用户选择的是**工作文件夹**。所有大文件工作副本、还原、解压、工具临时文件与中间产物都必须驻留其 `intermediate/workspaces/` 内；`final/`、`success/archives/`、`error_files/`、`deferred_volumes/` 也在该目录。小型设置、明文词库、SQLite、诊断日志继续保存在应用数据目录。
+- 复用已有同名目录，保留已有文件；新文件冲突使用独占的安全位置，不覆盖。只能清理本次创建的任务工作目录，不能清空用户已有目录。
+- 同盘发布和归档优先独占移动，减少重复整文件复制与哈希；跨盘仍先校验复制后删除。还原会改写的工作副本与恢复动作日志保留，不能以省 I/O 换取原件风险。
+- 记忆上次工作文件夹以及已保存的处理/工具/背景设置；词库从文件加载，重启后保持用户修改。
+- 授权检查 `D:\buff\tmp\reorder\BG57.zip.001.mp4` 与 `.002.mp4` 的回归；原件保留，只在独立检查目录内测试。对照旧 tag `portable-20260623-163109` 的文件夹、原名保留、深层解压和还原策略，补充特性说明。
+
+### 工程证据与本地交付
+
+证据目录为 ignored `artifacts/desktop/hoshiribbon-0.3.1/`，源码行为、定向测试、Windows 本地产物与授权样本检查的具体结果在本节汇总。新 DeepSeek/high V1 正文验证标记 `CHAIN-HOSHI-031-WORKSPACE:43`，当前新子线程的运行模型元数据已核实为 DeepSeek；界面子任务一次 429 限流后保留修改，主线程接手收尾，没有恢复旧线程或升级付费模型。
+
+旧版只读能力对照见 `main/parity-audit.md`：旧 config/restoring/清理/分组等核心保留，桌面仍调用扩展的 `BetaFolderPipeline`。桌面已批准的默认深解压开启及原件不预展平继续保留；旧CLI默认与可调高级选项的差异须在指南说明，不宣称所有 CLI 参数已有桌面控件。
+
+源码修复、最终 Windows 引擎重新冻结、原生合成与 BG57 实际 EXE 任务入口检查已完成，本地便携 ZIP 用于本轮人工验收；**新版尚未发布，人工验收尚未完成**。有效定向证据如下（各项范围有交集，不相加声称全量）：
+
+| 范围 | 检查 / 结果 | 本轮证据位置 |
+| --- | --- | --- |
+| 单一公开密码文件 | 最初 57 项涵盖文件/默认值/协议；修复外部编码错误入口后定向密码文件 27 passed，exit 0 | `tests/pwd031-password-file-tests.log`、`tests/pwd031-repair-tests.log` |
+| 用户工作文件夹与事务 | 14 个新增工作文件夹用例 + 30 个既有引擎/恢复回归通过；同盘发布与归档不调用校验复制，已有目录/冲突文件保留 | `workspace/ws-031-work-evidence.json`、`workspace/ws-031-work-verify.log` |
+| 界面配置与错误修复入口 | 最终控制器 16 passed；`npm run check` 0 errors/0 warnings；Vite build exit 0 | `main/frontend-repair/{controller,check,build}.log`、`results.json` |
+| Rust 宿主 | Windows `cargo test --offline --lib --jobs 2`，8 passed，exit 0 | `main/rust-tests.log`、`rust-test-result.json` |
+| BG57 分卷（最终实际 EXE） | 最终冻结 EXE 通过 stdio 的计划/任务/结果接口，1 组 succeeded、231 个成品文件、2 个原始副本归档；原件前后 SHA-256 不变，归档 rawhash 等于原件；exit 0（约 106 秒，仅本次观察） | `main/bg57-native-final.json`、`bg57-native-final-result.json`、`bg57-native-final.log` |
+| 伪装分卷与活动扫描 | 格式用例共 17 项，在最后两次定向执行中通过：16 项与取消/失败重试 2 项联合执行为 18 passed；新增链接保护单项 passed；均 exit 0。覆盖真实产品顺序、逐卷还原、回滚失败、完整卷预检、缓存、临时删除容忍与容量/链接保护 | `main/formats-race-final-tests.log`、`formats-race-final-result.json`、`guard-link-final-test.log` |
+| OO 图 | 受影响模块/类图重新渲染 exit 0，时序图同步更新同盘移动策略；PNG 视觉核查，SVG 随文档更新 | `main/diagram-result.json` |
+| 冻结引擎与原生合成 | 重新冻结 exit 0；Windows EXE 运行 5 个合成组（ZIP/AES ZIP/嵌入封面/7z 分卷/Apate 伪装 ZIP 分卷）成功；源归档哈希、已有目录哨兵、工作路径、词库与设置重启均通过；越界归档被拒绝 | `main/freeze-delivery-final-result.json`、`main/native-engine-delivery-final.json`、`native-engine-delivery-final-result.json` |
+
+格式执行者还运行了一次超出原定范围的全库检查：301 passed、12 subtests passed、1 failed，exit 1；失败为 Linux 下 `test_tool_bootstrap.py` 的 Windows 路径分隔符断言。该结果不是全库通过，也不作为交付门槛，未追查或重复无关测试。
+
+BG57 根因是每卷 Apate 伪装未接入多卷还原路径，安全预检又只判断首卷。现在对完整卷组预检并逐卷还原；只缓存成功预检，键包含全部卷路径、大小、mtime、dev/ino/ctime 与密码，变换后重查。所选旧 tag 对同一对文件也出现同类失败，因此这里保留的是旧还原能力并补齐分卷调用链，不能把该 tag 写成已成功基线。
+
+密码读取错误不会清空原文件或卡死设置入口；用户可修复 UTF-8 文件或主动保存替换。初始词条写入前验证，失败不留下假空库。旧系统凭据和内置开关不参与新单文件库，兼容差异在用户指南说明。
+
+目录审查发现的取消/工具异常误判已修：仅真实文件动作影响 `needs_review`，工作区记账不阻止正常重试；定向工作文件夹与既有异常回归 28 passed，exit 0（`main/workspace-state-repair-final-tests.log`）。格式审查发现的还原器顺序冲突已按 probe 类型修复，单卷原有顺序保持；合成回归已加入产品组合，实际冻结 EXE 还暴露活动扫描与工具清理失败输出的竞态：枚举后的文件可能已删除，旧空间检查随后 stat 便抛异常。最终用一次 lstat 同时检查链接/特殊文件与大小，忽略仅已消失的临时条目，工具退出后继续强制复核；现已从实际 EXE 入口跑通 BG57。非业务异常另有有界本地堆栈，UI 保持简明提示。
+
+### 本地验收入口与 Git
+
+- 新 ZIP：`D:\buff\reorder\artifacts\desktop\Hoshiribbon-0.3.1-windows-x64.zip`。解压到新目录，用 `Start-Portable.cmd` 启动；`data/passwords.txt` 首次为 115 条公开值，此后以用户编辑为准。
+- Rust 宿主 0.3.1 release 构建 exit 0（`main/windows-build-local-result.json`）；此后只有 Python 修复与文档更新，重新冻结并重新组装便携包，复用不变的宿主/前端证据。最终组装记录 `main/package-delivery-final-result.json`，最终 ZIP 的 CRC、清单大小/hash、实际冻结引擎、公开默认值及文档一致性记录 `main/package-validation-final.json`；校验和在 `artifacts/desktop/SHA256SUMS.txt`。
+- 初次本地组装目录是中间快照，不要拿它替代上述最终 ZIP。0.3.0 目录、用户 data 与已有内容保留。
+- 本轮按用户授权提交并推送 `main`，具体提交号以 Git 历史和远程分支为准；不创建新 tag/Release。发布仍须用户确认。
+
+后续由用户按用户指南验收公开密码编辑、已有工作文件夹内容保护、配置重启记忆、背景及真实文件效果。真实跨盘端到端、干净机器启动/安装、其他伪装与多层样本、大磁盘性能数字仍未验证。
+
+## 0.0 2026-10-08 星绫解封 0.3.0（已发布历史切片）
 
 本节优先于下方 0.2.0 和迁移记录。用户再次授权实现、Windows构建、commit和重试push；真实文件、GUI与安装体验继续由用户人工验收。内部 `reorder_engine` 与 `io.reorder.desktop` 保留，旧便携目录及 `data/` 保留。
 

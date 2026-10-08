@@ -249,9 +249,6 @@ impl EngineBridge {
             return Err("Python 引擎资源缺失，请保留便携目录完整或重新安装。".into());
         }
         command.arg("--data-root").arg(&data_root);
-        if portable {
-            command.arg("--session-secrets");
-        }
         command.stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());

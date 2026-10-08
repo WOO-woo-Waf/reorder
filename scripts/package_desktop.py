@@ -125,7 +125,9 @@ def main() -> None:
             f"Start {names['exe']}. Keep engine/ and its _internal/ directory together.\n"
             "Microsoft Edge WebView2 Runtime is required. No Python/Node/Rust installation is required.\n"
             "Default state is in %LOCALAPPDATA%\\io.reorder.desktop.\n"
-            "Start-Portable.cmd uses data/ next to the EXE and session-only passwords.\n"
+            "Start-Portable.cmd uses data/ next to the EXE; passwords.txt is a public editable UTF-8 library.\n"
+            "All archive processing and temporary files stay in the selected work folder.\n"
+            "The last work folder and saved options are restored at next launch.\n"
             "See docs/desktop-user-guide.md for operation and manual acceptance.\n"
             "This build is unsigned. Real files and user experience await human acceptance.\n",
             encoding="utf-8")

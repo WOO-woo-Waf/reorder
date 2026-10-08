@@ -39,7 +39,7 @@ classDiagram
     -PackageProcessor processor
     -JobRepository repository
     -SettingsRepository settings
-    -SecretStore secrets
+    -PasswordFile secrets
     +dispatch(method, params) dict
     +settings_info() dict
   }
@@ -78,10 +78,11 @@ classDiagram
     +update(settings)
     +resolve_tool(name) str
   }
-  class SecretStore {
+  class PasswordFile {
     +load() tuple
     +replace(values) dict
-    +redact(text) str
+    +info() dict
+    +path Path
     +mode str
   }
   class ExternalCommandRunner {
@@ -100,12 +101,12 @@ classDiagram
   EngineFacade *-- PackageProcessor
   EngineFacade *-- JobRepository
   EngineFacade *-- SettingsRepository
-  EngineFacade *-- SecretStore
+  EngineFacade *-- PasswordFile
   JobRunner --> PackageProcessor
   JobRunner --> JobRepository
   PackageProcessor --> BetaFolderPipeline
   PackageProcessor --> FileTransaction
-  PackageProcessor --> SecretStore
+  PackageProcessor --> PasswordFile
   FileTransaction --> JobRepository : records
   BetaFolderPipeline --> ExternalCommandRunner : through extractors
   note for EngineBridge "Rust 独立进程；监管 Python 引擎"

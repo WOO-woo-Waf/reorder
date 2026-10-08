@@ -1,10 +1,10 @@
 # 桌面首版代码阅读指南（面向熟悉 Python／Java／OO／C++ 的制作方）
 
-更新时间：2026-10-08（星绫解封 0.3.0 更新）。本指南基于工作区中的**实际源码**逐文件核对，不是按设计稿想象。
+更新时间：2026-10-08（星绫解封 0.3.0 → 0.3.1 更新；0.3.1 只在本地准备、待人工确认）。本指南基于工作区中的**实际源码**逐文件核对，不是按设计稿想象。
 阅读前请先确认基线：
 
 - 仓库 Windows 路径 `D:\buff\reorder`，WSL 路径 `/mnt/d/buff/reorder`，分支 `main`。
-- 核对时 `HEAD = 07b561fe5088cf15828f4c499a913472207f7405`（`fix: complete source archive lifecycle routing`）。
+- 0.3.0 发布后的 `HEAD = f981596`（`docs: publish Hoshiribbon 0.3.0 Windows release links`）；0.3.1 的行为按本轮实现更新，提交状态见实施状态；行号可能随修复移动，阅读时优先按符号名定位。
 - 提交与检查状态统一见 [desktop-status.md](desktop-status.md)；源码持续调整时行号可能移动，阅读时优先按链接后的符号名定位。
 - 配套文档：[桌面设计](desktop-design.md)、[实施状态](desktop-status.md)、[产品方案](product_plan.md)、[架构图源](diagrams/architecture.json)。
 - 用户操作见 [用户指南](desktop-user-guide.md)，格式与效果边界见 [格式指南](desktop-format-support.md)。
@@ -63,13 +63,13 @@ App.svelte
 5. **任务与文件事务**：[jobs.py](../src/reorder_engine/application/jobs.py) → [processing.py](../src/reorder_engine/application/processing.py) → [file_transaction.py](../src/reorder_engine/infrastructure/file_transaction.py) → [job_repository.py](../src/reorder_engine/infrastructure/job_repository.py)。这是数据完整性的核心。
 6. **既有业务管线**：[services/beta_pipeline.py](../src/reorder_engine/services/beta_pipeline.py)。这是被复用的老内核，桌面只在外层做“工作在副本上、发布后归档原件”。
 7. **界面绑定**：[App.svelte](../apps/desktop/src/App.svelte)。最后读，因为此时你已经知道每个按钮背后会走哪条链路。
-8. **基础设施细节**：[command_runner.py](../src/reorder_engine/infrastructure/command_runner.py)、[process_control.py](../src/reorder_engine/infrastructure/process_control.py)、[archive_safety.py](../src/reorder_engine/infrastructure/archive_safety.py)、[secret_store.py](../src/reorder_engine/infrastructure/secret_store.py)、[settings_repository.py](../src/reorder_engine/infrastructure/settings_repository.py)、[desktop_paths.py](../src/reorder_engine/infrastructure/desktop_paths.py)、[engine_lock.py](../src/reorder_engine/infrastructure/engine_lock.py)。
+8. **基础设施细节**：[command_runner.py](../src/reorder_engine/infrastructure/command_runner.py)、[process_control.py](../src/reorder_engine/infrastructure/process_control.py)、[archive_safety.py](../src/reorder_engine/infrastructure/archive_safety.py)、[workspace.py](../src/reorder_engine/infrastructure/workspace.py)、[secret_store.py](../src/reorder_engine/infrastructure/secret_store.py)、[settings_repository.py](../src/reorder_engine/infrastructure/settings_repository.py)、[desktop_paths.py](../src/reorder_engine/infrastructure/desktop_paths.py)、[engine_lock.py](../src/reorder_engine/infrastructure/engine_lock.py)。
 
 ## 3. 对象组合与资源所有权
 
 ### 3.1 Python 引擎对象（进程内）
 
-组合关系在 [facade.py:26-35](../src/reorder_engine/application/facade.py) 的 `EngineFacade.__init__` 一次搭好：Facade 拥有 `SettingsRepository`、`SecretStore`、`JobRepository`、`PlanService`、`PackageProcessor`、`JobRunner`。这是纯组合，没有继承基类，也没有工厂层。
+组合关系在 [facade.py](../src/reorder_engine/application/facade.py) 的 `EngineFacade.__init__` 一次搭好：Facade 拥有 `SettingsRepository`、`PasswordFile`（旧名 `SecretStore`）、`JobRepository`、`PlanService`、`PackageProcessor`、`JobRunner`。这是纯组合，没有继承基类，也没有工厂层。
 
 | 对象 | 定义位置 | 拥有的资源 / 生命周期 |
 |---|---|---|
@@ -77,11 +77,11 @@ App.svelte
 | `JsonRpcServer` | [json_rpc.py:13](../src/reorder_engine/infrastructure/json_rpc.py) | stdin/stdout 缓冲区；只在服务循环里存活 |
 | `EngineLock` | [engine_lock.py:8](../src/reorder_engine/infrastructure/engine_lock.py) | 数据目录的进程锁文件；OS 在进程死亡时自动释放 |
 | `SettingsRepository` | [settings_repository.py:15](../src/reorder_engine/infrastructure/settings_repository.py) | 用户数据目录下的 `settings.json`；内存缓存 + 原子写 |
-| `SecretStore` | [secret_store.py:9](../src/reorder_engine/infrastructure/secret_store.py) | 密码元组 + 可选系统凭据后端；**不落明文文件** |
+| `PasswordFile`（继承旧 `SecretStore` 名） | [secret_store.py](../src/reorder_engine/infrastructure/secret_store.py) | 数据目录下的明文 `passwords.txt`；无凭据后端，设置 DTO 返回 path/count/values |
 | `JobRepository` | [job_repository.py:18](../src/reorder_engine/infrastructure/job_repository.py) | 一个 SQLite 连接（`check_same_thread=False`）+ `RLock`；唯一写入口 |
 | `PlanService` | [planning.py:51](../src/reorder_engine/application/planning.py) | 无持久资源；持有分组策略实例 |
 | `JobRunner` | [jobs.py:15](../src/reorder_engine/application/jobs.py) | 一个工作线程、一个队列、每任务一个取消事件 |
-| `PackageProcessor` | [processing.py:37](../src/reorder_engine/application/processing.py) | 无持久资源；每个包临时造工作区、Runner、管线 |
+| `PackageProcessor` | [processing.py:37](../src/reorder_engine/application/processing.py) | 无持久资源；每个包在工作文件夹的 `intermediate/` 下临时造工作区、Runner、管线 |
 | `FileTransaction` | [file_transaction.py:60](../src/reorder_engine/infrastructure/file_transaction.py) | 一个包的文件句柄与动作状态；包级对象 |
 
 ### 3.2 谁工作，谁监管
@@ -114,7 +114,7 @@ App.svelte
 
 链路：
 
-1. `DesktopController.prepare`（[desktop-controller.ts:69-80](../apps/desktop/src/lib/desktop-controller.ts)）先校验有输入和输出目录，然后发 `plans.create`，并把返回的 `plan.packages` 渲染成预览。它同时生成一个 `startKey = crypto.randomUUID()`，供“开始”做幂等键。
+1. `DesktopController.prepare`（[desktop-controller.ts](../apps/desktop/src/lib/desktop-controller.ts)）先校验有输入和工作文件夹，然后发 `plans.create`，并把返回的 `plan.packages` 渲染成预览。它同时生成一个 `startKey = crypto.randomUUID()`，供“开始”做幂等键。
 2. `TauriEngineClient.request`（[engine-client.ts:11-14](../apps/desktop/src/lib/engine-client.ts)）调用 `invoke('engine_request', { method, params })`。
 3. Rust `engine_request`（[lib.rs:17-21](../apps/desktop/src-tauri/src/lib.rs)）经由 `bridge(...)` 惰性启动引擎，然后 `EngineBridge.request`（[engine_bridge.rs:113](../apps/desktop/src-tauri/src/engine_bridge.rs)）写一帧到子进程 stdin，等待对应 `id` 的回包。
 4. Python `JsonRpcServer.handle`（[json_rpc.py:17](../src/reorder_engine/infrastructure/json_rpc.py)）解析帧、校验 `jsonrpc`/`id`/`method`/`params`，转给 `EngineFacade.dispatch`。
@@ -192,9 +192,9 @@ def validate_source(snapshot: SourceSnapshot) -> None:
 
 设置里的 `revision()`（[settings_repository.py:28-30](../src/reorder_engine/infrastructure/settings_repository.py)）是 `<settings.json 的 sha256>`。计划里存了扫描时的 `settings_revision`，开始处理时若不一致就抛 `SETTINGS_CHANGED`（[planning.py:131-132](../src/reorder_engine/application/planning.py)）——这就是界面上那句“设置已保存，请重新扫描”的技术来源。
 
-### 4.6 附：打开结果目录
+### 4.6 附：打开工作文件夹
 
-界面：[App.svelte:91](../apps/desktop/src/App.svelte) 的“打开结果目录”。它不走 `engine_request`，而是 `controller.openResult()`（[desktop-controller.ts:168-172](../apps/desktop/src/lib/desktop-controller.ts)）→ `TauriEngineClient.openResult` → Rust `open_result` 命令（[lib.rs:23-37](../apps/desktop/src-tauri/src/lib.rs)）。Rust 会先问引擎 `results.get` 拿到登记路径，**再独立校验**目标路径必须等于输出根或落在登记列表里（[lib.rs:28-36](../apps/desktop/src-tauri/src/lib.rs)），然后才交给 opener 插件打开。这是“双人复核”：Python 登记，Rust 再验。
+界面：`App.svelte` 里 0.3.1 起标为“打开工作文件夹”的按钮。它不走 `engine_request`，而是 `controller.openResult()`（[desktop-controller.ts](../apps/desktop/src/lib/desktop-controller.ts)）→ `TauriEngineClient.openResult` → Rust `open_result` 命令（[lib.rs](../apps/desktop/src-tauri/src/lib.rs)）。Rust 会先问引擎 `results.get` 拿到登记路径，**再独立校验**目标路径必须等于输出根或落在登记列表里，然后才交给 opener 插件打开。这是“双人复核”：Python 登记，Rust 再验。
 
 ## 5. 协议与数据契约
 
@@ -220,15 +220,15 @@ def validate_source(snapshot: SourceSnapshot) -> None:
 
 | 方法 | 分派行 | 说明 |
 |---|---|---|
-| `system.info` | [facade.py:52-55](../src/reorder_engine/application/facade.py) | 版本 `0.3.0`、`protocol_version=1`、平台、能力、工具与密码状态 |
+| `system.info` | [facade.py](../src/reorder_engine/application/facade.py) | 版本 `0.3.1`、`protocol_version=1`、平台、能力、工具与密码状态（path/count/values） |
 | `settings.get` / `settings.update` | [facade.py:56-60](../src/reorder_engine/application/facade.py) | 读／写设置；写要求空闲 |
-| `passwords.replace` / `passwords.import` | [facade.py:61-73](../src/reorder_engine/application/facade.py) | 替换或从 UTF-8 文件导入；导入限 512 KiB 普通文件 |
+| `passwords.replace` / `passwords.import` | [facade.py](../src/reorder_engine/application/facade.py) | 整体替换或从 UTF-8 文件**追加**；导入限 512 KiB 普通文件，返回值含 path/count/values |
 | `plans.create` | [facade.py:74-82](../src/reorder_engine/application/facade.py) | 只读扫描 |
 | `jobs.start` | [facade.py:83-85](../src/reorder_engine/application/facade.py) | 入队 |
 | `jobs.retry` | [facade.py:86-87](../src/reorder_engine/application/facade.py) | 新任务 |
 | `jobs.list` | [facade.py:88-95](../src/reorder_engine/application/facade.py) | 最近任务，每项只带前 5 个包 |
 | `jobs.events` | [facade.py:96-104](../src/reorder_engine/application/facade.py) | 有界事件页 + 轻量快照 |
-| `jobs.logs` | [facade.py:105-119](../src/reorder_engine/application/facade.py) | 脱敏日志分页，单行截断 |
+| `jobs.logs` | [facade.py](../src/reorder_engine/application/facade.py) | 日志分页，单行截断；0.3.1 起公开密码不掩码 |
 | `jobs.get` / `jobs.cancel` | [facade.py:122-125](../src/reorder_engine/application/facade.py) | 快照／取消 |
 | `results.get` | [facade.py:126-132](../src/reorder_engine/application/facade.py) | 输出根 + 已登记的现存路径 |
 
@@ -251,11 +251,11 @@ Schema 在 [job_repository.py:31-46](../src/reorder_engine/infrastructure/job_re
 
 在 `PackageProcessor.process`（[processing.py:45-122](../src/reorder_engine/application/processing.py)）里：
 
-1. **准备工作区**：工作区是 `data_root/work/<job_id>/<package_id>`（[processing.py:52](../src/reorder_engine/application/processing.py)）。先按 `source_bytes*2` 估算磁盘空间，不够就 `DISK_FULL`（[processing.py:55-58](../src/reorder_engine/application/processing.py)）。
+1. **准备工作区**：0.3.1 起工作区在所选工作文件夹内，由 [infrastructure/workspace.py](../src/reorder_engine/infrastructure/workspace.py) 的 `allocate_run_workspace` 创建 `<output>/intermediate/workspaces/<job>/<package>`（固定叶子被占用时改用唯一同级目录），而不是数据目录 `data_root/work/`（后者改为只读遗留恢复）；`guard_workspace_path` 逐级拒绝链接/连接点越界，工具进程的 TEMP/TMP/TMPDIR 与当前目录也设在该次运行的目录内。先按 `source_bytes*2 + 64 MiB` 估算磁盘空间，跨卷原件归档再加源大小，不够就 `DISK_FULL`（[processing.py](../src/reorder_engine/application/processing.py)）。
 2. **复制原件到工作区**：逐成员 `validate_source` 后 `copy_verified`（[processing.py:61-63](../src/reorder_engine/application/processing.py)）。`copy_verified`（[file_transaction.py:33-57](../src/reorder_engine/infrastructure/file_transaction.py)）用 `open("xb")` 私有写、边写边算 sha256、`fsync`、再读回复算比对，不一致就 `COPY_MISMATCH` 且**不删原件**。
 3. **在工作副本上跑老管线**：`BetaFolderPipeline` 在 `workspace` 上产生 `workspace/final`、`workspace/error_files`、`workspace/deferred_volumes`、`workspace/success/archives`、`workspace/intermediate`。注意：老管线往 `workspace/success/archives` 移动的只是**副本**，后面会连同工作区一起丢弃。
 4. **发布成品**：只有 `succeeded`/`partial` 才发布，来源是 `workspace/{final,error_files,deferred_volumes}`（[processing.py:105-106](../src/reorder_engine/application/processing.py)）。发布用 `FileTransaction.publish`（[file_transaction.py:107-147](../src/reorder_engine/infrastructure/file_transaction.py)）：先建临时 `.partial`，走硬链接独占安装（失败退回复制），中途任何异常都清理临时文件，且**从不覆盖已存在目标**，同名冲突改投 `_duplicates/<job_id>/<package_id>/`（[file_transaction.py:88-98](../src/reorder_engine/infrastructure/file_transaction.py)）。
-5. **归档真实原件**：`route_sources`（[file_transaction.py:157-186](../src/reorder_engine/infrastructure/file_transaction.py)）按包结果选目的地：成功/部分 → `success/archives`；缺卷 → `deferred_volumes/<package_id>`；纯失败 → `error_files/<category>`（[processing.py:108-114](../src/reorder_engine/application/processing.py)）。关键是顺序：**先把整卷都复制校验好，再统一删源**，删除发生在取消边界之外。
+5. **归档真实原件**：`route_sources`（[file_transaction.py:157-186](../src/reorder_engine/infrastructure/file_transaction.py)）按包结果选目的地：成功/部分 → `success/archives`；缺卷 → `deferred_volumes/<package_id>`；纯失败 → `error_files/<category>`（[processing.py:108-114](../src/reorder_engine/application/processing.py)）。关键是顺序：**同卷先独占链接落位并复核整组，再统一删源；跨卷先把整组复制校验好，再统一删源**，删除发生在取消边界之外。
 6. **收尾**：`finally`（[processing.py:116-121](../src/reorder_engine/application/processing.py)）在无未完成动作且未开 `keep_workspace` 时删除工作区；如果还有未完成动作，会保留工作区供人工恢复。
 
 ### 6.2 动作日志的相位
@@ -279,7 +279,7 @@ prepared → copied / published → source_removed → committed
 
 代码里没有自动回滚、自动重做文件或 `FileTransaction.reconcile()`。正式类图已经对齐实现；恢复只更新任务/包状态、登记保留工作区，再由用户人工核对或明确重试。未决动作按 `(job_id, package_id)` 区分，不能把旧任务动作套到同包 ID 的新任务。
 
-落地实现是 `recover_interrupted()` + `incomplete_actions()`；`JobRunner._register_retained_workspaces` 将中断副本登记为已提交的 `recovery_note`，让结果查询可返回人工检查位置。日志设备失败只写通用 stderr 诊断，不阻断文件处理或终态。
+落地实现是 `recover_interrupted()` + `incomplete_actions()`；`JobRunner._register_retained_workspaces` 将中断副本登记为已提交的 `recovery_note`，让结果查询可返回人工检查位置。日志设备失败只写通用 stderr 诊断，不阻断文件处理或终态。`workspace`/`recovery_note` 只登记位置，不表示已发布成品；异常判断会排除这些记账动作，保留正常失败/取消与重试。
 
 ## 7. 错误层级与状态机
 
@@ -347,9 +347,9 @@ Rust 与前端配置：[tauri.conf.json](../apps/desktop/src-tauri/tauri.conf.js
 
 `-SkipEngineStage` 仍检查 7-Zip 本体/DLL、许可、Apate 和冻结运行时核心文件；NSIS 与 ZIP 使用同一资源清单。当前构建脚本交付 Windows x64，其他平台的冻结与打包仍待对应平台实现和验收。
 
-正常启动将数据放入 Tauri 用户目录；`Hoshiribbon.exe --portable`（或 `Start-Portable.cmd`）将数据放入 EXE 旁 `data/`，验证可写，并强制密码仅保存在会话中。
+正常启动将数据放入 Tauri 用户目录；`Hoshiribbon.exe --portable`（或 `Start-Portable.cmd`）将数据放入 EXE 旁 `data/`，验证可写；公开密码文件在两种模式下都持久保存在各自数据目录的 `passwords.txt`。
 
-冻结入口是 [scripts/desktop_engine_entry.py](../scripts/desktop_engine_entry.py) → [desktop_engine.py](../src/reorder_engine/desktop_engine.py) 的 `main()`。发行包含固定 7-Zip、UnRAR、Bandizip CLI 与公开词库；私人 `passwords.txt`、用户 `config.json` 和 `restoreAB.exe` 排除。工具身份由 [desktop-tools.lock.json](../scripts/desktop-tools.lock.json) 固定，公开词库由 [desktop-defaults.lock.json](../scripts/desktop-defaults.lock.json) 固定；stage、validate、package 校验身份。仅资源变动可使用 tools-only，Python代码变动必须重新冻结。
+冻结入口是 [scripts/desktop_engine_entry.py](../scripts/desktop_engine_entry.py) → [desktop_engine.py](../src/reorder_engine/desktop_engine.py) 的 `main()`。发行包含固定 7-Zip、UnRAR、Bandizip CLI 与公开词库；仓库根部的私人 `passwords.txt`、用户 `config.json` 和 `restoreAB.exe` 排除（公开词库以只读默认值随包，首次运行再播种到用户数据目录）。工具身份由 [desktop-tools.lock.json](../scripts/desktop-tools.lock.json) 固定，公开词库由 [desktop-defaults.lock.json](../scripts/desktop-defaults.lock.json) 固定；stage、validate、package 校验身份。仅资源变动可使用 tools-only，Python代码变动必须重新冻结。
 
 ### 8.3 检查与测试入口
 
@@ -399,7 +399,7 @@ Rust 与前端配置：[tauri.conf.json](../apps/desktop/src-tauri/tauri.conf.js
 - **从不覆盖已有文件。** 发布与归档都用独占路径，同名改投 `_duplicates`（[file_transaction.py:88-98](../src/reorder_engine/infrastructure/file_transaction.py)）。
 - **两个白名单、两份 DTO、两套状态枚举**都要同步维护。
 - **没有自动 reconcile、没有自动重跑、没有 DTO 自动生成。** 恢复只是标记 `needs_review` 等人工核对（[job_repository.py:150-164](../src/reorder_engine/infrastructure/job_repository.py)）。
-- **密码不落明文。** `SecretStore` 只接受系统凭据后端，否则退回会话内存（[secret_store.py:20-37](../src/reorder_engine/infrastructure/secret_store.py)）；日志经 `redact`（[secret_store.py:56-59](../src/reorder_engine/infrastructure/secret_store.py)）。
+- **公开密码是明文文件。** 0.3.1 起 `PasswordFile` 直接读写数据目录的 `passwords.txt`（[secret_store.py](../src/reorder_engine/infrastructure/secret_store.py)），不再有系统凭据后端，也不再对密码做日志掩码；私人密码不要写入该文件。任务库与外观存储仍不保存密码。
 
 ## 附录 A：源文件定位索引
 
@@ -407,7 +407,7 @@ Rust 与前端配置：[tauri.conf.json](../apps/desktop/src-tauri/tauri.conf.js
 
 - 入口：[src/reorder_engine/desktop_engine.py](../src/reorder_engine/desktop_engine.py)
 - 应用层：[application/facade.py](../src/reorder_engine/application/facade.py)、[planning.py](../src/reorder_engine/application/planning.py)、[jobs.py](../src/reorder_engine/application/jobs.py)、[processing.py](../src/reorder_engine/application/processing.py)、[models.py](../src/reorder_engine/application/models.py)、[errors.py](../src/reorder_engine/application/errors.py)
-- 基础设施：[infrastructure/json_rpc.py](../src/reorder_engine/infrastructure/json_rpc.py)、[job_repository.py](../src/reorder_engine/infrastructure/job_repository.py)、[file_transaction.py](../src/reorder_engine/infrastructure/file_transaction.py)、[archive_safety.py](../src/reorder_engine/infrastructure/archive_safety.py)、[command_runner.py](../src/reorder_engine/infrastructure/command_runner.py)、[process_control.py](../src/reorder_engine/infrastructure/process_control.py)、[secret_store.py](../src/reorder_engine/infrastructure/secret_store.py)、[settings_repository.py](../src/reorder_engine/infrastructure/settings_repository.py)、[desktop_paths.py](../src/reorder_engine/infrastructure/desktop_paths.py)、[engine_lock.py](../src/reorder_engine/infrastructure/engine_lock.py)
+- 基础设施：[infrastructure/json_rpc.py](../src/reorder_engine/infrastructure/json_rpc.py)、[job_repository.py](../src/reorder_engine/infrastructure/job_repository.py)、[file_transaction.py](../src/reorder_engine/infrastructure/file_transaction.py)、[workspace.py](../src/reorder_engine/infrastructure/workspace.py)、[archive_safety.py](../src/reorder_engine/infrastructure/archive_safety.py)、[command_runner.py](../src/reorder_engine/infrastructure/command_runner.py)、[process_control.py](../src/reorder_engine/infrastructure/process_control.py)、[secret_store.py](../src/reorder_engine/infrastructure/secret_store.py)、[settings_repository.py](../src/reorder_engine/infrastructure/settings_repository.py)、[desktop_paths.py](../src/reorder_engine/infrastructure/desktop_paths.py)、[engine_lock.py](../src/reorder_engine/infrastructure/engine_lock.py)
 - 既有管线：[services/beta_pipeline.py](../src/reorder_engine/services/beta_pipeline.py)
 - 测试：[tests/test_desktop_engine.py](../tests/test_desktop_engine.py)
 
@@ -428,3 +428,11 @@ Rust 与前端配置：[tauri.conf.json](../apps/desktop/src-tauri/tauri.conf.js
 - `ProcessingOptions.use_builtin_passwords=true`；`clean_builtin_keywords=false`。关键词只作用于成品顶层名，保留扩展名与内部结构，再经 `FileTransaction` 安全发布。
 - [appearance.ts](../apps/desktop/src/lib/appearance.ts)：前端本地外观对象，校验 PNG/JPEG/WebP、2 MiB、data URL、解码尺寸与存储回读。没有引擎或 SQLite 依赖；类似 Java 的独立值对象加存储适配函数。
 - 名称 Hoshiribbon 用于窗口和发行；内部 `reorder_engine`、`io.reorder.desktop` 保留，数据位置保持。
+
+以上是 **0.3.0 记录**。0.3.1 的增补如下（与本节同一批对象，只是替换了密码与工作目录部分）：
+
+- [PasswordFile](../src/reorder_engine/infrastructure/secret_store.py)：单一明文公开密码库，继承 `SecretStore` 名以兼容注入适配器。构造时若文件不存在才用 [BuiltinDefaults](../src/reorder_engine/infrastructure/builtin_defaults.py) 的公开密码播种一次；`load()` 每次读盘，`replace()` 原子替换，`info()` 返回 `path`/`count`/`values`/`storage=plaintext`。没有 keyring 后端，`redact()` 不再掩码。
+- 密码边界：每行一个、UTF-8、空行忽略、`#` 与空格按字面保留、不去重；单条 ≤4096 字符、≤10000 条、文件 ≤512 KiB，超限报 `INVALID_PASSWORD_FILE`。整库会随设置 DTO 回到前端，因此这些上限也保护 1 MiB 协议帧。
+- [DesktopSettings](../src/reorder_engine/application/models.py) 新增 `work_root`；`DesktopController.setOutput` 会用同类 `settings.update` 合并保存它，`initialize` 时回填到界面，所以工作文件夹重启后仍被记住。`saveSettings` 会保留用户当前选择，避免对话框里的旧值覆盖。
+- 工作区根从 `data_root/work/` 改为所选工作文件夹的 `intermediate/workspaces/<job>/<package>`（[workspace.py](../src/reorder_engine/infrastructure/workspace.py) `allocate_run_workspace`，占用时用唯一同级目录，`guard_workspace_path` 拒绝链接越界）；发布与原件归档优先同卷独占移动/改名，跨卷或不可用时回退到校验复制（[file_transaction.py](../src/reorder_engine/infrastructure/file_transaction.py) 的 `install_exclusive`/`publish`/`route_sources`）。旧 `work/` 只作只读遗留恢复。
+- 前端 `contracts.ts` 增加 `PasswordInfo` 与 `work_root`，`App.svelte` 的密码区改为显示文件路径/条数并区分“导入（追加）/保存（替换）/重新载入”；`use_builtin_passwords` 在 TS 侧降级为可选兼容字段，不在界面出现。

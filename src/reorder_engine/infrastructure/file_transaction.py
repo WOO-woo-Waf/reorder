@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import hashlib
 import os
 import shutil
@@ -12,6 +13,26 @@ from reorder_engine.application.planning import source_snapshot, validate_source
 from reorder_engine.infrastructure.job_repository import JobRepository
 
 CHUNK_BYTES = 4 * 1024 * 1024
+
+
+def _is_link(path: Path) -> bool:
+    """True for a symlink, or a Windows junction when ``Path.is_junction`` exists."""
+    if path.is_symlink():
+        return True
+    is_junction = getattr(path, "is_junction", None)
+    if is_junction is None:
+        return False
+    try:
+        return bool(is_junction())
+    except OSError:
+        return True
+
+
+def _device_of(path: Path) -> int | None:
+    try:
+        return os.stat(path).st_dev
+    except OSError:
+        return None
 
 
 def install_exclusive(temporary: Path, target: Path) -> None:
@@ -45,6 +66,72 @@ def _install_without_hardlinks(temporary: Path, target: Path) -> None:
     # copy_verified removes only the incomplete target this call created.
     copy_verified(temporary, target)
     temporary.unlink(missing_ok=True)
+
+
+def move_exclusive(source: Path, target: Path) -> None:
+    """Rename a regular file into place without copying and without overwriting.
+
+    The work folder and the output folder share one volume, so a hard link followed
+    by removing the source renames the file atomically and refuses to replace an
+    existing target. Only on filesystems without hard links does the platform fall
+    back to a safe copy-then-install; source bytes are never re-hashed on the fast
+    path.
+    """
+    install_exclusive(source, target)
+
+
+def link_exclusive(source: Path, target: Path) -> bool:
+    """Create one exclusive hard link without touching the source.
+
+    Returns ``True`` when the link was created. Returns ``False`` when the volume has
+    no hard links (FAT/exFAT and some network shares); the caller then falls back to
+    an exclusive rename. An existing target always raises and is never replaced.
+    """
+    try:
+        os.link(source, target)
+        return True
+    except FileExistsError:
+        raise
+    except OSError:
+        if target.exists() or target.is_symlink():
+            raise
+        return False
+
+
+def _copy_tree(source: Path, destination: Path) -> None:
+    destination.mkdir()
+    for directory, dirs, files in os.walk(source, followlinks=False):
+        base = Path(directory)
+        relative = base.relative_to(source)
+        for name in dirs:
+            child = base / name
+            if child.is_symlink() or _is_link(child):
+                raise EngineError("UNSAFE_OUTPUT", "解压结果包含链接目录。")
+            (destination / relative / name).mkdir(parents=True, exist_ok=True)
+        for name in files:
+            copy_verified(base / name, destination / relative / name)
+
+
+def _move_tree(source: Path, target: Path) -> None:
+    """Move a directory within one volume; fall back to a verified copy on EXDEV."""
+    try:
+        os.rename(source, target)
+        return
+    except OSError as exc:
+        if exc.errno != errno.EXDEV:
+            raise
+    # Cross-device is not expected because work lives under the output root; keep a
+    # verified copy so a nonstandard mount never loses data.
+    temporary = target.parent / (".reorder-" + str(uuid4()) + ".partial")
+    try:
+        _copy_tree(source, temporary)
+        if target.exists() or target.is_symlink():
+            raise EngineError("OUTPUT_CONFLICT", "发布时目标出现冲突，未覆盖。")
+        os.rename(temporary, target)
+        shutil.rmtree(source, ignore_errors=True)
+    finally:
+        if temporary.exists():
+            shutil.rmtree(temporary, ignore_errors=True)
 
 
 def check_cancel(cancel_event) -> None:
@@ -104,28 +191,49 @@ class FileTransaction:
         reject_links(output_root)
         self.output_root = output_root.resolve()
 
-    def _safe_parent(self, target: Path) -> None:
+    def _check_inside_output(self, target: Path) -> Path:
+        """Validate a destination path's ancestry without creating anything yet.
+
+        ``reject_links`` walks the target and every ancestor (including above the
+        output root), so a junction or symlink introduced after the plan was created
+        cannot redirect creation outside the chosen folder.
+        """
         reject_links(target)
-        target = target.absolute()
+        absolute = target.absolute()
         try:
-            target.relative_to(self.output_root)
+            absolute.relative_to(self.output_root)
         except ValueError as exc:
             raise EngineError("INVALID_OUTPUT", "文件目标越过授权输出目录。") from exc
-        current = target.parent
+        current = absolute.parent
         while True:
-            if current.is_symlink():
+            if current.is_symlink() or _is_link(current):
                 raise EngineError("UNSAFE_OUTPUT", "输出路径包含符号链接。")
             if current == self.output_root or current.parent == current:
                 break
             current = current.parent
-        if self.output_root.is_symlink():
+        if self.output_root.is_symlink() or _is_link(self.output_root):
             raise EngineError("UNSAFE_OUTPUT", "输出根目录不能是符号链接。")
-        target.parent.mkdir(parents=True, exist_ok=True)
+        return absolute
+
+    def _safe_parent(self, target: Path) -> None:
+        """Validate ancestry, then create only the target's parent directory."""
+        absolute = self._check_inside_output(target)
+        absolute.parent.mkdir(parents=True, exist_ok=True)
+
+    def _safe_directory(self, directory: Path) -> Path:
+        """Validate and create one destination directory before any file is written."""
+        absolute = self._check_inside_output(directory)
+        absolute.mkdir(parents=True, exist_ok=True)
+        return absolute
 
     def _unique_target(self, target: Path) -> Path:
         self._safe_parent(target)
         if not target.exists() and not target.is_symlink():
             return target
+        return self._duplicate_target(target)
+
+    def _duplicate_target(self, target: Path) -> Path:
+        """A non-existing path under ``_duplicates``; never overwrites a file."""
         duplicate = target.parent / "_duplicates" / self.job_id / self.package_id
         for index in range(10000):
             candidate = duplicate / (str(index) if index else "first") / target.name
@@ -142,33 +250,23 @@ class FileTransaction:
         })
 
     def publish(self, source: Path, target: Path) -> str:
-        target = self._unique_target(target)
+        """Publish one workspace entry into the output without overwriting old files.
+
+        Directories are merged into an existing same-named directory recursively;
+        file collisions are diverted to ``_duplicates``. Work and output share one
+        volume, so publishing is an exclusive move and no bytes are copied or
+        re-hashed.
+        """
+        if source.is_symlink() or _is_link(source):
+            raise EngineError("UNSAFE_OUTPUT", "解压结果包含符号链接。")
+        if source.is_dir():
+            return self._publish_directory(source, target)
+        return self._publish_file(source, self._unique_target(target))
+
+    def _publish_file(self, source: Path, target: Path) -> str:
         action = self._record(source, target, kind="publish")
-        temporary = target.parent / (".reorder-" + str(uuid4()) + ".partial")
         try:
-            if source.is_symlink():
-                raise EngineError("UNSAFE_OUTPUT", "解压结果包含符号链接。")
-            if source.is_dir():
-                temporary.mkdir()
-                for directory, dirs, files in os.walk(source, followlinks=False):
-                    base = Path(directory)
-                    relative = base.relative_to(source)
-                    for name in dirs:
-                        child = base / name
-                        if child.is_symlink():
-                            raise EngineError("UNSAFE_OUTPUT", "解压结果包含链接目录。")
-                        (temporary / relative / name).mkdir(parents=True, exist_ok=True)
-                    for name in files:
-                        copy_verified(base / name, temporary / relative / name)
-            else:
-                copy_verified(source, temporary)
-            # Hard-link creation is exclusive; it never replaces an existing file.
-            if temporary.is_file():
-                install_exclusive(temporary, target)
-            else:
-                if target.exists():
-                    raise EngineError("OUTPUT_CONFLICT", "发布时目标出现冲突，未覆盖。")
-                os.rename(temporary, target)
+            move_exclusive(source, target)
             self.repository.action_phase(action, "published")
             self.repository.action_phase(action, "committed")
             return str(target)
@@ -176,12 +274,61 @@ class FileTransaction:
             # An absent destination is known not to have been published.
             if not target.exists() and not target.is_symlink():
                 self.repository.action_phase(action, "abandoned")
-            if temporary.exists():
-                if temporary.is_dir():
-                    shutil.rmtree(temporary)
-                else:
-                    temporary.unlink()
             raise
+
+    def _publish_directory(self, source: Path, target: Path) -> str:
+        self._safe_parent(target)
+        if _is_link(target):
+            raise EngineError("UNSAFE_OUTPUT", "输出路径包含符号链接。")
+        if not target.exists():
+            return self._publish_new_directory(source, target)
+        if not target.is_dir():
+            # The name is taken by a plain file: keep the whole folder as a duplicate.
+            return self._publish_new_directory(source, self._duplicate_target(target))
+        return self._merge_directory(source, target)
+
+    def _publish_new_directory(self, source: Path, target: Path) -> str:
+        self._safe_parent(target)
+        action = self._record(source, target, kind="publish")
+        try:
+            if target.exists() or target.is_symlink() or _is_link(target):
+                raise EngineError("OUTPUT_CONFLICT", "发布时目标出现冲突，未覆盖。")
+            _move_tree(source, target)
+            self.repository.action_phase(action, "published")
+            self.repository.action_phase(action, "committed")
+            return str(target)
+        except Exception:
+            if not target.exists() and not target.is_symlink():
+                self.repository.action_phase(action, "abandoned")
+            raise
+
+    def _merge_directory(self, source: Path, target: Path) -> str:
+        action = self._record(source, target, kind="publish")
+        # Reuse the existing directory and merge its children with exclusive moves.
+        # A failure mid-merge leaves the action open so recovery flags the package
+        # for review instead of claiming a clean publish.
+        self._merge_children(source, target)
+        self.repository.action_phase(action, "published")
+        self.repository.action_phase(action, "committed")
+        return str(target)
+
+    def _merge_children(self, source: Path, target: Path) -> None:
+        for entry in sorted(source.iterdir(), key=lambda item: item.name):
+            if entry.is_symlink() or _is_link(entry):
+                raise EngineError("UNSAFE_OUTPUT", "解压结果包含链接。")
+            if entry.is_dir():
+                child = target / entry.name
+                if _is_link(child):
+                    raise EngineError("UNSAFE_OUTPUT", "输出路径包含符号链接。")
+                if child.exists() and not child.is_dir():
+                    self._publish_new_directory(entry, self._duplicate_target(child))
+                    continue
+                # Validate and reuse or create the nested directory; never follow a
+                # link and never overwrite an existing directory's contents.
+                self._safe_directory(child)
+                self._merge_children(entry, child)
+            else:
+                self._publish_file(entry, self._unique_target(target / entry.name))
 
     def publish_children(self, source: Path, destination: Path) -> list[str]:
         if not source.exists():
@@ -192,16 +339,74 @@ class FileTransaction:
         return results
 
     def route_sources(self, package: PlannedPackage, destination: Path) -> list[str]:
-        """Copy and verify every member before removing any source member.
+        """Route every verified original into its destination, then remove the source.
 
-        A member that already sits at its intended destination (for example a retry
-        whose failed original was routed there earlier) is registered in place and is
-        neither copied nor unlinked, so retries never shuffle it into ``_duplicates``.
+        Every member identity is checked before any original is touched. When the
+        originals already sit on the output volume they are hard-linked into place
+        first and only then have their original names removed, so no bytes or hashes
+        are recomputed. Members on another volume are copied and verified first, then
+        the original is removed. Both paths stage every target before any source
+        removal so a volume set is never left half-archived. A member that already
+        sits at its intended destination (for example a retry whose failed original
+        was routed there earlier) is registered in place and never shuffled into
+        ``_duplicates``.
         """
-        prepared: list[tuple[SourceSnapshot, Path, str]] = []
-        results: list[str] = []
         for snapshot in package.members:
             validate_source(snapshot)
+        # Validate the destination ancestry (links/containment) before creating it.
+        destination = self._safe_directory(destination)
+        output_device = _device_of(destination)
+        same_volume = (output_device is not None
+                       and all(snapshot.device == output_device for snapshot in package.members))
+        if same_volume:
+            return self._route_sources_in_place(package, destination)
+        return self._route_sources_copied(package, destination)
+
+    def _route_sources_in_place(self, package: PlannedPackage, destination: Path) -> list[str]:
+        # Phase 1: create every target as an exclusive hard link (no source removal)
+        # and record it. A later allocation error leaves all originals intact and any
+        # created links reusable.
+        results: list[str] = []
+        linked: list[tuple[SourceSnapshot, Path, str]] = []
+        for snapshot in package.members:
+            source = Path(snapshot.path)
+            desired = destination / source.name
+            if self._is_same_file(source, desired):
+                action = self._record(source, desired, kind="route_source", snapshot=snapshot)
+                self.repository.action_phase(action, "copied")
+                self.repository.action_phase(action, "committed")
+                results.append(str(desired))
+                continue
+            target = self._unique_target(desired)
+            action = self._record(source, target, kind="route_source", snapshot=snapshot)
+            try:
+                if link_exclusive(source, target):
+                    linked.append((snapshot, target, action))
+                else:
+                    # No hard links on this volume: the fastest safe move is an
+                    # exclusive rename, which may journal a partial move for review.
+                    _install_without_hardlinks(source, target)
+                    self.repository.action_phase(action, "copied")
+                    self.repository.action_phase(action, "source_removed")
+                    self.repository.action_phase(action, "committed")
+                results.append(str(target))
+            except Exception:
+                if not target.exists() and not target.is_symlink():
+                    self.repository.action_phase(action, "abandoned")
+                raise
+        # Phase 2: re-validate every snapshot, then remove the original names.
+        for snapshot, _target, _action in linked:
+            validate_source(snapshot)
+        for snapshot, _target, action in linked:
+            self.repository.action_phase(action, "copied")
+            Path(snapshot.path).unlink()
+            self.repository.action_phase(action, "source_removed")
+            self.repository.action_phase(action, "committed")
+        return results
+
+    def _route_sources_copied(self, package: PlannedPackage, destination: Path) -> list[str]:
+        prepared: list[tuple[SourceSnapshot, Path, str]] = []
+        results: list[str] = []
         for snapshot in package.members:
             source = Path(snapshot.path)
             desired = destination / source.name

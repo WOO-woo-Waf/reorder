@@ -15,7 +15,7 @@ from reorder_engine.infrastructure.builtin_defaults import BuiltinDefaults
 from reorder_engine.infrastructure.desktop_paths import DesktopPaths
 from reorder_engine.infrastructure.engine_lock import EngineLock
 from reorder_engine.infrastructure.job_repository import JobRepository
-from reorder_engine.infrastructure.secret_store import SecretStore
+from reorder_engine.infrastructure.secret_store import SecretStore, PasswordFile, parse_password_text
 from reorder_engine.infrastructure.settings_repository import SettingsRepository
 
 METHODS = frozenset({"system.info", "plans.create", "jobs.start", "jobs.get", "jobs.list",
@@ -30,36 +30,33 @@ class EngineFacade:
         self.paths = paths
         self._lock = EngineLock(paths.data_root / "engine.lock")
         self.settings = SettingsRepository(paths)
-        self.secrets = secrets if secrets is not None else SecretStore()
         self.repository = JobRepository(paths.data_root / "jobs.sqlite3")
         # 内置词库只读安装资源；Facade 与 Processor 共享同一实例。
         self.defaults = defaults if defaults is not None else BuiltinDefaults(paths.app_root)
-        self._register_default_redaction()
+        self.secrets = secrets if secrets is not None else PasswordFile(
+            paths.data_root / "passwords.txt", initial=self.defaults.passwords)
         self.planner = PlanService(paths, self.settings)
         self.processor = PackageProcessor(paths, self.settings, self.repository, self.secrets,
                                           builtin=self.defaults)
         self.runner = JobRunner(self.repository, self.planner, self.processor)
 
-    def _register_default_redaction(self) -> None:
-        """内置库即使默认开关关闭也必须参与脱敏；加载失败时不阻断脱敏。"""
-        setter = getattr(self.secrets, "set_extra_secrets", None)
-        if setter is None:
-            return
-        try:
-            values = self.defaults.passwords
-        except EngineError:
-            values = ()
-        setter(values)
-
     def settings_info(self) -> dict:
         settings = self.settings.get()
         options = settings.options
+        try:
+            passwords = self.secrets.info()
+        except EngineError as exc:
+            # Keep settings accessible so an external encoding/size mistake can
+            # be repaired explicitly, without replacing the user's file here.
+            passwords = {"count": 0, "storage": "plaintext",
+                "path": str(getattr(self.secrets, "path", "")), "values": [],
+                "error": str(exc), "error_code": exc.code}
         return {"settings": settings.model_dump(mode="json"),
             "tools": {name: self.settings.resolve_tool(name) for name in ("seven_zip", "unrar", "bandizip")},
-            "passwords": {"count": len(self.secrets.load()), "storage": self.secrets.mode},
+            "passwords": passwords,
             "defaults": {"password_count": self.defaults.password_count,
                 "keyword_count": self.defaults.keyword_count,
-                "passwords_enabled": options.use_builtin_passwords,
+                "passwords_enabled": True,
                 "keyword_cleaning_enabled": options.clean_builtin_keywords,
                 "version": self.defaults.version or ""}}
 
@@ -74,7 +71,7 @@ class EngineFacade:
             if params:
                 raise EngineError("INVALID_PARAMS", "该操作不接受参数。")
             if method == "system.info":
-                return {"version": "0.3.0", "protocol_version": 1, "platform": platform.system(),
+                return {"version": "0.3.1", "protocol_version": 1, "platform": platform.system(),
                     "data_root": str(self.paths.data_root), "capabilities": ["manual_batch", "restore_ab", "cancel", "retry"],
                     **self.settings_info()}
             return self.settings_info()
@@ -91,9 +88,10 @@ class EngineFacade:
                 if not path.is_absolute() or path.is_symlink() or not path.is_file() or path.stat().st_size > 512 * 1024:
                     raise EngineError("INVALID_PASSWORD_FILE", "请选择不超过 512 KiB 的普通 UTF-8 密码文件。")
                 try:
-                    values = path.read_text(encoding="utf-8-sig").splitlines()
+                    values = list(parse_password_text(path.read_text(encoding="utf-8-sig")))
                 except UnicodeError as exc:
                     raise EngineError("INVALID_PASSWORD_FILE", "密码文件需要使用 UTF-8 编码。") from exc
+                values = [*self.secrets.load(), *values]
             return self.secrets.replace(values)
         if method == "plans.create":
             values = dict(params)
@@ -149,7 +147,9 @@ class EngineFacade:
             return self.runner.cancel(request.job_id)
         if method == "results.get":
             paths = [a["destination"] for a in self.repository.actions(job.job_id)
-                     if a["phase"] in {"committed", "published", "copied", "source_removed"} and Path(a["destination"]).exists()]
+                     if a["kind"] != "workspace"
+                     and a["phase"] in {"committed", "published", "copied", "source_removed"}
+                     and Path(a["destination"]).exists()]
             # Open actions are bounded and the output root is always registered.
             root = self.repository.get_plan(job.plan_id).output_root
             return {"output_root": root, "paths": paths[:200], "total": len(paths),

@@ -33,7 +33,7 @@
 3. **还原伪装**：命中伪装规则时先还原再解压，例如去掉多加的后缀、剥离前置的图片/视频头、还原 Apate 伪装。还原都是可回滚的：解压失败会把改名/改动还原回去。
 4. **解压**：按“工具 × 密码”矩阵依次尝试，直到成功；缺分卷会直接停下并转入等待补卷。
 5. **继续解开内层（深度解压，默认开）**：解出的内容里若还有压缩包，会继续往下解，默认最多 4 层。
-6. **发布 + 归档**：把成品放到 `final\`，原件移动到 `success\archives\`；失败/缺卷/损坏按分类移动（见第 6 节）。
+6. **发布 + 归档**：把成品放到 `final\`，原件移动到 `success\archives\`；失败/缺卷/损坏按分类移动（见第 6 节）。桌面 0.3.1 起这些目录都在你选择的**工作文件夹**下。
 
 ## 3. 格式 × 处理路径 × 预期 × 限制 × 证据
 
@@ -47,7 +47,7 @@
 | 格式 / 情形 | 处理路径 | 成品与原件的预期 | 限制与注意 | 证据类型 |
 | --- | --- | --- | --- | --- |
 | **普通 ZIP** | 识别签名 → 预检（优先用 Python 直接读目录）→ 7-Zip 解压 | 成品到 `final\`；原件进 `success\archives\` | 声明成员过多、声明解压过大、目录记录不完整会被拦下 | 源、史（合成 ZIP）、验 |
-| **加密 ZIP（含 AES）** | 在密码矩阵里试“用户密码 + 内置密码”后 7-Zip 解压 | 解开后同上；密码匹配则成功 | 密码不在密码集 → 归 `error_files\password_error\`；ZIP64 大目录转 7-Zip 预检 | 源、史（AES ZIP）、验 |
+| **加密 ZIP（含 AES）** | 用明文密码文件里的条目轮询，再交给 7-Zip 解压 | 解开后同上；密码匹配则成功 | 密码不在密码文件 → 归 `error_files\password_error\`；ZIP64 大目录转 7-Zip 预检 | 源、史（AES ZIP）、验 |
 | **7z / 7z 分卷（`.7z.001/.002`）** | 分卷归一组、入口取 `.7z.001` → 7-Zip 解压 | 成品到 `final\`；整组原件进归档 | 分卷必须齐全；缺卷转等待补卷 | 源、史（7z 分卷）、验 |
 | **RAR / RAR5（`.partNN.rar`、`.r00`、`.rar`）** | 分组含老式 `r00` 与新式 `part`；优先用 UnRAR，失败再试 7-Zip | 同上 | 缺分卷或密码错误分别转“无卷”/`password_error`；个别变体名字要试探性改名后再试 | 源、模、验 |
 | **tar / gz / tar.gz / tgz / bz2 / xz** | 只有 7-Zip 能预检与解压；按名字与签名识别 | 解开后成品到 `final\` | 这些格式没有独立的“签名级”识别分支，主要靠 7-Zip 预检能否列目录 | 源、模、验 |
@@ -73,12 +73,13 @@
 
 所以本说明**不宣称 ALZ/EGG 等专有格式可用**；这类文件更可能落到失败/未知类型分类，需要你在同类工具里单独处理。
 
-## 5. 密码与关键词词库
+## 5. 公开密码文件与关键词词库
 
-- 内置词库（随包只读）本次统计为 **115 条密码、8 条关键词**（此处不展示词条原文）。
-- 设置里的“**使用内置密码库**”默认启用，可关闭；关闭后只用你自己维护的密码集。密码只在本机使用，日志与错误信息里的密码会被替换为“[密码已隐藏]”。
+- 随包词库本次统计为 **115 条公开密码、8 条关键词**（此处不展示词条原文）。
+- **公开密码**只由一个明文文件承载：首次运行在数据目录生成 `passwords.txt` 并播种那 115 条，之后完全由你维护。它不加密、不走系统凭据后端，**日志与错误信息也不再掩码**——请按公开数据对待，不要把私人密码写进去。
+- 每行一个条目、UTF-8，空行忽略；重复、空格和 `#` 都按字面内容保留。界面“导入密码文件”是追加，“保存密码列表/清空”才整体替换；外部直接改文件在下次使用或重开设置时生效；清空并重启不会补回默认。0.3.0 的“使用内置密码库”开关已取消。
 - “**清理内置关键词**”默认**关闭**。关键词清理只涉及成品顶层命名这一层，**不改动原件，也不改变包内层级**。
-- 你自己的密码集可粘贴、导入或清空；能用系统凭据后端时长期保存，否则仅本次会话保存。
+- 逐条行为对照与证据状态见第 9 节。
 
 ## 6. 原件与成品的去向
 
@@ -90,6 +91,9 @@
 | `success\archives\` | 成功处理的**原件**（整组一起移动） |
 | `error_files\<分类>\` | 失败原件与（若有）部分解出的内容，分类如 `password_error`、`unknown_type`、`extract_failed`、`missing_volume` |
 | `deferred_volumes\<组>\` | 缺分卷等待补卷的原件 |
+| `intermediate\` | 本次运行的临时工作区（副本、恢复与解压中间结果）；开启“保留临时工作区”才留在盘上 |
+
+桌面 0.3.1 起上述目录都位于你选择的**工作文件夹**下（`final\`、`success\archives\`、`error_files\`、`deferred_volumes\` 直接在其根，临时区在 `intermediate\workspaces\<作业>\<文件组>\`，占用时改用唯一同级目录）；解压工具的 TEMP/TMP/TMPDIR 与当前目录也在该临时区内。软件复用已存在的同名目录，但**从不覆盖已有文件**，冲突项安全改名或进入 `_duplicates`，也不会清理你原有的内容。旧数据目录 `work\` 只作只读遗留恢复。
 
 处理前会提示：原件按文件组归档，不会预先展平输入；**处理前不会改写原件**。
 
@@ -103,7 +107,7 @@
 
 ## 8. 证据、证据类型与未验证项
 
-本说明由**静态阅读源码 + 复用已有 artifacts**得出，本次**没有**新下载、没有真实 CLI 内容测试、没有真实文件或 GUI 操作。可核对的位置（仓库 `/mnt/d/buff/reorder`）：
+本说明依据源码对照与检查证据。0.3.1 已对授权的 BG57 两卷副本做 Windows 原生工具检查，原件不变；其他真实格式效果与 GUI 仍待人工验收。可核对的位置（仓库 `/mnt/d/buff/reorder`）：
 
 | 主题 | 位置 |
 | --- | --- |
@@ -115,7 +119,10 @@
 | 深度解压、失败分类、缺卷、成品判定 | `src/reorder_engine/services/beta_pipeline.py`（`_continue_after_extract` L365；`_nested_candidates` L443；缺卷识别 L1026；`_failure_category` L1032；成品判定 L1102） |
 | 输入过滤、原件不改写 | `src/reorder_engine/application/planning.py`（排除后缀 L16；排除名单 L17；原件不改写提示 L105） |
 | 内置词库读取与校验 | `src/reorder_engine/infrastructure/builtin_defaults.py`（清单与只读校验 L108 起；`password_count` L149；`keyword_count` L153） |
-| 开关默认值 | `src/reorder_engine/application/models.py`（`use_builtin_passwords` 默认真 L26；`clean_builtin_keywords` 默认假 L27） |
+| 处理开关默认值 | `src/reorder_engine/application/models.py`（`deep_extract` 默认真、`preserve_payload_names` 默认真、`clean_builtin_keywords` 默认假、`work_root` 新增；`use_builtin_passwords` 仅作旧配置兼容） |
+| 公开密码文件 | `src/reorder_engine/infrastructure/secret_store.py`（`PasswordFile`）、`src/reorder_engine/application/facade.py`（`passwords.replace/import`、`settings_info`） |
+| 工作文件夹与设置记忆 | `src/reorder_engine/application/models.py`（`DesktopSettings.work_root`）、`apps/desktop/src/lib/contracts.ts`、`apps/desktop/src/App.svelte`、`apps/desktop/src/lib/desktop-controller.ts` |
+| 发布与归档的文件动作 | `src/reorder_engine/infrastructure/file_transaction.py`（`install_exclusive`、`publish`、`route_sources`） |
 
 已有机器证据（**历史合成，非本次**）：
 
@@ -123,10 +130,44 @@
 - `artifacts/desktop/native-engine-smoke.json`：同范围合成检查（含中断恢复）。
 - `artifacts/desktop/fixed-tools-20261008/fallback-tests.log`：`ExtractionService` 失败分类的固定工具回退测试（8 passed）；该日志所属引擎为旧工具集。
 
-未验证项（本轮未做，留给人工验收）：
+0.3.1 当前证据（`artifacts/desktop/hoshiribbon-0.3.1/`，本地 ignored）：
 
-- 真实压缩包、真实密码、真实分卷端到端效果；
+- `formats/real-bg57-evidence/SUMMARY.md`：Windows Python + 7-Zip 25.01，对 BG57 两个 Apate 伪装分卷的隔离副本解压成功（exit 0，231 个成品文件），两个原件 SHA-256 前后相同。该早期 harness 曾缺少生产还原器顺序，后已补齐；最终以实际冻结 EXE 检查为准。
+- `tests/test_desktop_disguised_volumes.py`：17 个合成用例覆盖卷组预检、逐卷还原、失败回滚、越界成员拒绝与成功缓存失效、工具清理临时输出的扫描竞态，以及保留容量/链接拒绝。
+- `workspace/ws-031-work-evidence.json`：14 个新工作文件夹用例及 30 个既有回归通过，覆盖目录复用、冲突保护、同盘不调用校验复制、源删除阶段和恢复路径。
+- 密码 27 个定向用例、前端 16 个控制器用例与类型/构建均通过，见实施状态。
+- `main/bg57-native-final.json`：最终 Windows 冻结 EXE 的实际 stdio 任务入口处理 BG57 隔离副本成功，231 个成品文件；2 个归档副本的原始字节 hash 与原件相同，原件未变（exit 0）。
+- `main/native-engine-delivery-final.json`：重新冻结的 Windows EXE 通过普通 ZIP、AES ZIP、嵌入封面、7z 分卷和 Apate 伪装 ZIP 分卷五组小型合成输入，源哈希/已有目录内容保持与重启记忆通过，越界成员被拒绝（exit 0）。
+
+未验证项（留给人工验收）：
+
+- BG57 之外的真实压缩包、真实密码、真实分卷端到端效果；
 - 伪装 / Apate / 合并嵌入 / 多层嵌套在真实样本上的命中率；
 - **重新冻结后的新引擎**（7-Zip 25.01 + UnRAR 7.13 + Bandizip 7.40.0.1）的真实行为；
 - Bandizip 专有格式是否被 7-Zip 预检放行（设计上不会，需实测确认）；
 - 真实文件效果与界面体验的最终判定（属业务验收）。
+
+## 9. 桌面端保留的旧引擎行为对照（0.3.1）
+
+桌面端**包裹现有引擎**，不缩减旧管线能力；下表把用户在意的行为逐条列清楚。证据类型沿用第 3 节的 `源 / 史 / 模 / 验`，并新增 `策`：已批准设计，本轮实现方向，机器证据由主线程汇总，本文不预判通过。
+
+| 主题 | 旧引擎（portable 基线）行为 | 桌面 0.3.1 | 证据 |
+| --- | --- | --- | --- |
+| 分卷分组 | 按分卷集合分组并挑入口卷（`.7z.001`、`.partNN.rar`、`.r00`、`.rar`） | 复用同一分组策略；补齐 `.zip.001.mp4` 一类逐卷 Apate 还原与完整卷组预检 | 源 + 模 + BG57 隔离实测 |
+| 原始名 / 内容名 | `preserve_payload_names` 开：成品用最深单层包装目录名；关：用压缩包基础名 | 界面“保留内容原名”开关，语义相同 | 源 |
+| 单包装成判定 | 目录内 ≥10 个子目录或 ≥80 个文件即判为成品，停止继续深挖 | 同上阈值，不再往下拆 | 源 |
+| 嵌套候选 | 唯一非媒体文件是归档（或 ≥max(识别下限, 单文件阈值)）；出现成品媒体即停止；多个归档取体积最大的前 5 个；否则取 ≥单文件阈值的最大一个 | 同上 | 源 |
+| 深挖停止 | 默认最多 4 层、识别下限 100 MB、单文件阈值 200 MB | 同上默认值；桌面**默认开启**深度解压（旧 CLI 默认关闭），用户可关 | 源 |
+| 伪装与合并恢复 | 后缀候选、restoreAB 合并、Apate（默认 3 轮）、前后缀嵌入、尾部 `*sc` | 全部保留 | 源 |
+| 输出目录 | `final` / `success/archives` / `error_files` / `deferred_volumes` / `intermediate` | 目录语义不变，整体落在所选**工作文件夹**下 | 源 + 策 |
+| 失败归类 | 缺卷 → `deferred`；有残留且失败 → `partial`；错误分类 `password_error` / `unknown_type` / `missing_volume` / `extract_failed` | 同上 | 源 |
+| 输入是否展平 | 桌面处理前不展平原件（已批准边界） | 保持不展平；原件按文件组归档 | 源 + 策 |
+| 发布 / 归档的 I/O | 在单一处理目录内用 `shutil.move` 改名/移动 | 先在工作文件夹内备好暂存副本，再用同卷**独占链接/改名**落位（`os.link` 优先，Windows 退化为独占改名）；跨卷或不可用时回退到校验复制 | 源 + 定向文件事务检查（大盘性能未测） |
+| 可调项范围 | 旧 CLI 有更多自定义项 | 桌面只暴露其中一部分（深挖、层数、识别下限、单文件阈值、保留原名、保留工作区等），**不宣称所有 CLI 开关都已暴露** | 源 |
+
+说明：
+
+- 上表按当前源码与 portable 基线对照得出，属于**静态核对**；桌面相对旧管线的增量是结果上报、源路由修正与安全预检；确认的 Apate/嵌入伪装在多卷路径中优先交给对应还原器，避免合并文件扫描器抢先误判，旧文件夹策略、命名保留与嵌套整理都保留。工作文件夹布局与独占移动已在当前工作区实现（`infrastructure/workspace.py`、`infrastructure/file_transaction.py`），有限机器检查见第 8 节，Windows 冻结引擎检查以实施状态记录为准。
+- 桌面发布与原件归档优先用同卷独占链接/改名落位而不是重拷贝，跨卷或无法独占时回退到校验复制；这不等于“绝对没有额外 I/O”，是否需要复制/校验取决于卷与文件系统，实际 I/O 次数未在真实大盘上测量。
+- 当前多卷扩展覆盖已确认的逐卷单层 Apate 伪装；更复杂的多重伪装或混合嵌入卷组仍需单独样本验收。
+- 0.3.1 已验证 BG57 这对样本；其他真实文件命中率、性能数字与界面体验仍待人工验收；本文不把静态或合成结论当作业务验收。

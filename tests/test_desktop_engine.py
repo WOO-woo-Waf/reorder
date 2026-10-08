@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import io
-import json
 import sys
 import threading
 import time
@@ -20,20 +19,10 @@ from reorder_engine.infrastructure.command_runner import ExternalCommandRunner
 from reorder_engine.infrastructure.desktop_paths import DesktopPaths
 from reorder_engine.infrastructure.file_transaction import FileTransaction
 from reorder_engine.infrastructure.json_rpc import JsonRpcServer
-from reorder_engine.infrastructure.secret_store import SecretStore
-
-
-class SessionSecrets(SecretStore):
-    def __init__(self):
-        self._lock = threading.RLock()
-        self._passwords = ()
-        self.mode = "session"
-        self._backend = None
 
 
 @pytest.fixture
 def engine(tmp_path, monkeypatch):
-    monkeypatch.setattr("reorder_engine.application.facade.SecretStore", SessionSecrets)
     app = tmp_path / "app"
     app.mkdir()
     tool = app / "tools/7z"
@@ -194,16 +183,18 @@ def test_runner_deadline_cancel_and_bounded_output():
     finally: timer.join()
 
 
-def test_rpc_invalid_params_and_no_password_persistence(engine):
+def test_rpc_invalid_params_and_public_password_file(engine):
     server = JsonRpcServer(engine)
     reply = server.handle(b'{"jsonrpc":"2.0","id":1,"method":"jobs.get","params":{"job_id":42}}')
     assert reply["error"]["code"] == -32602
     assert server.handle(b'{bad json')["error"]["code"] == -32700
     assert server.handle(b'{"jsonrpc":"2.0","id":2,"method":"shell.exec"}')["error"]["code"] == -32601
-    engine.secrets.replace(["synthetic-test-secret"])
-    assert "synthetic-test-secret" not in json.dumps(engine.settings_info())
-    assert engine.secrets.redact("password=synthetic-test-secret") == "password=[密码已隐藏]"
-    assert not (engine.paths.data_root / "passwords.txt").exists()
+    info = engine.secrets.replace(["synthetic-test-secret"])
+    assert info["storage"] == "plaintext" and info["values"] == ["synthetic-test-secret"]
+    path = engine.paths.data_root / "passwords.txt"
+    assert path.read_text(encoding="utf-8") == "synthetic-test-secret\n"
+    assert engine.secrets.redact("password=synthetic-test-secret") == "password=synthetic-test-secret"
+    assert engine.settings_info()["passwords"]["values"] == ["synthetic-test-secret"]
 
 
 def test_cancel_request_is_responsive_while_worker_runs(engine, tmp_path, monkeypatch):

@@ -24,20 +24,8 @@ from reorder_engine.domain.models import ExtractionResult
 from reorder_engine.infrastructure.command_runner import ExternalCommandRunner
 from reorder_engine.infrastructure.desktop_paths import DesktopPaths
 from reorder_engine.infrastructure.file_transaction import copy_verified, install_exclusive
-from reorder_engine.infrastructure.secret_store import SecretStore
-
-
-class SessionSecrets(SecretStore):
-    def __init__(self):
-        self._lock = threading.RLock()
-        self._passwords = ()
-        self.mode = "session"
-        self._backend = None
-
-
 @pytest.fixture
 def engine(tmp_path, monkeypatch):
-    monkeypatch.setattr("reorder_engine.application.facade.SecretStore", SessionSecrets)
     app = tmp_path / "app"
     app.mkdir()
     tool = app / "tools/7z"

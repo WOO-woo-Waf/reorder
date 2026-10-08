@@ -1093,8 +1093,17 @@ class RestorationService:
         *,
         workspace: Path | None = None,
         dry_run: bool = False,
+        preferred_kind: ArchiveKind | None = None,
     ) -> tuple[list[Path], list[ApateRollbackRecord | EmbeddedArchiveRollbackRecord]]:
-        for restorer in self._restorers:
+        # A confirmed disguise takes precedence over a cover scanner that may
+        # see an interior ZIP member before the split set's missing EOCD.
+        restorers = self._restorers
+        preferred = {ArchiveKind.APATE: (ApateRestorer, RepeatedApateRestorer),
+                     ArchiveKind.EMBEDDED: (EmbeddedArchiveRestorer,)}.get(preferred_kind)
+        if preferred:
+            restorers = ([r for r in restorers if isinstance(r, preferred)] +
+                         [r for r in restorers if not isinstance(r, preferred)])
+        for restorer in restorers:
             if not restorer.can_handle(path):
                 continue
             fn = getattr(restorer, "restore_with_rollbacks", None)

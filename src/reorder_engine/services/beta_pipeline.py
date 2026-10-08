@@ -43,6 +43,23 @@ class CandidateAttempt:
     source: Path | None = None
 
 
+@dataclass
+class _VolumeRevealSession:
+    """In-place disguise reveals applied to a whole volume set before extraction."""
+
+    records: tuple
+    service: object
+
+    def rollback_best_effort(self, *, dry_run: bool) -> bool:
+        if dry_run or not self.records:
+            return True
+        try:
+            self.service.rollback_apate(list(self.records), dry_run=dry_run)
+        except Exception:
+            return False
+        return True
+
+
 class BetaFolderPipeline:
     def __init__(
         self,
@@ -260,6 +277,85 @@ class BetaFolderPipeline:
         return replace(last, source_volume_set=vs), None
 
     def _extract_volume_set_first_success(
+        self,
+        vs: VolumeSet,
+        layer_root: Path,
+        *,
+        dry_run: bool,
+        preferred_password: str | None = None,
+    ) -> tuple[ExtractionResult, Path | None]:
+        reveal = self._reveal_disguised_volume_members(vs, dry_run=dry_run)
+        result, out_dir = self._extract_volume_set_body(
+            vs,
+            layer_root,
+            dry_run=dry_run,
+            preferred_password=preferred_password,
+        )
+        if result.ok or (out_dir is not None and self._has_any_file(out_dir)):
+            return result, out_dir
+        if reveal is not None:
+            if not reveal.rollback_best_effort(dry_run=dry_run):
+                self._emit(f"VOLUME-REVEAL-ROLLBACK-FAILED: entry={vs.entry.name}")
+                raise RuntimeError("分卷伪装回滚失败，未继续归档，请检查工作文件。")
+            self._emit(f"VOLUME-REVEAL-ROLLBACK: entry={vs.entry.name}")
+        return result, None
+
+    def _reveal_disguised_volume_members(
+        self,
+        vs: VolumeSet,
+        *,
+        dry_run: bool,
+    ) -> "_VolumeRevealSession | None":
+        """Reveal Apate/embedded disguise on every volume before extraction.
+
+        A multi-volume set is extracted as a group, so the per-member disguise
+        restoration the single-candidate chain already performs must be applied
+        to all members first. Only the first volume carries an archive head, so a
+        confirmed disguise on the entry is extended to sibling volumes that carry
+        a valid Apate indicator of their own. Reveals are in place and rolled
+        back when the whole set fails.
+        """
+
+        records: list[object] = []
+        entry = vs.entry
+        confirmed = False
+        if entry.exists():
+            probe = self._restore.identify(entry)
+            if probe.kind in (ArchiveKind.APATE, ArchiveKind.EMBEDDED):
+                _restored, rollbacks = self._restore.restore_with_rollbacks(
+                    entry,
+                    workspace=entry.parent,
+                    dry_run=dry_run,
+                    preferred_kind=probe.kind,
+                )
+                if rollbacks:
+                    records.extend(rollbacks)
+                    # Only an Apate disguise is expected to repeat on the later
+                    # volumes; an embedded cover is confined to the entry.
+                    confirmed = probe.kind is ArchiveKind.APATE
+                    self._emit(f"VOLUME-REVEAL: entry={entry.name} kind={probe.kind.value}")
+        if confirmed:
+            for member in vs.members:
+                if member == entry or not member.exists():
+                    continue
+                forced = self._force_reveal_volume_member(member, dry_run=dry_run)
+                if forced is not None:
+                    records.append(forced)
+                    self._emit(f"VOLUME-REVEAL: entry={member.name} kind=apate-sibling")
+        if not records:
+            return None
+        return _VolumeRevealSession(tuple(records), self._restore)
+
+    def _force_reveal_volume_member(self, member: Path, *, dry_run: bool) -> object | None:
+        fn = getattr(self._restore, "force_apate_restore_with_rollbacks", None)
+        if not callable(fn):
+            return None
+        restored, rollbacks = fn(member, dry_run=dry_run)
+        if restored is None or not rollbacks:
+            return None
+        return rollbacks[0]
+
+    def _extract_volume_set_body(
         self,
         vs: VolumeSet,
         layer_root: Path,

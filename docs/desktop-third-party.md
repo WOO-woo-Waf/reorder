@@ -151,6 +151,8 @@ Windows 可达图内 254 个 crate **全部取得许可文本**（含 7 个通�
 
 说明：`pip`（25.1.1）存在于 venv 但不在锁定文件内，属构建工具，不计入分发清单。`setuptools` 记录在锁定文件中，需按实际是否被 PyInstaller 收集核对。
 
+0.3.1 备注：桌面引擎不再调用 `keyring` 系统凭据后端（公开密码改为数据目录里的明文 `passwords.txt`）。`keyring` 目前仍留在 [scripts/requirements-desktop-windows.lock.txt](../scripts/requirements-desktop-windows.lock.txt) 与构建 venv 中，其许可文本继续按上表保留；它是否被最终产物实际收集，按第 9 节未确认项的方式以实际打包为准，本文不做删减结论。
+
 ## 7. PyInstaller 例外与 7-Zip 发布许可
 
 ### 7.1 PyInstaller Bootloader 例外

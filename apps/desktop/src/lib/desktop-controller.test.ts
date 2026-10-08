@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { EngineClient } from './engine-client';
-import type { Method, JobSnapshot, PackageSnapshot, PackageState, SystemInfo } from './contracts';
+import type { Method, JobSnapshot, PackageSnapshot, PackageState, ProcessingPlan, SettingsInfo, SystemInfo } from './contracts';
 import { DesktopController, type DesktopState } from './desktop-controller';
 
 type Responder = (params: Record<string, unknown>) => unknown | Promise<unknown>;
@@ -12,11 +12,12 @@ class FakeClient implements EngineClient {
     this.calls.push({ method, params });
     const responder = this.script[method];
     if (responder) return (await responder(params)) as T;
-    if (method === 'system.info') return { settings: { options: {} }, tools: {}, passwords: { count: 0, storage: 'session' } } as T;
+    if (method === 'system.info') return { settings: { options: {} }, tools: {}, passwords: { count: 0, storage: 'plaintext', path: '', values: [] } } as T;
     if (method === 'jobs.list') return [] as T;
     if (method === 'plans.create') return { plan_id: 'plan', packages: [{ package_id: 'p', name: 'a.zip', members: 1, bytes: 1 }], warnings: [], output_root: '/out' } as T;
     if (method === 'jobs.start') return { job_id: 'job', packages: [], state: 'queued' } as T;
     if (method === 'jobs.retry') return { job_id: 'retry', packages: [], state: 'queued' } as T;
+    if (method === 'settings.update') return { settings: { version: 1, options: {}, tools: {}, work_root: params.work_root ?? null }, tools: {}, passwords: { count: 0, storage: 'plaintext', path: '', values: [] } } as T;
     throw new Error('unexpected method: ' + method);
   }
   async openResult(): Promise<void> {}
@@ -44,19 +45,45 @@ function packageRows(count: number, state: PackageState = 'extracting'): Package
 function jobSnapshot(overrides: Partial<JobSnapshot> & { job_id: string }): JobSnapshot {
   return { plan_id: 'plan', state: 'running', created_at: '', updated_at: '', packages: [], last_seq: 0, retry_of: null, ...overrides };
 }
+const baseOptions = { deep_extract: false, max_depth: 2, min_archive_mb: 100, final_single_mb: 1024, preserve_payload_names: true, recursive: false, tool_timeout_sec: 600, max_output_gb: 50, keep_workspace: false, clean_builtin_keywords: false };
+const baseTools = { seven_zip: null, unrar: null, bandizip: null };
+function settingsInfo(values: string[], workRoot: string | null = null, path = '/data/passwords.txt'): SettingsInfo {
+  return {
+    settings: { version: 1, options: { ...baseOptions }, tools: { ...baseTools }, work_root: workRoot },
+    tools: { ...baseTools },
+    passwords: { count: values.length, storage: 'plaintext', path, values },
+  };
+}
 const systemInfo: SystemInfo = {
-  settings: { version: 1, options: { deep_extract: false, max_depth: 2, min_archive_mb: 100, final_single_mb: 1024, preserve_payload_names: true, recursive: false, tool_timeout_sec: 600, max_output_gb: 50, keep_workspace: false, use_builtin_passwords: true, clean_builtin_keywords: false }, tools: { seven_zip: null, unrar: null, bandizip: null } },
-  tools: { seven_zip: null, unrar: null, bandizip: null },
-  passwords: { count: 0, storage: 'session' }, version: '0.3.0', protocol_version: 1, platform: 'win32', data_root: '/data', capabilities: [],
+  settings: { version: 1, options: { ...baseOptions, use_builtin_passwords: true }, tools: { ...baseTools }, work_root: null },
+  tools: { ...baseTools },
+  passwords: { count: 0, storage: 'plaintext', path: '/data/passwords.txt', values: [] },
+  version: '0.3.1', protocol_version: 1, platform: 'win32', data_root: '/data', capabilities: [],
 };
 
 describe('manual processing workflow', () => {
+  it('keeps settings available when the public password file needs repair', async () => {
+    const client = new FakeClient();
+    client.script['system.info'] = () => ({ ...systemInfo, passwords: {
+      ...systemInfo.passwords, error: '请检查 UTF-8 编码。', error_code: 'PASSWORD_FILE_FAILED',
+    } });
+    const controller = new DesktopController(client); instances.push(controller);
+    const state = observe(controller);
+    await controller.initialize();
+    expect(state().ready).toBe(true);
+    expect(state().settings?.passwords.path).toBe('/data/passwords.txt');
+    expect(state().notice).toContain('打开设置修复');
+    expect(state().error).toBe('');
+  });
   it('requires a preview and retains the idempotency key on repeated starts', async () => {
     const client = new FakeClient(); const controller = new DesktopController(client); instances.push(controller);
+    const state = observe(controller);
     await controller.initialize();
     await controller.start();
     expect(client.calls.some(c => c.method === 'jobs.start')).toBe(false);
     controller.addInputs(['/in/a.zip']); controller.setOutput('/out');
+    // Selecting a folder now persists asynchronously through the idle-guarded settings save.
+    await vi.waitFor(() => expect(state().busy).toBe(false));
     await controller.prepare(); await controller.start(); await controller.start();
     const starts = client.calls.filter(c => c.method === 'jobs.start');
     expect(starts).toHaveLength(2);
@@ -88,7 +115,7 @@ describe('desktop lifecycle regressions', () => {
     await controller.loadHistory();
     expect(state().ready).toBe(true);
     expect(state().error).toBe('');
-    expect(state().info?.version).toBe('0.3.0');
+    expect(state().info?.version).toBe('0.3.1');
   });
 
   it('shows the full active task from jobs.get instead of the truncated jobs.list summary', async () => {
@@ -177,5 +204,124 @@ describe('desktop lifecycle regressions', () => {
     await cancelling;
     expect(state().busy).toBe(false);
     expect(state().notice).toBe('已请求取消，正在完成当前安全步骤。');
+  });
+});
+
+describe('work folder memory and public plaintext passwords', () => {
+  it('restores the remembered work folder from system.info on startup', async () => {
+    const client = new FakeClient(); const controller = new DesktopController(client); instances.push(controller);
+    const state = observe(controller);
+    client.script['system.info'] = () => ({ ...systemInfo, settings: { ...systemInfo.settings, work_root: 'D:/work' } });
+    client.script['jobs.list'] = () => [];
+    await controller.initialize();
+    expect(state().outputRoot).toBe('D:/work');
+  });
+
+  it('persists a chosen work folder through settings.update and preserves other settings', async () => {
+    const client = new FakeClient(); const controller = new DesktopController(client); instances.push(controller);
+    const state = observe(controller);
+    client.script['system.info'] = () => systemInfo;
+    client.script['jobs.list'] = () => [];
+    client.script['settings.update'] = params => settingsInfo([], (params.work_root ?? null) as string | null);
+    await controller.initialize();
+    controller.setOutput('E:/archive');
+    expect(state().outputRoot).toBe('E:/archive');
+    await vi.waitFor(() => expect(state().busy).toBe(false));
+    expect(client.callsOf('settings.update')).toHaveLength(1);
+    const sent = client.callsOf('settings.update')[0].params;
+    expect(sent.work_root).toBe('E:/archive');
+    expect(sent.options).toMatchObject({ max_depth: 2, clean_builtin_keywords: false });
+    expect(state().settings?.settings.work_root).toBe('E:/archive');
+  });
+
+  it('keeps the live work folder when saveSettings receives a stale dialog draft', async () => {
+    const client = new FakeClient(); const controller = new DesktopController(client); instances.push(controller);
+    const state = observe(controller);
+    client.script['system.info'] = () => systemInfo;
+    client.script['jobs.list'] = () => [];
+    client.script['settings.update'] = params => settingsInfo([], (params.work_root ?? null) as string | null);
+    await controller.initialize();
+    controller.setOutput('E:/archive');
+    await vi.waitFor(() => expect(state().busy).toBe(false));
+    expect(client.callsOf('settings.update')).toHaveLength(1);
+    const staleDraft = structuredClone(systemInfo.settings); // work_root still null from dialog open
+    await controller.saveSettings(staleDraft);
+    expect(client.callsOf('settings.update')[1].params.work_root).toBe('E:/archive');
+  });
+
+  it('rejects a folder change while busy without claiming the new folder', async () => {
+    const client = new FakeClient(); const controller = new DesktopController(client); instances.push(controller);
+    const state = observe(controller);
+    client.script['system.info'] = () => systemInfo;
+    client.script['jobs.list'] = () => [];
+    const pendingPlan = deferred<ProcessingPlan>();
+    client.script['plans.create'] = () => pendingPlan.promise;
+    await controller.initialize();
+    controller.addInputs(['a.zip']);
+    controller.setOutput('D:/first');
+    await vi.waitFor(() => expect(state().busy).toBe(false));
+    const scanning = controller.prepare();
+    expect(state().busy).toBe(true);
+    controller.setOutput('D:/second');
+    expect(state().outputRoot).toBe('D:/first');
+    expect(state().notice).toContain('当前操作尚未完成');
+    pendingPlan.resolve({ plan_id: 'plan', output_root: 'D:/first', warnings: [], packages: [] });
+    await scanning;
+  });
+
+  it('reloads settings from settings.get so external file edits show up', async () => {
+    const client = new FakeClient(); const controller = new DesktopController(client); instances.push(controller);
+    const state = observe(controller);
+    client.script['system.info'] = () => systemInfo;
+    client.script['jobs.list'] = () => [];
+    let stored: string[] = [];
+    client.script['settings.get'] = () => settingsInfo(stored);
+    await controller.initialize();
+    stored = ['alpha', 'beta'];
+    await controller.reloadSettings();
+    expect(state().settings?.passwords.storage).toBe('plaintext');
+    expect(state().settings?.passwords.path).toBe('/data/passwords.txt');
+    expect(state().settings?.passwords.values).toEqual(['alpha', 'beta']);
+  });
+
+  it('replaces the whole list, including an empty save, and refreshes from settings.get', async () => {
+    const client = new FakeClient(); const controller = new DesktopController(client); instances.push(controller);
+    const state = observe(controller);
+    client.script['system.info'] = () => systemInfo;
+    client.script['jobs.list'] = () => [];
+    let stored: string[] = [];
+    client.script['settings.get'] = () => settingsInfo(stored);
+    client.script['passwords.replace'] = params => { stored = (params.passwords as string[]).filter(line => line !== ''); return { saved: true }; };
+    await controller.initialize();
+    await controller.replacePasswords(['one', '', 'two']);
+    expect(client.callsOf('passwords.replace')[0].params).toEqual({ passwords: ['one', '', 'two'] });
+    expect(state().settings?.passwords.values).toEqual(['one', 'two']);
+    await controller.replacePasswords([]);
+    expect(client.callsOf('passwords.replace')[1].params).toEqual({ passwords: [] });
+    expect(state().settings?.passwords.values).toEqual([]);
+  });
+
+  it('imports a password file and reloads the whole appended list', async () => {
+    const client = new FakeClient(); const controller = new DesktopController(client); instances.push(controller);
+    const state = observe(controller);
+    client.script['system.info'] = () => systemInfo;
+    client.script['jobs.list'] = () => [];
+    let stored: string[] = ['seed'];
+    client.script['settings.get'] = () => settingsInfo(stored);
+    client.script['passwords.import'] = () => { stored = ['seed', 'extra']; return { saved: true }; };
+    await controller.initialize();
+    await controller.importPasswords('/tmp/append.txt');
+    expect(client.callsOf('passwords.import')[0].params).toEqual({ path: '/tmp/append.txt' });
+    expect(state().settings?.passwords.values).toEqual(['seed', 'extra']);
+  });
+
+  it('names the work folder in the scan guard message', async () => {
+    const client = new FakeClient(); const controller = new DesktopController(client); instances.push(controller);
+    const state = observe(controller);
+    client.script['system.info'] = () => systemInfo;
+    client.script['jobs.list'] = () => [];
+    await controller.initialize();
+    await controller.prepare();
+    expect(state().error).toBe('请添加输入并选择工作文件夹。');
   });
 });
