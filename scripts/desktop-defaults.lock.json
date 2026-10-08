@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "version": "2026.10.08",
+  "files": [
+    {
+      "id": "passwords",
+      "path": "builtin-passwords.txt",
+      "sha256": "e1e0fabd324edbe8b08ef8cb901fd7719e740cd32ea133dceb511961595df4b4",
+      "size": 1412,
+      "count": 115
+    },
+    {
+      "id": "keywords",
+      "path": "builtin-keywords.txt",
+      "sha256": "aac4fcba4f573a85aed3b1076debb30d01a62b3e1886d945f884f8afc6cd11e5",
+      "size": 182,
+      "count": 8
+    }
+  ]
+}

@@ -424,3 +424,33 @@ stateDiagram-v2
 - docs/diagrams/：可维护图源（architecture.json、modules.mmd、classes.mmd、sequence.mmd、states.mmd、package_states.mmd），SVG 就地生成。
 - artifacts/diagrams/continuation/：PNG 预览与 render 报告（git 忽略）。
 - 重现命令：`rtk proxy /usr/local/bin/python scripts/render_desktop_diagrams.py`（`--list` 列出全部图，`--only <name>` 只渲染一张）。
+
+## 11. 0.3.0 内置库与外观对象
+
+已批准品牌星绫解封 · Hoshiribbon，内部包名与 Tauri identifier 保留。两种对象寿命独立：公开 catalog 随安装版本固定，私人 SecretStore 属用户或当前会话。Facade向DTO只暴露条数、版本与开关；Processor组合密码并只清理成品顶层名。公开密码也加入日志脱敏。
+
+```mermaid
+classDiagram
+  class BuiltinDefaults {
+    +passwords
+    +keywords
+    +version
+    +load()
+  }
+  class SecretStore {
+    +load()
+    +set_extra_secrets()
+    +replace()
+    +redact()
+  }
+  class EngineFacade
+  class PackageProcessor
+  class FileTransaction
+  EngineFacade --> BuiltinDefaults : 安装公开库
+  EngineFacade --> SecretStore : 用户凭据
+  PackageProcessor --> BuiltinDefaults : 只读词库
+  PackageProcessor --> SecretStore : 优先密码与脱敏
+  PackageProcessor --> FileTransaction : 安全发布成品
+```
+
+`use_builtin_passwords` 默认 true；`clean_builtin_keywords` 默认 false（用户已确认），后者不改变原件、归档名或内部路径。词库文件与清单都验证路径/链接/大小/hash/条数，源码打包锁固定身份。前端 `appearance.ts` 仅处理本地外观：白名单 data URL、类型、2 MiB、解码尺寸和存储回读，无新增 Rust 权限，不进入任务数据库。

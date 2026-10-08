@@ -33,7 +33,7 @@ export class DesktopController {
     for (const listener of this.listeners) listener(this.state);
   }
   private async operation(action: () => Promise<void>): Promise<void> {
-    if (this.state.busy) return;
+    if (this.state.busy) { this.update({ notice: '当前操作尚未完成，请稍后再试。' }); return; }
     this.update({ busy: true, error: '', notice: '' });
     try { await action(); }
     catch (error) { this.update({ error: error instanceof Error ? error.message : String(error) }); }
@@ -59,7 +59,7 @@ export class DesktopController {
   }
   dispose(): void { if (this.timer) clearInterval(this.timer); this.listeners.clear(); }
   addInputs(paths: string[]): void {
-    if (this.running) return;
+    if (this.running) { this.update({ notice: '任务正在处理，请结束或取消后再添加文件。' }); return; }
     this.startKey = null;
     this.update({ inputs: [...new Set([...this.state.inputs, ...paths])], plan: null, error: '' });
   }
@@ -106,8 +106,10 @@ export class DesktopController {
     this.cancelling = true;
     this.update({ error: '' });
     try {
-      await this.client.request('jobs.cancel', { job_id: job.job_id });
-      this.update({ notice: '已请求取消，正在完成当前安全步骤。' });
+      const result = await this.client.request<{ accepted: boolean }>('jobs.cancel', { job_id: job.job_id });
+      this.update({ notice: result.accepted
+        ? '已请求取消，正在完成当前安全步骤。'
+        : '任务已结束，无需取消。' });
       await this.refresh(true);
     } catch (error) { this.update({ error: error instanceof Error ? error.message : String(error) }); }
     finally { this.cancelling = false; }

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "reorder-engine"
 version = "0.1.0"
-description = "归序（ReOrder Engine）：批量清洗命名并解压"
+description = "星绫解封（Hoshiribbon / ReOrder Engine）：本地资源恢复、解压与整理"
 requires-python = ">=3.10"
 readme = "README.md"
 dependencies = [

@@ -11,6 +11,7 @@ from reorder_engine.application.models import (DesktopSettings, PlanRequest, Sta
     PasswordRequest, PasswordImportRequest)
 from reorder_engine.application.planning import PlanService
 from reorder_engine.application.processing import PackageProcessor
+from reorder_engine.infrastructure.builtin_defaults import BuiltinDefaults
 from reorder_engine.infrastructure.desktop_paths import DesktopPaths
 from reorder_engine.infrastructure.engine_lock import EngineLock
 from reorder_engine.infrastructure.job_repository import JobRepository
@@ -23,21 +24,44 @@ METHODS = frozenset({"system.info", "plans.create", "jobs.start", "jobs.get", "j
 
 
 class EngineFacade:
-    def __init__(self, paths: DesktopPaths, *, secrets: SecretStore | None = None):
+    def __init__(self, paths: DesktopPaths, *, secrets: SecretStore | None = None,
+                 defaults: BuiltinDefaults | None = None):
         paths.initialize()
         self.paths = paths
         self._lock = EngineLock(paths.data_root / "engine.lock")
         self.settings = SettingsRepository(paths)
         self.secrets = secrets if secrets is not None else SecretStore()
         self.repository = JobRepository(paths.data_root / "jobs.sqlite3")
+        # 内置词库只读安装资源；Facade 与 Processor 共享同一实例。
+        self.defaults = defaults if defaults is not None else BuiltinDefaults(paths.app_root)
+        self._register_default_redaction()
         self.planner = PlanService(paths, self.settings)
-        self.processor = PackageProcessor(paths, self.settings, self.repository, self.secrets)
+        self.processor = PackageProcessor(paths, self.settings, self.repository, self.secrets,
+                                          builtin=self.defaults)
         self.runner = JobRunner(self.repository, self.planner, self.processor)
 
+    def _register_default_redaction(self) -> None:
+        """内置库即使默认开关关闭也必须参与脱敏；加载失败时不阻断脱敏。"""
+        setter = getattr(self.secrets, "set_extra_secrets", None)
+        if setter is None:
+            return
+        try:
+            values = self.defaults.passwords
+        except EngineError:
+            values = ()
+        setter(values)
+
     def settings_info(self) -> dict:
-        return {"settings": self.settings.get().model_dump(mode="json"),
+        settings = self.settings.get()
+        options = settings.options
+        return {"settings": settings.model_dump(mode="json"),
             "tools": {name: self.settings.resolve_tool(name) for name in ("seven_zip", "unrar", "bandizip")},
-            "passwords": {"count": len(self.secrets.load()), "storage": self.secrets.mode}}
+            "passwords": {"count": len(self.secrets.load()), "storage": self.secrets.mode},
+            "defaults": {"password_count": self.defaults.password_count,
+                "keyword_count": self.defaults.keyword_count,
+                "passwords_enabled": options.use_builtin_passwords,
+                "keyword_cleaning_enabled": options.clean_builtin_keywords,
+                "version": self.defaults.version or ""}}
 
     def _require_idle(self) -> None:
         if self.runner.busy:
@@ -50,7 +74,7 @@ class EngineFacade:
             if params:
                 raise EngineError("INVALID_PARAMS", "该操作不接受参数。")
             if method == "system.info":
-                return {"version": "0.2.0", "protocol_version": 1, "platform": platform.system(),
+                return {"version": "0.3.0", "protocol_version": 1, "platform": platform.system(),
                     "data_root": str(self.paths.data_root), "capabilities": ["manual_batch", "restore_ab", "cancel", "retry"],
                     **self.settings_info()}
             return self.settings_info()

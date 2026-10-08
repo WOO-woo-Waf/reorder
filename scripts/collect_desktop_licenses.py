@@ -582,14 +582,20 @@ def collect_fixed_tools(repo: Path, evidence_root: Path) -> list[dict]:
     for tool in lock["tools"]:
         directory = stage / "tools" / tool["id"]
         sources = [directory / path for path in tool["license_files"]]
-        entries.append({
+        entry = {
             "ecosystem": tool["id"], "name": tool["name"], "version": tool["version"],
             "license": tool.get("license", "See bundled upstream license text"),
             "scope": "bundled-tool", "installed": True,
             "source": tool["url"], "archive_sha256": tool["sha256"],
             "license_files": _copy_license_files(sources, evidence_root / tool["id"], evidence_root),
             "status": "text",
-        })
+        }
+        # Recorded redistribution permission (for example the owner-confirmed
+        # Bandisoft written permission) is surfaced as the basis for bundling.
+        permission = (tool.get("provenance") or {}).get("redistribution_permission")
+        if permission:
+            entry["redistribution_permission"] = permission
+        entries.append(entry)
     return entries
 
 
@@ -624,6 +630,13 @@ def _write_summary(evidence_root: Path, entries: list[dict], not_bundled: list[s
     for item in not_bundled:
         lines.append(f"- {item}")
     lines.append("")
+    permitted = [e for e in entries if e.get("redistribution_permission")]
+    if permitted:
+        lines.append("## Redistribution permission basis")
+        lines.append("")
+        for entry in permitted:
+            lines.append(f"- {entry['name']} {entry['version']}: {entry['redistribution_permission']}")
+        lines.append("")
     upstream = [e for e in entries if e.get("upstream_source")]
     if upstream:
         lines.append("## Upstream-supplemented entries")
@@ -726,7 +739,6 @@ def main() -> int:
                 entry["windows_graph"] = f"{entry['name']}@{entry['version']}" in windows_graph
 
     not_bundled = [
-        "Bandizip (Bandisoft EULA 2.3/2.4 requires written redistribution permission) - not bundled",
         "restoreAB.exe (legacy user tool) - not bundled in the desktop package",
         "The project's own root LICENSE is decided by the main thread, not here.",
     ]

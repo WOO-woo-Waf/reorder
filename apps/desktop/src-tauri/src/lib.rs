@@ -69,7 +69,7 @@ pub fn run() {
         .manage(EngineState { engine: Mutex::new(None), portable })
         .invoke_handler(tauri::generate_handler![engine_request, open_result])
         .build(tauri::generate_context!())
-        .expect("failed to initialize ReOrder desktop");
+        .expect("failed to initialize Hoshiribbon desktop");
     app.run(|app, event| {
         if let tauri::RunEvent::Exit = event {
             let state = app.state::<EngineState>();

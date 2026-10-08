@@ -1,13 +1,13 @@
 # 桌面首版代码阅读指南（面向熟悉 Python／Java／OO／C++ 的制作方）
 
-更新时间：2026-10-07。本指南基于工作区中的**实际源码**逐文件核对，不是按设计稿想象。
+更新时间：2026-10-08（星绫解封 0.3.0 更新）。本指南基于工作区中的**实际源码**逐文件核对，不是按设计稿想象。
 阅读前请先确认基线：
 
 - 仓库 Windows 路径 `D:\buff\reorder`，WSL 路径 `/mnt/d/buff/reorder`，分支 `main`。
 - 核对时 `HEAD = 07b561fe5088cf15828f4c499a913472207f7405`（`fix: complete source archive lifecycle routing`）。
 - 提交与检查状态统一见 [desktop-status.md](desktop-status.md)；源码持续调整时行号可能移动，阅读时优先按链接后的符号名定位。
 - 配套文档：[桌面设计](desktop-design.md)、[实施状态](desktop-status.md)、[产品方案](product_plan.md)、[架构图源](diagrams/architecture.json)。
-- 本文**只**链接实际存在的文件。书写时 [桌面新语言指南](desktop-language-guide.md) 已存在；`docs/desktop-user-guide.md` 尚不存在，等它出现后再补链接。
+- 用户操作见 [用户指南](desktop-user-guide.md)，格式与效果边界见 [格式指南](desktop-format-support.md)。
 
 ## 0. 这份文档解决什么问题
 
@@ -220,7 +220,7 @@ def validate_source(snapshot: SourceSnapshot) -> None:
 
 | 方法 | 分派行 | 说明 |
 |---|---|---|
-| `system.info` | [facade.py:52-55](../src/reorder_engine/application/facade.py) | 版本 `0.2.0`、`protocol_version=1`、平台、能力、工具与密码状态 |
+| `system.info` | [facade.py:52-55](../src/reorder_engine/application/facade.py) | 版本 `0.3.0`、`protocol_version=1`、平台、能力、工具与密码状态 |
 | `settings.get` / `settings.update` | [facade.py:56-60](../src/reorder_engine/application/facade.py) | 读／写设置；写要求空闲 |
 | `passwords.replace` / `passwords.import` | [facade.py:61-73](../src/reorder_engine/application/facade.py) | 替换或从 UTF-8 文件导入；导入限 512 KiB 普通文件 |
 | `plans.create` | [facade.py:74-82](../src/reorder_engine/application/facade.py) | 只读扫描 |
@@ -347,9 +347,9 @@ Rust 与前端配置：[tauri.conf.json](../apps/desktop/src-tauri/tauri.conf.js
 
 `-SkipEngineStage` 仍检查 7-Zip 本体/DLL、许可、Apate 和冻结运行时核心文件；NSIS 与 ZIP 使用同一资源清单。当前构建脚本交付 Windows x64，其他平台的冻结与打包仍待对应平台实现和验收。
 
-正常启动将数据放入 Tauri 用户目录；`ReOrder.exe --portable`（或 `Start-Portable.cmd`）将数据放入 EXE 旁 `data/`，验证可写，并强制密码仅保存在会话中。
+正常启动将数据放入 Tauri 用户目录；`Hoshiribbon.exe --portable`（或 `Start-Portable.cmd`）将数据放入 EXE 旁 `data/`，验证可写，并强制密码仅保存在会话中。
 
-冻结入口是 [scripts/desktop_engine_entry.py](../scripts/desktop_engine_entry.py) → [desktop_engine.py](../src/reorder_engine/desktop_engine.py) 的 `main()`。发布包不含 `passwords.txt`、用户 `config.json`、`restoreAB.exe` 或未获分发许可的 Bandizip。开源 7-Zip 与可分发的 UnRAR 固定随包；[desktop-tools.lock.json](../scripts/desktop-tools.lock.json) 记录 UnRAR 版本、Git 构建输入及逐文件 SHA-256，[stage_desktop_tools.py](../scripts/stage_desktop_tools.py) 在暂存、校验和打包时拒绝缺失/变更的工具。补工具资源可用 `stage_desktop_engine.py --tools-only`，无需重新冻结未变的 Python 引擎。
+冻结入口是 [scripts/desktop_engine_entry.py](../scripts/desktop_engine_entry.py) → [desktop_engine.py](../src/reorder_engine/desktop_engine.py) 的 `main()`。发行包含固定 7-Zip、UnRAR、Bandizip CLI 与公开词库；私人 `passwords.txt`、用户 `config.json` 和 `restoreAB.exe` 排除。工具身份由 [desktop-tools.lock.json](../scripts/desktop-tools.lock.json) 固定，公开词库由 [desktop-defaults.lock.json](../scripts/desktop-defaults.lock.json) 固定；stage、validate、package 校验身份。仅资源变动可使用 tools-only，Python代码变动必须重新冻结。
 
 ### 8.3 检查与测试入口
 
@@ -420,3 +420,11 @@ Rust 与前端配置：[tauri.conf.json](../apps/desktop/src-tauri/tauri.conf.js
 
 - 脚本：[scripts/build_desktop_windows.ps1](../scripts/build_desktop_windows.ps1)、[stage_desktop_engine.py](../scripts/stage_desktop_engine.py)、[desktop_engine_entry.py](../scripts/desktop_engine_entry.py)、[smoke_desktop_engine.py](../scripts/smoke_desktop_engine.py)
 - 文档：[desktop-design.md](desktop-design.md)、[desktop-status.md](desktop-status.md)、[product_plan.md](product_plan.md)、[diagrams/](../docs/diagrams/)
+
+## 12. 0.3.0 新对象与界面状态
+
+- [BuiltinDefaults](../src/reorder_engine/infrastructure/builtin_defaults.py)：只读公开库对象，加载 `app_root/defaults/manifest.json`，校验路径、文件大小、hash与条数。缺清单的隔离测试可用空库；存在但损坏明确失败。
+- `EngineFacade` 与 `PackageProcessor` 共用 catalog；私人 `SecretStore` 独立，私人优先、有序去重组合，日志对两类密码脱敏。DTO只传版本、条数和开关。
+- `ProcessingOptions.use_builtin_passwords=true`；`clean_builtin_keywords=false`。关键词只作用于成品顶层名，保留扩展名与内部结构，再经 `FileTransaction` 安全发布。
+- [appearance.ts](../apps/desktop/src/lib/appearance.ts)：前端本地外观对象，校验 PNG/JPEG/WebP、2 MiB、data URL、解码尺寸与存储回读。没有引擎或 SQLite 依赖；类似 Java 的独立值对象加存储适配函数。
+- 名称 Hoshiribbon 用于窗口和发行；内部 `reorder_engine`、`io.reorder.desktop` 保留，数据位置保持。

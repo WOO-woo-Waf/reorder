@@ -11,6 +11,9 @@ class SecretStore:
 
     SERVICE = "reorder-engine-desktop"
     ACCOUNT = "archive-passwords"
+    # Built-in library values are registered for redaction only. They are never
+    # written to the OS credential store, the DTOs, the logs or SQLite.
+    _extra_secrets: tuple[str, ...] = ()
 
     def __init__(self, *, persistent: bool = True):
         self._lock = threading.RLock()
@@ -40,6 +43,12 @@ class SecretStore:
         with self._lock:
             return self._passwords
 
+    def set_extra_secrets(self, values) -> None:
+        """Register additional values that must be masked, without persisting them."""
+        cleaned = tuple(value for value in values if value)
+        with self._lock:
+            self._extra_secrets = cleaned
+
     def replace(self, values: list[str]) -> dict:
         passwords = tuple(dict.fromkeys(x for x in values if x))
         if any(len(x) > 4096 or "\x00" in x for x in passwords):
@@ -54,6 +63,8 @@ class SecretStore:
             return {"count": len(passwords), "storage": self.mode}
 
     def redact(self, text: str) -> str:
-        for password in sorted(self.load(), key=len, reverse=True):
+        with self._lock:
+            values = set(self._passwords) | set(self._extra_secrets)
+        for password in sorted(values, key=len, reverse=True):
             text = text.replace(password, "[密码已隐藏]")
         return text

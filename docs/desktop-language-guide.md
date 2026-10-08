@@ -538,3 +538,9 @@ Windows 上把 `REORDER_PYTHON` 指向构建用的 venv Python，在已初始化
 3. **Rust 用所有权替代 GC**。`Option` / `Result` / `?` / `&` / `&mut` / `Arc` / `Mutex` / `Drop` 共同保证"无悬垂、无数据竞争、自动释放"；跨进程只有一条路——把数据序列化成 JSON，指针和引用都不能穿越进程边界。
 
 如需沿一个按钮追到具体类与文件，见 [desktop-code-guide.md](desktop-code-guide.md)；操作与验收步骤见 [desktop-user-guide.md](desktop-user-guide.md)，实际交付进度见 [desktop-status.md](desktop-status.md)。
+
+## 7. 星绫解封 0.3.0 的阅读补充
+
+公开词库 `BuiltinDefaults` 是安装资源的只读值对象，私人 `SecretStore` 是用户资源适配器；可类比 Java 的不可变配置对象与凭据接口，或 C++ 中不同寿命的共享只读对象与资源持有者。不要把二者合成一个持久化密码列表。
+
+外观 `AppearanceSettings` 为前端值对象，`appearance.ts` 用依赖注入的读取/解码/存储函数校验边界。Svelte `$state` 是代理，处理设置保存使用 `$state.snapshot(draft)` 跨DTO边界；背景data URL独立于引擎协议。具体对象与调用位置见 [代码指南第12节](desktop-code-guide.md#12-030-新对象与界面状态)、[设计补充](desktop-design.md#11-030-内置库与外观对象)。

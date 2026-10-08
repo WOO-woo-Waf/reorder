@@ -1,4 +1,4 @@
-# 归序 · ReOrder 桌面版用户指南（Windows）
+# 星绫解封 · Hoshiribbon 桌面版用户指南（Windows）
 
 本指南面向两类人：拿到安装包或便携包后要实际操作 Windows 桌面版的用户，以及负责最终验收这些操作的验收人。它讲清楚文件怎么放、界面每个按钮做什么、结果落在哪里，以及用真实文件验收时应该看到什么。
 
@@ -12,9 +12,9 @@
 | --- | --- | --- |
 | 桌面源码 | `apps/desktop`、`src/reorder_engine` | 已批准技术栈；保留 CLI |
 | Python 冻结引擎 | `engine/reorder-engine.exe` | 必须保留完整 `_internal` 与工具目录 |
-| 桌面 EXE | `ReOrder.exe` | 使用系统 WebView2 |
-| NSIS 安装包 | `ReOrder_0.2.0_x64-setup.exe` | 用户级安装，尚未签名 |
-| 便携 ZIP | `ReOrder-0.2.0-windows-x64.zip` | 解压整个目录；完整性看 `SHA256SUMS.txt` |
+| 桌面 EXE | `Hoshiribbon.exe` | 使用系统 WebView2 |
+| NSIS 安装包 | `Hoshiribbon_0.3.0_x64-setup.exe` | 用户级安装，尚未签名 |
+| 便携 ZIP | `Hoshiribbon-0.3.0-windows-x64.zip` | 解压整个目录；完整性看 `SHA256SUMS.txt` |
 | 真实窗口、文件、安装卸载 | 用户人工验收 | 合成引擎检查和源码检查不能替代这一项 |
 
 请按本指南第 12 节用**副本样本**开始人工验收；不要把实现完成等同于真实业务验收通过。
@@ -24,7 +24,7 @@
 - Windows 10 或 Windows 11，**x64**。当前只配置了 x64 目标。
 - **WebView2 Runtime**（界面渲染依赖它，见下）。
 - 足够磁盘空间：处理时会先在内部工作区准备副本，再发布成品并归档原件。单包大概需要“原件总大小 × 2 以上”的临时空间，另外还要留出成品空间。
-- 你**不需要**自己安装 Python、Node.js、Rust、7-Zip 或 WinRAR。界面、Python 引擎、7-Zip 25.01 与 UnRAR 7.13 都随包提供。Bandizip 未取得随包分发许可；它是可选工具，可在设置中选择本机已安装的 `bz.exe`。
+- 你**不需要**自己安装 Python、Node.js、Rust、7-Zip 或 WinRAR。界面、Python 引擎、7-Zip 25.01、UnRAR 7.13 和 Bandizip CLI 7.40.0.1 都随包提供。Bandizip 已按所有者的书面分发许可声明纳入固定依赖。
 
 ### 关于 WebView2
 
@@ -42,29 +42,32 @@
 
 ### 2.1 便携包（ZIP 解压即用）
 
-解压后目录（由 `scripts\build_desktop_windows.ps1` 生成到 `artifacts\desktop\ReOrder-portable\`，再压成 `ReOrder-0.2.0-windows-x64.zip`）：
+解压后目录（由 `scripts\build_desktop_windows.ps1` 生成到 `artifacts\desktop\Hoshiribbon-portable\`，再压成 `Hoshiribbon-0.3.0-windows-x64.zip`）：
 
 ```text
-ReOrder-portable\
-  ReOrder.exe              # 桌面主程序，双击运行
+Hoshiribbon-portable\
+  Hoshiribbon.exe              # 桌面主程序，双击运行
   Start-Portable.cmd       # 显式便携模式：数据在旁边 data/，密码仅会话保存
   README.txt
   package-manifest.json    # 包内文件大小和 SHA-256
   docs\                    # 用户、代码、语言、设计指南及图表
   licenses\                # 第三方许可文本与证据清单
-  engine\                  # Python 业务引擎，必须与 ReOrder.exe 一起保留
+  engine\                  # Python 业务引擎，必须与 Hoshiribbon.exe 一起保留
     reorder-engine.exe
     _internal\             # 引擎运行时依赖
     tools\
       7zip\                # 随包 7-Zip（含 License.txt）
         ...
+      unrar/               # 固定 UnRAR 与许可
+      bandizip/            # 固定 bz.exe、Ark DLL 与公开许可
       apate.py
+    defaults/              # 内置公开词库与固定身份清单
 ```
 
 注意：
 
-- **不要只把 `ReOrder.exe` 拷走单独运行**。必须保留整个 `engine\` 目录，里面是处理压缩包所需的真实引擎和 7-Zip。
-- 双击 `ReOrder.exe` 使用默认用户数据目录；双击 `Start-Portable.cmd`（等价于 `ReOrder.exe --portable`）使用 EXE 旁的 `data\`，该目录必须可写，密码只保存在当前会话。两者都需要系统 WebView2。
+- **不要只把 `Hoshiribbon.exe` 拷走单独运行**。必须保留整个 `engine\` 目录，里面是处理压缩包所需的真实引擎和 7-Zip。
+- 双击 `Hoshiribbon.exe` 使用默认用户数据目录；双击 `Start-Portable.cmd`（等价于 `Hoshiribbon.exe --portable`）使用 EXE 旁的 `data\`，该目录必须可写，密码只保存在当前会话。两者都需要系统 WebView2。
 - 包内指南和图表可直接阅读；制作方指南中的源码链接需要在完整 Git 仓库内打开。
 
 ### 2.2 安装包（NSIS）
@@ -72,7 +75,7 @@ ReOrder-portable\
 由 `npm run tauri build` 生成，位置：
 
 ```text
-apps\desktop\src-tauri\target\release\bundle\nsis\ReOrder_0.2.0_x64-setup.exe
+apps\desktop\src-tauri\target\release\bundle\nsis\Hoshiribbon_0.3.0_x64-setup.exe
 ```
 
 - 安装模式为 `currentUser`（当前用户安装，不需要管理员）。
@@ -81,16 +84,16 @@ apps\desktop\src-tauri\target\release\bundle\nsis\ReOrder_0.2.0_x64-setup.exe
 
 ## 3. 启动与界面总览
 
-双击 `ReOrder.exe`、`Start-Portable.cmd`，或从开始菜单启动安装版。窗口标题是“归序 · ReOrder”，最小尺寸 860×620。
+双击 `Hoshiribbon.exe`、`Start-Portable.cmd`，或从开始菜单启动安装版。窗口标题是“星绫解封 · Hoshiribbon”，最小尺寸 860×620。
 
 界面从上到下是：
 
-1. 顶部标题栏：产品名、副标题“恢复、解压、归档，一次理顺。”，右侧“设置”按钮（未就绪或任务进行中时不可点）。
+1. 顶部标题栏：产品名、副标题“把压缩的次元，一层层展开。”，右侧“设置”按钮（未就绪或任务进行中时不可点）。
 2. 概览卡片：待处理文件组数量、处理模式（“深度解压”或“单层解压”，由设置决定）、原包归档提示“校验后移动”。
 3. **01 添加文件**：拖放区、添加按钮、结果目录。
 4. **02 确认并处理 / 处理结果**：扫描/开始/取消/重试按钮、进度条、文件组状态表、处理记录。
 5. 最近任务：本机保存的历史列表。
-6. 底部状态栏：平台与版本（如 `Windows · v0.2.0`）、7-Zip 是否就绪、当前密码数量。
+6. 底部状态栏：平台与版本（如 `Windows · v0.3.0`）、7-Zip 是否就绪、当前密码数量。
 
 > 界面所有处理都在本机完成，不联网处理你的文件。唯一可能的联网动作，是安装包在缺少 WebView2 时下载运行时组件。
 
@@ -215,9 +218,9 @@ apps\desktop\src-tauri\target\release\bundle\nsis\ReOrder_0.2.0_x64-setup.exe
 
 - **7-Zip（必需）**：默认自动查找。便携包会自带 7-Zip；如果没找到，界面底部会提示“在设置中检查 7-Zip”。可用“选择”手动指定本机的 `7z.exe` / `7zz`。
 - **UnRAR（备用，自带）**：路径留空即可自动使用随包的固定 7.13 版本，无需安装 WinRAR。
-- **Bandizip（可选，本机安装）**：未随包分发，需要时选择本机 `bz.exe`，例如 `C:\Program Files\Bandizip\bz.exe`；保持原安装目录及 DLL。默认 7-Zip/UnRAR 不依赖它。
+- **Bandizip（备用，自带）**：路径留空即可使用固定 CLI 7.40.0.1；`bz.exe` 与两个 Ark DLL 一起提供，也可指定本机版本。
 
-### 9.3 密码集与凭据后端
+### 9.3 私人密码集与凭据后端
 
 密码用于解开加密压缩包。支持三种方式更新：
 
@@ -231,6 +234,16 @@ apps\desktop\src-tauri\target\release\bundle\nsis\ReOrder_0.2.0_x64-setup.exe
 - **仅本次会话保存**：系统凭据后端不可用时退回内存保存，退出软件后需要重新导入；不会明文落盘。
 
 安全说明：软件只允许使用系统凭据后端，不会把密码写进普通文件；日志和错误信息里的密码会被替换为“[密码已隐藏]”；界面只显示密码**数量**，不显示明文。
+
+### 9.4 内置词库
+
+随包的公开库来自 Git 的 `resources/passwords.txt`（115 条）和 `resources/keywords.txt`（8 条），构建按固定 hash 校验。内置密码默认启用，先尝试私人密码，再尝试去重后的内置密码。私人库清空不影响内置库；关闭“使用内置密码”后才停止内置密码尝试。界面只显示条数，不显示公开或私人密码正文。
+
+“清理成品顶层名称中的关键词”默认关闭。开启后只清理 `final` 下发布项的顶层名称，保留扩展名与包内层级，不改原件和归档名；重名安全分配，清理后无有效名称则保留原名。
+
+### 9.5 背景与外观
+
+设置内可选默认星夜少女、自己的 PNG/JPEG/WebP（不超过 2 MiB）或无背景；调节遮罩、模糊并保存外观。外观仅保存在当前 WebView 的本地存储，存储受限时会提示错误。恢复默认不改变密码和处理选项。图片来源与完整人工核对步骤见 [视觉说明](desktop-artwork.md)。
 
 ## 10. 用户数据与状态位置
 
@@ -272,8 +285,8 @@ Windows 上用户数据根目录是：
 | # | 操作 | 预期结果 | 记录 |
 | --- | --- | --- | --- |
 | 1 | 干净或半干净的 Windows 10 机器上安装 NSIS 包并在缺 WebView2 时联网 | 安装成功，启动后能显示界面；若离线且无 WebView2，则应报出可理解的运行时缺失提示 | |
-| 2 | 便携包解压后双击 `ReOrder.exe` | 界面正常打开，底部显示平台与版本，7-Zip 显示“已就绪” | |
-| 3 | 只拷贝 `ReOrder.exe`、删掉 `engine\` 后启动 | 明确提示引擎资源缺失，而不是静默失败 | |
+| 2 | 便携包解压后双击 `Hoshiribbon.exe` | 界面正常打开，底部显示平台与版本，7-Zip 显示“已就绪” | |
+| 3 | 只拷贝 `Hoshiribbon.exe`、删掉 `engine\` 后启动 | 明确提示引擎资源缺失，而不是静默失败 | |
 | 4 | 添加一个普通 ZIP，扫描 | 分组预览正确，成员数与大小正确 | |
 | 5 | 添加一组分卷（如 `.7z.001/.002`），扫描并处理 | 归为同一组，成功解出，原件进入 `success\archives\` | |
 | 6 | 添加伪装后缀/合并文件（前缀 + 尾部压缩包）样本 | 能恢复并解出，成品在 `final\` | |
@@ -346,3 +359,11 @@ Windows 上用户数据根目录是：
   ```
 
 构建完成后，请把上表状态更新为实际结果，并按第 12 节做人工验收；在没有完成真实窗口验收前，不要声称发行产物已经可用。
+
+## 15. 本轮新增项的人工验收
+
+- 确认品牌、默认插画、窄窗和缩放下的可读性；换图、保存、重启、关闭背景、恢复默认。
+- 确认内置115/8与私人密码条数分开；内置密码开关与私人库清空各自生效。
+- 同一副本分别关闭/开启关键词清理：只有成品顶层名受影响，内部结构与归档原件一致。
+- 使用副本核对 ZIP/AES ZIP、7z、RAR、完整分卷、缺卷、错密码和嵌套；对照 [格式矩阵](desktop-format-support.md)，不以某工具支持格式推断项目整体支持。
+- ESC、遮罩、保存、关闭后重新打开设置，未提交私人密码文本应清空；结束边界的取消提示应准确。

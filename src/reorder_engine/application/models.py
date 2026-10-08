@@ -23,6 +23,8 @@ class ProcessingOptions(Contract):
     min_archive_mb: int = Field(default=100, ge=1, le=1048576)
     final_single_mb: int = Field(default=200, ge=1, le=1048576)
     preserve_payload_names: bool = True
+    use_builtin_passwords: bool = True
+    clean_builtin_keywords: bool = False
     recursive: bool = False
     tool_timeout_sec: int = Field(default=3600, ge=1, le=86400)
     max_output_gb: int = Field(default=64, ge=1, le=1048576)

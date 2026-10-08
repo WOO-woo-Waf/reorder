@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { Dialog } from 'bits-ui';
-  import { FileArchive, FolderPlus, FolderOpen, Settings2, ScanLine, Play, Square, RotateCcw, Upload, ShieldCheck, Layers3, History, X } from '@lucide/svelte';
+  import { FileArchive, FolderPlus, FolderOpen, Settings2, ScanLine, Play, Square, RotateCcw, Upload, ShieldCheck, Layers3, History, X, Palette, ImagePlus, ImageOff, Sparkles, Info } from '@lucide/svelte';
   import { isTauri } from '@tauri-apps/api/core';
   import { getCurrentWebview } from '@tauri-apps/api/webview';
   import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -9,7 +9,12 @@
   import { DesktopController, type DesktopState } from './lib/desktop-controller';
   import { TauriEngineClient } from './lib/engine-client';
   import { terminalJobs, terminalPackages, retryable } from './lib/contracts';
-  import type { DesktopSettings } from './lib/contracts';
+  import type { DesktopSettings, ProcessingOptions, SettingsInfo } from './lib/contracts';
+  import {
+    MAX_IMAGE_BYTES, applyAppearance, clampBlur, clampOverlay, defaultAppearance, loadAppearance,
+    readLocalImage, saveAppearance, normalizeAppearance,
+    type AppearanceSettings, type BackgroundMode,
+  } from './lib/appearance';
 
   const controller = new DesktopController(new TauriEngineClient());
   let view = $state<DesktopState>({ ready: false, busy: false, error: '', notice: '', inputs: [], outputRoot: '', settings: null, info: null, plan: null, job: null, history: [], logs: [] });
@@ -18,12 +23,111 @@
   let passwordText = $state('');
   let dragging = $state(false);
   let dialogError = $state('');
+
+  // Appearance is independent of the business run and never touches the engine.
+  let committed = $state<AppearanceSettings>({ ...defaultAppearance });
+  let appearanceDraft = $state<AppearanceSettings>({ ...defaultAppearance });
+  let appearanceOpen = $state(false);
+  let appearanceError = $state('');
+  let appearanceNotice = $state('');
+  let imageInfo = $state('');
+  let imageBusy = $state(false);
+
   const running = $derived(!!view.job && !terminalJobs.has(view.job.state));
   const done = $derived(view.job?.packages.filter(p => terminalPackages.has(p.state)).length ?? 0);
   const total = $derived(view.job?.packages.length ?? view.plan?.packages.length ?? 0);
   const retryCount = $derived(view.job?.packages.filter(p => retryable.has(p.state)).length ?? 0);
   const names: Record<string, string> = { queued: '等待', running: '处理中', preparing: '准备副本', extracting: '恢复 / 解压', publishing: '发布成品', archiving: '归档原包', cancelling: '正在取消', succeeded: '完成', partial: '部分完成', failed: '失败', deferred: '等待补卷', cancelled: '已取消', interrupted: '已中断', needs_review: '需要检查' };
   const size = (bytes: number) => bytes >= 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(1)} GB` : `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+  const formatBytes = (bytes: number) => bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(2)} MiB` : `${Math.max(1, Math.round(bytes / 1024))} KiB`;
+  const MB_LIMIT = MAX_IMAGE_BYTES / 1024 / 1024;
+
+  // The engine's settings schema grows these two switches; read and write them defensively so the
+  // screen stays valid whether or not the contracts update has landed yet.
+  type BuiltinFlag = 'use_builtin_passwords' | 'clean_builtin_keywords';
+  type OptionsWithBuiltins = ProcessingOptions & Partial<Record<BuiltinFlag, boolean>>;
+  function builtinFlag(options: ProcessingOptions, key: BuiltinFlag, fallback: boolean): boolean {
+    const value = (options as OptionsWithBuiltins)[key];
+    return typeof value === 'boolean' ? value : fallback;
+  }
+  function setBuiltinFlag(target: DesktopSettings | null, key: BuiltinFlag, value: boolean): void {
+    if (!target) return;
+    (target.options as OptionsWithBuiltins)[key] = value;
+  }
+  interface SettingsDefaults { password_count?: number; keyword_count?: number; passwords_enabled?: boolean; keyword_cleaning_enabled?: boolean; version?: string }
+  function defaultCount(key: 'password_count' | 'keyword_count'): number {
+    const defaults = (view.settings as (SettingsInfo & { defaults?: SettingsDefaults }) | null)?.defaults;
+    const value = defaults?.[key];
+    return typeof value === 'number' ? value : 0;
+  }
+
+  function storage(): Storage | null {
+    try { return typeof window === 'undefined' ? null : window.localStorage; } catch { return null; }
+  }
+  function applyNow(settings: AppearanceSettings): void {
+    try { applyAppearance(document.documentElement, settings); } catch { /* keep the solid fallback background */ }
+  }
+  function openAppearance(): void {
+    appearanceDraft = { ...committed };
+    appearanceError = ''; appearanceNotice = ''; imageInfo = '';
+    appearanceOpen = true;
+  }
+  function closeAppearance(): void {
+    appearanceDraft = { ...committed };
+    appearanceError = ''; appearanceNotice = ''; imageInfo = '';
+    applyNow(committed);
+  }
+  function previewAppearance(): void { applyNow(appearanceDraft); }
+  function setMode(mode: BackgroundMode): void {
+    appearanceError = ''; appearanceNotice = '';
+    appearanceDraft.mode = mode;
+    applyNow(appearanceDraft);
+  }
+  function setOverlay(event: Event): void {
+    appearanceDraft.overlay = clampOverlay((event.currentTarget as HTMLInputElement).value);
+    applyNow(appearanceDraft);
+  }
+  function setBlur(event: Event): void {
+    appearanceDraft.blur = clampBlur((event.currentTarget as HTMLInputElement).value);
+    applyNow(appearanceDraft);
+  }
+  async function pickBackground(event: Event): Promise<void> {
+    const input = event.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file) return;
+    imageBusy = true; appearanceError = ''; appearanceNotice = ''; imageInfo = '';
+    try {
+      const result = await readLocalImage(file);
+      if (!result.ok) { appearanceError = result.reason; return; }
+      appearanceDraft.mode = 'custom';
+      appearanceDraft.dataUrl = result.dataUrl;
+      imageInfo = `${result.width} × ${result.height} · ${formatBytes(file.size)}`;
+      appearanceNotice = '已载入本机图片，保存后长期生效。';
+      applyNow(appearanceDraft);
+    } catch { appearanceError = '读取图片失败，请重试。'; }
+    finally { imageBusy = false; }
+  }
+  function resetAppearance(): void {
+    appearanceError = ''; appearanceNotice = ''; imageInfo = '';
+    appearanceDraft = { ...defaultAppearance };
+    applyNow(appearanceDraft);
+  }
+  function saveAndClose(): void {
+    const normalized = normalizeAppearance(appearanceDraft);
+    const result = saveAppearance(storage(), normalized);
+    if (result.ok) {
+      committed = normalized;
+      appearanceError = ''; appearanceNotice = ''; imageInfo = '';
+      appearanceOpen = false;
+      return;
+    }
+    // Keep the previous selection visible rather than showing an unsaved state.
+    appearanceNotice = '';
+    appearanceError = result.reason;
+    appearanceDraft = { ...committed };
+    applyNow(committed);
+  }
 
   async function pick(kind: 'files' | 'folder' | 'output') {
     try {
@@ -37,6 +141,7 @@
     if (!view.settings) return;
     draft = structuredClone($state.snapshot(view.settings.settings)); settingsOpen = true;
   }
+  function clearPendingPasswords() { passwordText = ''; dialogError = ''; }
   async function pickTool(key: 'seven_zip' | 'unrar' | 'bandizip') {
     try {
       const value = await open({ multiple: false, directory: false, title: '选择本机解压工具' });
@@ -53,6 +158,10 @@
     const unsubscribe = controller.subscribe(value => { view = value; });
     let stopped = false;
     const cleanups: (() => void)[] = [];
+    const stored = loadAppearance(storage());
+    committed = stored;
+    appearanceDraft = { ...stored };
+    applyNow(stored);
     void controller.initialize();
     if (isTauri()) {
       void getCurrentWebview().onDragDropEvent(event => {
@@ -70,8 +179,11 @@
   });
 </script>
 
+<div class="hr-backdrop" aria-hidden="true"></div>
+<div class="hr-scrim" aria-hidden="true"></div>
+
 <div class="shell">
-  <header><div class="brand"><span class="mark">序</span><div><h1>归序 <span>ReOrder</span></h1><p>恢复、解压、归档，一次理顺。</p></div></div><button class="quiet icon-button" onclick={editSettings} disabled={!view.ready || running}><Settings2 size={16} />设置</button></header>
+  <header><div class="brand"><span class="mark">星</span><div><h1>星绫解封 <span>· Hoshiribbon</span></h1><p>把压缩的次元，一层层展开。</p></div></div><div class="header-actions"><button class="quiet" onclick={openAppearance}><Palette size={16} />外观</button><button class="quiet icon-button" onclick={editSettings} disabled={!view.ready || running}><Settings2 size={16} />设置</button></div></header>
   <main>
     <div class="workspace-heading"><div><span class="eyebrow">LOCAL WORKSPACE</span><h2>让复杂归档，回到简单。</h2><p>所有处理都在本机完成，按文件组安全整理。</p></div><span class="offline-badge"><ShieldCheck size={14} /> 本地处理</span></div>
     <div class="overview"><div><span class="overview-icon"><FileArchive size={19} /></span><div><span>待处理文件组</span><strong>{total || '—'}</strong></div></div><div><span class="overview-icon"><Layers3 size={19} /></span><div><span>处理模式</span><strong>{view.settings?.settings.options.deep_extract ? '深度解压' : '单层解压'}</strong></div></div><div><span class="overview-icon"><ShieldCheck size={19} /></span><div><span>原包归档</span><strong>校验后移动</strong></div></div></div>
@@ -98,12 +210,28 @@
       {#if view.job}<details><summary onclick={() => controller.showLogs()}>查看处理记录</summary><pre>{view.logs.join('\n') || '暂无记录。'}</pre></details>{/if}
     </section>
     <section class="history"><div class="section-heading"><h2 class="icon-label"><History size={15} />最近任务</h2><button class="text-button" onclick={() => controller.loadHistory()} disabled={view.busy}>刷新</button></div><div class="history-list">{#each view.history as job}<button class="history-item" onclick={() => controller.selectHistoryJob(job)} disabled={running}><span>{new Date(job.created_at).toLocaleString()}</span><span>{job.package_count ?? job.packages.length} 组 · {names[job.state]}</span></button>{:else}<p class="muted">处理记录保存在本机。</p>{/each}</div></section>
+    <section class="support"><details><summary class="icon-label"><Info size={14} />支持方式说明</summary><p>支持的归档：ZIP、7z、RAR 及常见分卷。可尝试恢复伪装后缀、合并分片与 Apate 伪装文件。</p><p class="muted">以上为尽力恢复，个别文件不能保证 100% 成功；完整对照见用户指南。</p></details></section>
   </main>
-  <footer><span>{view.info ? `${view.info.platform} · v${view.info.version}` : '跨平台桌面工具'}</span><span>{view.settings?.tools.seven_zip ? '7-Zip 已就绪' : '在设置中检查 7-Zip'} · 密码 {view.settings?.passwords.count ?? 0} 个</span></footer>
+  <footer><span>{view.info ? `${view.info.platform} · v${view.info.version}` : '跨平台桌面工具'}</span><span>本地处理 · 用户密码 {view.settings?.passwords.count ?? 0} 个</span></footer>
 </div>
 
-<Dialog.Root bind:open={settingsOpen}>
-{#if draft}<Dialog.Portal><Dialog.Overlay class="modal-backdrop" /><Dialog.Content class="settings-dialog"><div class="section-heading"><Dialog.Title class="settings-title">处理设置</Dialog.Title><Dialog.Close class="quiet icon-button" onclick={() => { passwordText = ''; }} aria-label="关闭设置"><X size={17} /></Dialog.Close></div><Dialog.Description class="hint">设置会保存在本机。修改后请重新扫描文件。</Dialog.Description>
+<Dialog.Root bind:open={appearanceOpen} onOpenChange={(open) => { if (!open) closeAppearance(); }}>
+<Dialog.Portal><Dialog.Overlay class="modal-backdrop" /><Dialog.Content class="settings-dialog appearance-dialog"><div class="section-heading"><Dialog.Title class="settings-title">外观</Dialog.Title><Dialog.Close class="quiet icon-button" aria-label="关闭外观设置"><X size={17} /></Dialog.Close></div><Dialog.Description class="hint">外观只保存在本机，不影响正在进行的处理。</Dialog.Description>
+  <div class="mode-row" role="group" aria-label="背景模式">
+    <button class:active={appearanceDraft.mode === 'default'} onclick={() => setMode('default')}><Sparkles size={15} />默认背景</button>
+    <button class:active={appearanceDraft.mode === 'custom'} onclick={() => setMode('custom')}><ImagePlus size={15} />自定义图片</button>
+    <button class:active={appearanceDraft.mode === 'none'} onclick={() => setMode('none')}><ImageOff size={15} />无背景</button>
+  </div>
+  {#if appearanceDraft.mode === 'custom'}<div class="file-row"><label class="file-button">选择本机图片<input type="file" accept="image/png,image/jpeg,image/webp" onchange={pickBackground} disabled={imageBusy} /></label><span class="muted">{imageBusy ? '正在读取…' : imageInfo || `PNG / JPEG / WebP，最大 ${MB_LIMIT} MiB`}</span></div>{/if}
+  <div class="sliders"><label>遮罩强度 <span class="muted">{appearanceDraft.overlay}%</span><input type="range" min="0" max="100" value={appearanceDraft.overlay} oninput={setOverlay} /></label><label>模糊度 <span class="muted">{appearanceDraft.blur}px</span><input type="range" min="0" max="24" value={appearanceDraft.blur} oninput={setBlur} /></label></div>
+  {#if appearanceError}<p role="alert" class="error">{appearanceError}</p>{/if}
+  {#if appearanceNotice}<p role="status" class="hint">{appearanceNotice}</p>{/if}
+  <div class="dialog-footer"><button class="text-button" onclick={resetAppearance}>恢复默认</button><button class="text-button" onclick={previewAppearance}>预览</button><button class="primary" onclick={saveAndClose} disabled={imageBusy}>保存外观</button></div>
+</Dialog.Content></Dialog.Portal>
+</Dialog.Root>
+
+<Dialog.Root bind:open={settingsOpen} onOpenChange={(open) => { if (!open) clearPendingPasswords(); }}>
+{#if draft}<Dialog.Portal><Dialog.Overlay class="modal-backdrop" /><Dialog.Content class="settings-dialog"><div class="section-heading"><Dialog.Title class="settings-title">处理设置</Dialog.Title><Dialog.Close class="quiet icon-button" aria-label="关闭设置"><X size={17} /></Dialog.Close></div><Dialog.Description class="hint">设置会保存在本机。修改后请重新扫描文件。</Dialog.Description>
   <div class="settings-grid">
     <label class="check"><input type="checkbox" bind:checked={draft.options.deep_extract} />继续解开嵌套压缩包</label><label class="check"><input type="checkbox" bind:checked={draft.options.recursive} />扫描输入的子目录</label>
     <label class="check"><input type="checkbox" bind:checked={draft.options.preserve_payload_names} />保留内容原名</label><label class="check"><input type="checkbox" bind:checked={draft.options.keep_workspace} />保留临时工作区</label>
@@ -111,8 +239,15 @@
     <label>工具超时 (秒)<input type="number" min="1" max="86400" bind:value={draft.options.tool_timeout_sec} /></label><label>嵌套归档识别下限 (MB)<input type="number" min="1" bind:value={draft.options.min_archive_mb} /></label>
     <label>单文件成品阈值 (MB)<input type="number" min="1" bind:value={draft.options.final_single_mb} /></label>
   </div>
-  <h3>解压工具</h3>{#each ['seven_zip', 'unrar', 'bandizip'] as raw}{@const key = raw as 'seven_zip' | 'unrar' | 'bandizip'}<div class="tool-row"><span>{key === 'seven_zip' ? '7-Zip（必需）' : key === 'unrar' ? 'UnRAR（可选）' : 'Bandizip（可选）'}</span><input aria-label={`${key} 路径`} bind:value={draft.tools[key]} placeholder={view.settings?.tools[key] || '自动查找本机工具'} /><button onclick={() => pickTool(key)}>选择</button></div>{/each}
-  <h3>密码集</h3><p class="hint">{view.settings?.passwords.count ?? 0} 个密码 · {view.settings?.passwords.storage === 'system' ? '使用系统凭据保存' : '仅本次会话保存，退出后需重新导入'}。每行一个，保存会替换现有密码集。</p><textarea aria-label="归档密码，每行一个" bind:value={passwordText} spellcheck="false" rows="3" placeholder="在这里粘贴密码，或导入 UTF-8 文本"></textarea><div class="password-actions"><button onclick={importPasswords} disabled={view.busy}>导入密码文件</button><button onclick={async () => { await controller.replacePasswords(passwordText.split(/\r?\n/)); if (!view.error) passwordText = ''; }} disabled={view.busy || !passwordText}>替换密码集</button><button class="text-button" onclick={() => controller.replacePasswords([])} disabled={view.busy}>清空</button></div>
-  {#if view.error}<p role="alert" class="error">{view.error}</p>{/if}<div class="dialog-footer"><button class="primary" onclick={async () => { if (draft) await controller.saveSettings($state.snapshot(draft)); if (!view.error) settingsOpen = false; }} disabled={view.busy}>保存设置</button></div>
+  <h3>内置库与关键词</h3>
+  <p class="hint">内置密码库 {defaultCount('password_count')} 个 · 用户库 {view.settings?.passwords.count ?? 0} 个 · 内置关键词 {defaultCount('keyword_count')} 条</p>
+  <div class="settings-grid">
+    <label class="check"><input type="checkbox" checked={builtinFlag(draft.options, 'use_builtin_passwords', true)} onchange={(event) => setBuiltinFlag(draft, 'use_builtin_passwords', event.currentTarget.checked)} />使用内置密码库</label>
+    <label class="check"><input type="checkbox" checked={builtinFlag(draft.options, 'clean_builtin_keywords', false)} onchange={(event) => setBuiltinFlag(draft, 'clean_builtin_keywords', event.currentTarget.checked)} />清理内置关键词</label>
+  </div>
+  <h3>解压工具</h3>{#each ['seven_zip', 'unrar', 'bandizip'] as raw}{@const key = raw as 'seven_zip' | 'unrar' | 'bandizip'}<div class="tool-row"><span>{key === 'seven_zip' ? '7-Zip' : key === 'unrar' ? 'UnRAR' : 'Bandizip'}</span><input aria-label={`${key} 路径`} bind:value={draft.tools[key]} placeholder={view.settings?.tools[key] || '自动查找本机工具'} /><button onclick={() => pickTool(key)}>选择</button></div>{/each}
+  <p class="hint">7-Zip、UnRAR、Bandizip 均已随软件提供，无需额外安装；也可以指定本机已有路径。</p>
+  <h3>密码集</h3><p class="hint">内置库 {defaultCount('password_count')} 个 · 用户库 {view.settings?.passwords.count ?? 0} 个 · {view.settings?.passwords.storage === 'system' ? '使用系统凭据保存' : '仅本次会话保存，退出后需重新导入'}。每行一个，只在本机使用，不会写入外观或其他本地存储。</p><textarea aria-label="归档密码，每行一个" bind:value={passwordText} spellcheck="false" rows="3" placeholder="在这里粘贴密码，或导入 UTF-8 文本"></textarea><div class="password-actions"><button onclick={importPasswords} disabled={view.busy}>导入密码文件</button><button onclick={async () => { await controller.replacePasswords(passwordText.split(/\r?\n/)); if (!view.error) passwordText = ''; }} disabled={view.busy || !passwordText}>替换密码集</button><button class="text-button" onclick={() => controller.replacePasswords([])} disabled={view.busy}>清空</button></div>
+  {#if view.error}<p role="alert" class="error">{view.error}</p>{/if}<div class="dialog-footer"><button class="primary" onclick={async () => { if (draft) await controller.saveSettings($state.snapshot(draft)); if (!view.error) { passwordText = ''; settingsOpen = false; } }} disabled={view.busy}>保存设置</button></div>
 </Dialog.Content></Dialog.Portal>{/if}
 </Dialog.Root>

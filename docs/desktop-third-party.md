@@ -10,7 +10,7 @@
 - 证据来源：**本地已安装依赖**的包内许可文件与元数据（`node_modules`、Cargo registry checkout、冻结 venv `site-packages`、`tools/7zip`），以及第 5.1 节固定来源的上游补充文本。脚本默认离线，只有 `--fetch-upstream` 才下载补充文本。
 - 不读取用户秘密：脚本不接触 `resources/passwords.txt`、用户 `config.json`、`.env` 或任何凭据。
 - 不编辑冻结引擎暂存目录：脚本只写 `artifacts/desktop/license-evidence/`（被 `.gitignore` 忽略），不修改 `apps/desktop/src-tauri/resources/engine/`。
-- **明确不随包分发**：Bandizip（官方 EULA 要求书面分发许可，当前未取得）、`restoreAB.exe`（历史用户工具）。见第 8 节。UnRAR 自身许可明确允许随其他软件分发，本次纳入固定依赖。
+- **固定随包分发**：7-Zip、UnRAR、Bandizip CLI。Bandizip依据所有者已取得书面分发许可的声明纳入，见第8节。`restoreAB.exe` 与私人配置不随包。
 - 冻结引擎 `build-info.json` 的 `excluded` 保留 `passwords.txt`、`config.json`、`restoreAB.exe`、`Bandizip`；`bundled_tools` 及 `tools/fixed-tools.json` 记录固定 UnRAR 身份。
 
 ## 2. 收集方法与复现
@@ -58,7 +58,7 @@ rtk proxy python3 scripts/collect_desktop_licenses.py --fetch-upstream
 | 7-Zip | 1 | 1 | 0 | 0 |
 | 合计 | 640 | 365 | 67 | 208 |
 
-2026-10-08 新增 UnRAR 一项（`text`），原依赖范围不变；最新实际清单以 `manifest.json` 为准。完整上游/宿主取证在 `artifacts/desktop/fixed-tools-20261008/`，锁定构建输入及其许可字节随 Git 保存在 `tools/desktop-vendor/`。
+2026-10-08 后续新增 UnRAR 与 Bandizip 固定依赖；上表为初次采集快照，最新实际清单以 `manifest.json` 为准。完整上游/宿主取证在 `artifacts/desktop/fixed-tools-20261008/`，锁定构建输入及其许可字节随 Git 保存在 `tools/desktop-vendor/`。
 
 Windows 可达图内 254 个 crate **全部取得许可文本**（含 7 个通过上游补充，见第 5.1 节）。`unresolved` 208 项全部来自"不在 Windows 图内"的 Cargo 锁条目（本地无源码、非本次分发路径），见第 5、9 节。
 
@@ -185,14 +185,15 @@ RARLAB 独立 UnRAR `license.txt` 原文：
 
 安装版公开 EULA 同时保留 “with the exception of the UnRAR components” 的单独分发例外。随包携带 `UnRAR-License.txt` 和 `WinRAR-License.txt`；本项目仅解压，不用于重造专有 RAR 压缩算法。官方独立 addon 当前为 7.30 beta 1，本次仅用其公开免费工具许可，不用其 beta EXE。
 
-Bandizip 官方 [EULA](https://www.bandisoft.com/bandizip/eula/eula.en.pdf) 2.3/2.4 明确要求书面许可后才能复制/分发产品。已核对英文原文；11.4 约定冲突时以韩文版为准。宿主 `bz.exe` 7.40.0.1 的签名及帮助命令正常，但标准使用许可不授予捆绑分发权，未取得独立 SDK/CLI 授权或 6.29 的不同许可，故当前不打入包。本机独立安装的 `bz.exe` 仍可在设置里指定。
+### Bandizip 固定依赖
 
-| 组件 | 原因 | 证据 |
-|---|---|---|
-| Bandizip | EULA 2.3/2.4 要求书面分发许可，当前未取得 | `scripts/desktop-tools.lock.json` 的 `not_bundled`、官方 EULA；`build-info.json.excluded` |
-| `restoreAB.exe` | 历史用户工具，不在桌面发行包 | 同上 |
+Bandizip 官方 [EULA](https://www.bandisoft.com/bandizip/eula/eula.en.pdf) 2.3/2.4 要求书面分发许可。所有者于 2026-10-08 明确表示已取得 Bandisoft 书面分发许可，本次据此捆绑；本次没有审阅许可函原文，不再次要求上传。
 
-原生恢复逻辑复用项目实现；默认解压由随包开源 7-Zip 执行，UnRAR 作为 RAR 备用。不自动安装或复制宿主 Bandizip。
+固定输入 [bandizip-cli-7.40.0.1-windows-x64.zip](../tools/desktop-vendor/bandizip-cli-7.40.0.1-windows-x64.zip) 来自 Windows 宿主已签名的 `bz.exe` 和所需 `ark.x64.dll`、`ark.x64.lgpl.dll`，均未修改。版本、包及逐文件 hash 在 [desktop-tools.lock.json](../scripts/desktop-tools.lock.json) 固定。该宿主版本帮助标为 CLI beta；“固定”不代表稳定版认证或真实内容验收。
+
+随包包含 `ArkLicense.txt`、`LGPL-2.1.txt`、官方 `Bandizip-EULA.pdf`、`Permission-Basis.txt`。Ark 公告中的各组件许可、限制与源代码链接一并保留，用户书面授权声明不替代这些组件要求。GUI、更新器、卸载器、宿主注册与私人配置不随包。
+
+`restoreAB.exe` 仍排除，恢复功能使用项目 Python 实现。默认路径为随包 7-Zip，RAR 可使用 UnRAR，Bandizip 用作备用；所有候选先过 7-Zip 安全预检。因此专有 ALZ/EGG 不能仅因 Bandizip 能读就标为项目可用。见 [格式指南](desktop-format-support.md)。
 
 ## 9. 未确认 / 待核实部分
 
@@ -211,7 +212,7 @@ Bandizip 官方 [EULA](https://www.bandisoft.com/bandizip/eula/eula.en.pdf) 2.3/
 - 将本项目根 `LICENSE` / `NOTICE` 与你选定的许可汇总合并进发行包；本脚本不生成、不替代根许可。
 - 依据 `manifest.json` + `SUMMARY.md` 决定哪些许可文本随安装包分发，并把完整文本从 `artifacts/desktop/license-evidence/` 打入最终产物（该目录被忽略，不随 Git）。
 - 处理第 9 节的未确认项；`unresolved` / `metadata` 条目在上游补全前不得在发行文档中标注为"已验证"。
-- 将锁定 UnRAR 与许可打入发行包；未取得书面许可前不把 Bandizip 打入发行包，继续排除 `restoreAB`。
+- 将锁定 UnRAR、已获用户分发授权的 Bandizip 与公开许可打入发行包，继续排除 `restoreAB.exe` 与私人配置。
 
 ## 11. 证据入口
 

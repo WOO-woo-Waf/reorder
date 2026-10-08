@@ -1,4 +1,9 @@
-"""Build on the target OS. Never package developer config or password libraries."""
+"""Build on the target OS.
+
+Never freeze developer config or the raw password library into the binary: the
+builtin password/keyword libraries ship as locked, hashed data files staged under
+``engine/defaults`` (never embedded in source, SQLite or stored credentials).
+"""
 from __future__ import annotations
 
 import argparse
@@ -9,6 +14,7 @@ import sys
 from pathlib import Path
 
 import stage_desktop_tools  # noqa: E402  (sibling build script; scripts/ is on sys.path)
+import stage_desktop_defaults  # noqa: E402  (sibling build script; scripts/ is on sys.path)
 
 # Files the frozen engine needs at runtime; a plain directory is not enough.
 CORE_INTERNAL_FILES = ("base_library.zip", "VCRUNTIME140.dll", "_sqlite3.pyd")
@@ -30,10 +36,11 @@ def _seven_zip_problems(tools: Path) -> list[str]:
 def validate_staged_engine(stage: Path, repo: Path | None = None) -> None:
     """Fail unless the staged engine holds the real runtime files the package needs.
 
-    The locked extraction tools are validated too: UnRAR is mandatory and Bandizip
-    is allowed only when the lock lists it. Validation checks the staged record
-    always, and ``scripts/desktop-tools.lock.json`` when the repository root is
-    known. A package may never report a missing tool as success.
+    The locked extraction tools and the builtin word libraries are validated too:
+    both UnRAR and Bandizip are mandatory for this release. Validation checks the
+    staged records always, and ``scripts/desktop-tools.lock.json`` plus
+    ``scripts/desktop-defaults.lock.json`` when the repository root is known. A
+    package may never report a missing tool or library as success.
     """
     stage = Path(stage)
     problems = [f"missing {name}" for name in (FROZEN_ENGINE_ENTRY, "build-info.json", "tools/apate.py")
@@ -51,10 +58,12 @@ def validate_staged_engine(stage: Path, repo: Path | None = None) -> None:
             problems.append("missing _internal/pydantic_core")
     problems.extend(_seven_zip_problems(stage / "tools/7zip"))
     problems.extend(f"fixed tools: {item}" for item in stage_desktop_tools.staged_tool_problems(stage))
+    problems.extend(f"builtin defaults: {item}" for item in stage_desktop_defaults.staged_default_problems(stage))
     if problems:
         raise RuntimeError("Staged engine is incomplete: " + "; ".join(problems))
     if repo is not None:
         stage_desktop_tools.validate_fixed_tools(repo, stage)
+        stage_desktop_defaults.validate_defaults(repo, stage)
 
 
 def bundled_tools(stage: Path) -> list[dict]:
@@ -65,7 +74,7 @@ def bundled_tools(stage: Path) -> list[dict]:
 
 
 def write_build_info(stage: Path, *, tool_name: str) -> None:
-    """Record the frozen engine identity and the actually bundled locked tools."""
+    """Record the frozen engine identity, the bundled locked tools and the catalog."""
     path = stage / "build-info.json"
     previous: dict = {}
     if path.is_file():
@@ -77,10 +86,12 @@ def write_build_info(stage: Path, *, tool_name: str) -> None:
         "python": previous.get("python", sys.version.split()[0]),
         "platform": previous.get("platform", sys.platform),
         "tool": previous.get("tool", tool_name),
-        # UnRAR is bundled by its pinned lock; Bandizip stays out because Bandisoft
-        # EULA 2.3/2.4 needs written redistribution permission we do not have.
-        "excluded": ["passwords.txt", "config.json", "restoreAB.exe", "Bandizip"],
+        # Personal/secret inputs stay out of the frozen engine. Both locked tools are
+        # bundled with their licence texts, so no tool id is excluded here.
+        "excluded": ["passwords.txt", "config.json", "restoreAB.exe"],
         "bundled_tools": bundled_tools(stage),
+        # Identity of the read-only builtin word libraries (version/count/sha256 only).
+        "builtin_defaults": stage_desktop_defaults.catalog_summary(stage),
     }
     path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
@@ -119,6 +130,7 @@ def main() -> None:
     if args.tools_only:
         # Update only the fixed tools and build-info; the frozen engine stays as-is.
         stage_desktop_tools.stage_fixed_tools(repo, stage, seven_zip=args.seven_zip, fetch=args.fetch_tools)
+        stage_desktop_defaults.stage_defaults(repo, stage)
         write_build_info(stage, tool_name="reorder-engine")
         validate_staged_engine(stage, repo)
         print(f"Fixed tools staged into existing engine: {stage}")
@@ -160,6 +172,7 @@ def main() -> None:
         if (repo / name).is_file():
             shutil.copy2(repo / name, stage / name)
     stage_desktop_tools.stage_fixed_tools(repo, stage, seven_zip=args.seven_zip, fetch=args.fetch_tools)
+    stage_desktop_defaults.stage_defaults(repo, stage)
     write_build_info(stage, tool_name=tool.name)
     # Reflect the validation before reporting success.
     validate_staged_engine(stage, repo)

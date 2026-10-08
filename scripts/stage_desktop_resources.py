@@ -10,7 +10,7 @@ into a release.
 
 Guarantees:
 
-* Only the eight named documents and the explicit current diagram outputs are copied.
+* Only the named documents and the explicit current diagram outputs are copied.
 * License files come from ``license-evidence/manifest.json`` (every entry's
   ``license_files``) plus ``manifest.json``, ``SUMMARY.md`` and the upstream
   ``SOURCES.json``; every reference must resolve inside the evidence root.
@@ -32,7 +32,7 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
-# The eight documents that belong in the package, and the current diagram outputs.
+# The documents that belong in the package, and the current diagram outputs.
 DOC_NAMES = (
     "desktop-user-guide.md",
     "desktop-code-guide.md",
@@ -40,6 +40,8 @@ DOC_NAMES = (
     "desktop-design.md",
     "desktop-status.md",
     "desktop-third-party.md",
+    "desktop-format-support.md",
+    "desktop-artwork.md",
     "product_plan.md",
     "portable_user_guide.md",
 )

@@ -38,13 +38,61 @@
         "matching_eula_source": "Windows WinRAR 7.13 installation License.txt",
         "note": "Vendored ZIP assembled from the unchanged signed stable CLI and two public license texts; upstream addon is currently beta and not used."
       }
-    }
-  ],
-  "not_bundled": [
+    },
     {
       "id": "bandizip",
-      "reason": "Bandisoft EULA 2.3/2.4 requires written redistribution permission; none provided. Use an independently installed bz.exe if desired.",
-      "license_source": "https://www.bandisoft.com/bandizip/eula/eula.en.pdf"
+      "name": "Bandizip CLI",
+      "version": "7.40.0.1",
+      "url": "https://www.bandisoft.com/bandizip/",
+      "sha256": "3eb491b12f2a62b1f14426686fba24cc6117bb2c23a696b730804d25e3b7b457",
+      "archive_format": "zip",
+      "vendored_archive": "tools/desktop-vendor/bandizip-cli-7.40.0.1-windows-x64.zip",
+      "license": "Bandisoft proprietary; project redistribution permission confirmed by owner on 2026-10-08; Ark component licences retained",
+      "files": [
+        {
+          "path": "bz.exe",
+          "sha256": "b131230250043538820e4252b79621e829a95be4ebb5d653779dfb3b45a5fe5f"
+        },
+        {
+          "path": "ark.x64.dll",
+          "sha256": "b439559de27bc4426fab61acc71e51a091b0e5e6c35820c82874baf6b573a17c"
+        },
+        {
+          "path": "ark.x64.lgpl.dll",
+          "sha256": "9a73247763fd49c1f7b2650a74d252096089bd930dacd643e9f1dabf26443761"
+        },
+        {
+          "path": "ArkLicense.txt",
+          "sha256": "62842d20a22adaa5eb62562d0f64186d85ad40629595819b736e4aa51f3bcef3"
+        },
+        {
+          "path": "LGPL-2.1.txt",
+          "sha256": "dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551"
+        },
+        {
+          "path": "Bandizip-EULA.pdf",
+          "sha256": "6a4214fdf49cc6c64fd3e65b9c34418e3e72e4e663f55f621e4f25f63081a9be"
+        },
+        {
+          "path": "Permission-Basis.txt",
+          "sha256": "bdb92c2054320ec88270d10797ea57e262920d1d05df75fbd20a08fed018e872"
+        }
+      ],
+      "license_files": [
+        "ArkLicense.txt",
+        "LGPL-2.1.txt",
+        "Bandizip-EULA.pdf",
+        "Permission-Basis.txt"
+      ],
+      "provenance": {
+        "binary_source": "Windows host, C:\\Program Files\\Bandizip",
+        "file_version": "7.40.0.1",
+        "publisher": "Bandisoft",
+        "authenticode": "Valid (Windows inventory 2026-10-08)",
+        "redistribution_permission": "Repository owner confirmed written Bandisoft permission on 2026-10-08; letter not accessed or published",
+        "release_label": "beta (CLI help; pinned file version is 7.40.0.1)"
+      }
     }
-  ]
+  ],
+  "not_bundled": []
 }

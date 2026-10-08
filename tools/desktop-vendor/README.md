@@ -11,4 +11,10 @@
 
 锁定信息与逐文件哈希见 [desktop-tools.lock.json](../../scripts/desktop-tools.lock.json)。该条目的 URL 用于来源追溯；构建从本目录的已锁 ZIP 取输入，不从最新下载 URL 猜版本。当前上游独立 addon 为 beta，未用它的 EXE 替换这个稳定输入。
 
-Bandizip 不在该目录。官方 EULA 2.3/2.4 要求书面分发许可，当前没有这项授权；本机独立安装的 `bz.exe` 仍可在设置里选择使用。详见 [第三方说明](../../docs/desktop-third-party.md)。
+## Bandizip CLI
+
+2026-10-08，项目所有者明确告知已取得 Bandisoft 的书面分发许可，授权将相关 CLI 依赖随本项目分发。本次按该声明加入 `bandizip-cli-7.40.0.1-windows-x64.zip`，没有读取或公开许可函，也没有将其表述为通用再分发许可。
+
+ZIP 保留宿主 `C:\Program Files\Bandizip` 中未修改的 `bz.exe`、`ark.x64.dll`、`ark.x64.lgpl.dll`，以及 `ArkLicense.txt`、LGPL 2.1 全文、官方 EULA 和授权依据说明。未包含 GUI、更新器、安装器、用户 `config.ini` 或个人授权资料。版本为 7.40.0.1，CLI 帮助带 beta 标记；逐文件身份固定在同一工具锁内。Ark 的组件版权与源代码链接随声明保留。
+
+详见 [第三方说明](../../docs/desktop-third-party.md)。

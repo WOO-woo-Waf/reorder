@@ -1,8 +1,8 @@
 """Contract tests for scripts/stage_desktop_tools.py (synthetic text packages only).
 
-UnRAR is the only mandatory locked tool; ``bandizip`` is allowed but optional and
-only ever exercised here as a synthetic future entry. The real repo lock and its
-vendored UnRAR snapshot are checked read-only at the end of this file.
+For this release both ``unrar`` and ``bandizip`` are mandatory locked tools, so a
+valid synthetic lock always lists both. The real repo lock, its two vendored
+snapshots and the staged Bandizip DLLs are checked read-only at the end.
 """
 from __future__ import annotations
 
@@ -35,8 +35,15 @@ UNRAR_MEMBERS = {
     "WinRAR-License.txt": b"winrar licence text",
 }
 UNRAR_LICENSES = ["UnRAR-License.txt", "WinRAR-License.txt"]
-BANDIZIP_MEMBERS = {"Bandizip/Bandizip.exe": b"MZ-bandizip-fake", "Bandizip/License.txt": b"bandizip licence"}
-BANDIZIP_LICENSES = ["Bandizip/License.txt"]
+# Flat layout with two DLLs and a permission-basis text, mirroring the real lock.
+BANDIZIP_MEMBERS = {
+    "bz.exe": b"MZ-bz-fake",
+    "ark.x64.dll": b"MZ-ark-x64-fake",
+    "ark.x64.lgpl.dll": b"MZ-ark-lgpl-fake",
+    "ArkLicense.txt": b"ark licence text",
+    "Permission-Basis.txt": b"permission basis text",
+}
+BANDIZIP_LICENSES = ["ArkLicense.txt", "Permission-Basis.txt"]
 VENDOR_NAME = "unrar-7.13-windows-x64.zip"
 VENDOR_RELATIVE = f"tools/desktop-vendor/{VENDOR_NAME}"
 
@@ -73,9 +80,11 @@ def _unrar_tool(archive_bytes=None, members=None, *, vendored_archive=None, arch
                  archive_format=archive_format, vendored_archive=vendored_archive)
 
 
-def _bandizip_tool() -> dict:
-    return _tool("bandizip", "Bandizip", "6.29", BANDIZIP_URL, _zip_bytes(BANDIZIP_MEMBERS),
-                 BANDIZIP_MEMBERS, BANDIZIP_LICENSES)
+def _bandizip_tool(archive_bytes=None, members=None) -> dict:
+    members = dict(BANDIZIP_MEMBERS if members is None else members)
+    archive_bytes = _zip_bytes(members) if archive_bytes is None else archive_bytes
+    return _tool("bandizip", "Bandizip CLI", "7.40.0.1", BANDIZIP_URL, archive_bytes, members,
+                 BANDIZIP_LICENSES)
 
 
 def _lock(tools: list[dict]) -> dict:
@@ -88,7 +97,7 @@ def _write_lock(repo: Path, lock: dict) -> None:
 
 
 def _write_cache(repo: Path, tool: dict, archive_bytes: bytes) -> None:
-    name = Path(tool.get("vendored_archive") or tool["url"]).name
+    name = Path(tool.get("vendored_archive") or tool["url"]).name or tool["id"]
     directory = repo / "runtime/desktop-tool-cache" / tool["id"] / tool["version"]
     directory.mkdir(parents=True, exist_ok=True)
     (directory / name).write_bytes(archive_bytes)
@@ -101,23 +110,22 @@ def _write_vendor(repo: Path, relative: str, archive_bytes: bytes) -> Path:
     return path
 
 
-def make_repo(tmp_path, *, members=None, vendored=False, include_bandizip=False, cache=True):
-    """A fake repo: UnRAR-only lock by default, optional synthetic Bandizip entry."""
+def make_repo(tmp_path, *, members=None, vendored=False, cache=True, include_bandizip=True):
+    """A fake repo whose valid lock lists both mandatory tools by default."""
     repo = tmp_path / "repo"
     (repo / "scripts").mkdir(parents=True)
     members = dict(UNRAR_MEMBERS if members is None else members)
-    archive = _zip_bytes(members)
-    unrar = _unrar_tool(archive, members, vendored_archive=VENDOR_RELATIVE if vendored else None)
-    tools = [unrar]
-    if include_bandizip:
-        tools.append(_bandizip_tool())
+    unrar_archive = _zip_bytes(members)
+    unrar = _unrar_tool(unrar_archive, members, vendored_archive=VENDOR_RELATIVE if vendored else None)
+    bandi = _bandizip_tool()
+    tools = [unrar] + ([bandi] if include_bandizip else [])
     _write_lock(repo, _lock(tools))
     if vendored:
-        _write_vendor(repo, VENDOR_RELATIVE, archive)
-    elif cache:
-        _write_cache(repo, unrar, archive)
-    if include_bandizip and cache:
-        _write_cache(repo, tools[1], _zip_bytes(BANDIZIP_MEMBERS))
+        _write_vendor(repo, VENDOR_RELATIVE, unrar_archive)
+    if cache:
+        _write_cache(repo, unrar, unrar_archive)
+        if include_bandizip:
+            _write_cache(repo, bandi, _zip_bytes(BANDIZIP_MEMBERS))
     stage = tmp_path / "stage"
     stage.mkdir(exist_ok=True)
     return repo, stage
@@ -140,7 +148,8 @@ def test_missing_lock_is_never_fabricated(tmp_path):
 
 MUTATIONS = {
     "empty-tools": lambda lock: lock.__setitem__("tools", []),
-    "missing-mandatory": lambda lock: lock.__setitem__("tools", [_bandizip_tool()]),
+    "missing-unrar": lambda lock: lock.__setitem__("tools", [_bandizip_tool()]),
+    "missing-bandizip": lambda lock: lock.__setitem__("tools", [_unrar_tool()]),
     "duplicate-id": lambda lock: lock["tools"].append(dict(lock["tools"][0])),
     "extra-tool": lambda lock: lock["tools"].append({**lock["tools"][0], "id": "winrar"}),
     "unsafe-path": lambda lock: lock["tools"][0]["files"][0].__setitem__("path", "../evil.exe"),
@@ -182,12 +191,20 @@ def test_lock_rejections(tmp_path, mutation):
         sdt.stage_fixed_tools(repo, stage)
 
 
-def test_unrar_only_lock_is_valid_and_bandizip_is_optional(tmp_path):
+def test_unrar_only_lock_is_no_longer_accepted(tmp_path):
+    """Both IDs must match the release: an UnRAR-only lock is now invalid."""
     repo, _ = make_repo(tmp_path, cache=False)
-    assert [tool["id"] for tool in sdt.lock_tools(sdt.load_lock(repo))] == ["unrar"]
+    _write_lock(repo, _lock([_unrar_tool()]))
+    with pytest.raises(RuntimeError, match="missing"):
+        sdt.load_lock(repo)
+    _write_lock(repo, _lock([_bandizip_tool()]))
+    with pytest.raises(RuntimeError, match="missing"):
+        sdt.load_lock(repo)
 
-    # A synthetic future entry is accepted, and normalised to the allowed order
-    # even when the lock lists Bandizip first.
+
+def test_lock_normalizes_tool_order(tmp_path):
+    repo, _ = make_repo(tmp_path, cache=False)
+    # Normalised to the allowed order even when the lock lists Bandizip first.
     _write_lock(repo, _lock([_bandizip_tool(), _unrar_tool()]))
     tools = sdt.lock_tools(sdt.load_lock(repo))
     assert [tool["id"] for tool in tools] == ["unrar", "bandizip"]
@@ -195,7 +212,7 @@ def test_unrar_only_lock_is_valid_and_bandizip_is_optional(tmp_path):
 
 def test_valid_lock_accepts_seven_sfx_format(tmp_path):
     repo, _ = make_repo(tmp_path, cache=False)
-    _write_lock(repo, _lock([_unrar_tool(archive_format="7z-sfx")]))
+    _write_lock(repo, _lock([_unrar_tool(archive_format="7z-sfx"), _bandizip_tool()]))
     assert sdt.lock_tools(sdt.load_lock(repo))[0]["archive_format"] == "7z-sfx"
 
 
@@ -218,7 +235,7 @@ def test_stage_offline_requires_cached_archive(tmp_path):
 
 
 def test_missing_archive_offline_leaves_the_stage_untouched(tmp_path):
-    repo, stage = make_repo(tmp_path, cache=False, include_bandizip=True)
+    repo, stage = make_repo(tmp_path, cache=False)
     with pytest.raises(RuntimeError, match="no cached archive"):
         sdt.stage_fixed_tools(repo, stage, fetch=False)
     assert not (stage / "tools/unrar").exists()
@@ -232,17 +249,16 @@ def test_stage_from_cache_then_validate(tmp_path):
     assert (stage / "tools/unrar/UnRAR.exe").read_bytes() == UNRAR_MEMBERS["UnRAR.exe"]
     assert (stage / "tools/unrar/WinRAR-License.txt").is_file()
     record = json.loads((stage / "tools/fixed-tools.json").read_text(encoding="utf-8"))
-    assert [tool["id"] for tool in record["tools"]] == ["unrar"]
+    assert [tool["id"] for tool in record["tools"]] == ["unrar", "bandizip"]
     sdt.validate_fixed_tools(repo, stage)  # must not raise
     assert sdt.staged_tool_problems(stage) == []
 
 
-def test_stage_with_optional_bandizip_locked(tmp_path):
-    repo, stage = make_repo(tmp_path, include_bandizip=True)
+def test_bandizip_cli_dlls_and_licenses_are_staged(tmp_path):
+    repo, stage = make_repo(tmp_path)
     sdt.stage_fixed_tools(repo, stage, fetch=False)
-    record = json.loads((stage / "tools/fixed-tools.json").read_text(encoding="utf-8"))
-    assert [tool["id"] for tool in record["tools"]] == ["unrar", "bandizip"]
-    assert (stage / "tools/bandizip/Bandizip/Bandizip.exe").is_file()
+    for name in ("bz.exe", "ark.x64.dll", "ark.x64.lgpl.dll", "ArkLicense.txt", "Permission-Basis.txt"):
+        assert (stage / "tools/bandizip" / name).is_file(), name
     assert sdt.staged_tool_problems(stage) == []
     sdt.validate_fixed_tools(repo, stage)
 
@@ -271,7 +287,7 @@ def test_stage_repairs_tampered_target_and_backs_up_old(tmp_path):
 # Vendored archive snapshot
 # --------------------------------------------------------------------------- #
 def test_vendored_archive_is_used_without_network(tmp_path, monkeypatch):
-    repo, stage = make_repo(tmp_path, vendored=True, cache=False)
+    repo, stage = make_repo(tmp_path, vendored=True, cache=True)
     monkeypatch.setattr(sdt, "_download", lambda *a, **k: pytest.fail("vendored staging must not download"))
     sdt.stage_fixed_tools(repo, stage, fetch=False)
     assert (stage / "tools/unrar/UnRAR.exe").read_bytes() == UNRAR_MEMBERS["UnRAR.exe"]
@@ -282,7 +298,7 @@ def test_vendored_archive_is_used_without_network(tmp_path, monkeypatch):
 
 
 def test_vendored_archive_missing_fails_without_url_fallback(tmp_path, monkeypatch):
-    repo, stage = make_repo(tmp_path, vendored=True, cache=False)
+    repo, stage = make_repo(tmp_path, vendored=True, cache=True)
     (repo / VENDOR_RELATIVE).unlink()
     monkeypatch.setattr(sdt, "_download", lambda *a, **k: pytest.fail("must not fall back to the url"))
     with pytest.raises(RuntimeError, match="vendored archive"):
@@ -293,7 +309,7 @@ def test_vendored_archive_missing_fails_without_url_fallback(tmp_path, monkeypat
 
 
 def test_vendored_archive_hash_mismatch_fails(tmp_path, monkeypatch):
-    repo, stage = make_repo(tmp_path, vendored=True, cache=False)
+    repo, stage = make_repo(tmp_path, vendored=True, cache=True)
     (repo / VENDOR_RELATIVE).write_bytes(b"tampered snapshot")
     monkeypatch.setattr(sdt, "_download", lambda *a, **k: pytest.fail("must not fall back to the url"))
     with pytest.raises(RuntimeError, match="sha256"):
@@ -301,7 +317,7 @@ def test_vendored_archive_hash_mismatch_fails(tmp_path, monkeypatch):
 
 
 def test_vendored_archive_must_be_a_real_file_not_a_symlink(tmp_path):
-    repo, stage = make_repo(tmp_path, vendored=True, cache=False)
+    repo, stage = make_repo(tmp_path, vendored=True, cache=True)
     target = tmp_path / "elsewhere.zip"
     shutil.move(str(repo / VENDOR_RELATIVE), str(target))
     os.symlink(target, repo / VENDOR_RELATIVE)
@@ -310,7 +326,7 @@ def test_vendored_archive_must_be_a_real_file_not_a_symlink(tmp_path):
 
 
 def test_vendored_archive_rejects_a_symlinked_ancestor_directory(tmp_path):
-    repo, stage = make_repo(tmp_path, vendored=True, cache=False)
+    repo, stage = make_repo(tmp_path, vendored=True, cache=True)
     real = tmp_path / "real-vendor"
     shutil.move(str(repo / "tools/desktop-vendor"), str(real))
     os.symlink(real, repo / "tools/desktop-vendor")
@@ -321,11 +337,11 @@ def test_vendored_archive_rejects_a_symlinked_ancestor_directory(tmp_path):
 
 
 def test_record_tracks_the_vendored_identity(tmp_path):
-    repo, stage = make_repo(tmp_path, vendored=True, cache=False)
+    repo, stage = make_repo(tmp_path, vendored=True, cache=True)
     sdt.stage_fixed_tools(repo, stage, fetch=False)
     # Drop the vendored snapshot from the lock (same archive hash). The record
     # still names it, so validation must fail until the stage is regenerated.
-    _write_lock(repo, _lock([_unrar_tool()]))
+    _write_lock(repo, _lock([_unrar_tool(), _bandizip_tool()]))
     with pytest.raises(RuntimeError, match="vendored_archive"):
         sdt.validate_fixed_tools(repo, stage)
     sdt.stage_fixed_tools(repo, stage, fetch=False)
@@ -335,31 +351,31 @@ def test_record_tracks_the_vendored_identity(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
-# Record id set exactness and stale trees
+# Record identity exactness and stale trees
 # --------------------------------------------------------------------------- #
-def test_record_and_lock_id_sets_must_match_exactly(tmp_path):
-    repo, stage = make_repo(tmp_path, include_bandizip=True)
-    sdt.stage_fixed_tools(repo, stage, fetch=False)
-    _write_lock(repo, _lock([_unrar_tool()]))  # Bandizip no longer licensed
-    with pytest.raises(RuntimeError, match="records .*bandizip"):
-        sdt.validate_fixed_tools(repo, stage)
-    assert any("stale tools/bandizip" in problem for problem in sdt._locked_stage_problems(stage, sdt.lock_tools(sdt.load_lock(repo))))
-    sdt.stage_fixed_tools(repo, stage, fetch=False)
-    assert not (stage / "tools/bandizip").exists()
-    assert list((repo / "artifacts/desktop/tool-backups").glob("bandizip-stale-*"))
-    record = json.loads((stage / "tools/fixed-tools.json").read_text(encoding="utf-8"))
-    assert [tool["id"] for tool in record["tools"]] == ["unrar"]
-    sdt.validate_fixed_tools(repo, stage)
-
-
-def test_standalone_record_flags_a_stale_bandizip_directory(tmp_path):
+def test_record_and_lock_tool_identity_must_match(tmp_path):
     repo, stage = make_repo(tmp_path)
     sdt.stage_fixed_tools(repo, stage, fetch=False)
-    stray = stage / "tools/bandizip/Bandizip/Bandizip.exe"
+    lock = json.loads((repo / "scripts/desktop-tools.lock.json").read_text(encoding="utf-8"))
+    for tool in lock["tools"]:
+        if tool["id"] == "bandizip":
+            tool["version"] = "9.9.9"  # changed identity, same staged files
+    _write_lock(repo, lock)
+    with pytest.raises(RuntimeError, match="bandizip"):
+        sdt.validate_fixed_tools(repo, stage)
+
+
+def test_unlocked_allowed_directory_is_flagged_stale(tmp_path):
+    """The stale guard still flags an allowed id that is not in the locked set."""
+    repo, stage = make_repo(tmp_path)
+    stray = stage / "tools/bandizip/bz.exe"
     stray.parent.mkdir(parents=True)
     stray.write_bytes(b"historical bandizip")
-    problems = sdt.staged_tool_problems(stage)
+    problems = sdt._stale_directory_problems(stage, {"unrar"})
     assert any("stale tools/bandizip" in problem for problem in problems)
+    sdt._archive_stale_tool_dirs(stage, repo, [sdt.lock_tools(sdt.load_lock(repo))[0]])
+    assert not (stage / "tools/bandizip").exists()
+    assert list((repo / "artifacts/desktop/tool-backups").glob("bandizip-stale-*"))
 
 
 # --------------------------------------------------------------------------- #
@@ -382,13 +398,23 @@ def test_validate_reports_missing_tool_symlink_and_hash_mismatch(tmp_path):
         sdt.validate_fixed_tools(repo, stage)
 
 
+def test_tampered_bandizip_dll_is_rejected(tmp_path):
+    repo, stage = make_repo(tmp_path)
+    sdt.stage_fixed_tools(repo, stage, fetch=False)
+    (stage / "tools/bandizip/ark.x64.dll").write_bytes(b"tampered dll")
+    with pytest.raises(RuntimeError, match="ark.x64.dll"):
+        sdt.validate_fixed_tools(repo, stage)
+
+
 def test_zip_case_conflicting_members_rejected(tmp_path):
     members = {**UNRAR_MEMBERS, "unrar.exe": b"different bytes"}
     archive = _zip_bytes(members)
     repo, stage = make_repo(tmp_path, cache=False)
     tool = _unrar_tool(archive, UNRAR_MEMBERS)
-    _write_lock(repo, _lock([tool]))
+    bandi = _bandizip_tool()
+    _write_lock(repo, _lock([tool, bandi]))
     _write_cache(repo, tool, archive)
+    _write_cache(repo, bandi, _zip_bytes(BANDIZIP_MEMBERS))
     with pytest.raises(RuntimeError, match="case-conflicting"):
         sdt.stage_fixed_tools(repo, stage, fetch=False)
 
@@ -404,8 +430,10 @@ def test_zip_symlink_member_rejected(tmp_path):
     archive = buffer.getvalue()
     repo, stage = make_repo(tmp_path, cache=False)
     tool = _unrar_tool(archive, UNRAR_MEMBERS)
-    _write_lock(repo, _lock([tool]))
+    bandi = _bandizip_tool()
+    _write_lock(repo, _lock([tool, bandi]))
     _write_cache(repo, tool, archive)
+    _write_cache(repo, bandi, _zip_bytes(BANDIZIP_MEMBERS))
     with pytest.raises(RuntimeError, match="symlink member"):
         sdt.stage_fixed_tools(repo, stage, fetch=False)
 
@@ -429,10 +457,16 @@ def test_fetch_publishes_only_on_matching_hash(tmp_path, monkeypatch):
     assert calls == [lock["tools"][0]["url"]]
     assert not [p for p in (repo / "runtime/desktop-tool-cache").rglob("*") if p.is_file()]
 
-    monkeypatch.setattr(sdt, "_download", lambda url, dest, *a, **k: dest.write_bytes(_zip_bytes(UNRAR_MEMBERS)))
+    good = {"unrar": _zip_bytes(UNRAR_MEMBERS), "bandizip": _zip_bytes(BANDIZIP_MEMBERS)}
+
+    def fetch(url, dest, tool_id="", *a, **k):
+        dest.write_bytes(good[tool_id])
+
+    monkeypatch.setattr(sdt, "_download", fetch)
     sdt.stage_fixed_tools(repo, stage, fetch=True)
     sdt.validate_fixed_tools(repo, stage)
     assert (stage / "tools/unrar/UnRAR.exe").read_bytes() == UNRAR_MEMBERS["UnRAR.exe"]
+    assert (stage / "tools/bandizip/bz.exe").read_bytes() == BANDIZIP_MEMBERS["bz.exe"]
 
 
 class _FakeResponse:
@@ -490,7 +524,7 @@ def test_download_retries_at_most_twice(tmp_path, monkeypatch):
 # Wiring: engine validator, evidence collector, CLI, real repo input
 # --------------------------------------------------------------------------- #
 def test_lock_file_is_not_rewritten(tmp_path):
-    repo, stage = make_repo(tmp_path, vendored=True, cache=False)
+    repo, stage = make_repo(tmp_path, vendored=True, cache=True)
     before = (repo / "scripts/desktop-tools.lock.json").read_bytes()
     sdt.stage_fixed_tools(repo, stage, fetch=False)
     assert (repo / "scripts/desktop-tools.lock.json").read_bytes() == before
@@ -500,7 +534,7 @@ def test_lock_file_is_not_rewritten(tmp_path):
 def test_tools_only_connects_the_tools_to_an_old_engine(tmp_path):
     # An existing 0.2.0 stage has a build-info but no fixed-tools record yet; the
     # first connection must stage the tools first and only then report build-info.
-    repo, stage = make_repo(tmp_path, vendored=True, cache=False)
+    repo, stage = make_repo(tmp_path, vendored=True, cache=True)
     (stage / "build-info.json").write_text(json.dumps({
         "python": "3.13.5", "platform": "win32", "tool": "7z.exe",
         "excluded": ["passwords.txt", "config.json", "restoreAB.exe", "Bandizip", "UnRAR"],
@@ -509,10 +543,11 @@ def test_tools_only_connects_the_tools_to_an_old_engine(tmp_path):
     sdt.stage_fixed_tools(repo, stage, fetch=False)
     stage_desktop_engine.write_build_info(stage, tool_name="reorder-engine")
     info = json.loads((stage / "build-info.json").read_text(encoding="utf-8"))
-    assert info["excluded"] == ["passwords.txt", "config.json", "restoreAB.exe", "Bandizip"]
-    assert [tool["id"] for tool in info["bundled_tools"]] == ["unrar"]
+    assert info["excluded"] == ["passwords.txt", "config.json", "restoreAB.exe"]
+    assert [tool["id"] for tool in info["bundled_tools"]] == ["unrar", "bandizip"]
     assert info["bundled_tools"][0]["version"] == "7.13.0"
     assert info["bundled_tools"][0]["sha256"] == _sha(_zip_bytes(UNRAR_MEMBERS))
+    assert info["builtin_defaults"] is None  # this fake stage has no defaults catalog
     assert info["python"] == "3.13.5" and info["tool"] == "7z.exe"  # old engine identity kept
 
 
@@ -547,24 +582,35 @@ def test_collect_desktop_licenses_reads_the_staged_license_files(tmp_path):
     sdt.stage_fixed_tools(repo, stage, fetch=False)
     evidence = tmp_path / "evidence"
     entries = collect_desktop_licenses.collect_fixed_tools(repo, evidence)
-    assert [entry["name"] for entry in entries] == ["UnRAR"]
-    assert entries[0]["status"] == "text"
+    assert [entry["name"] for entry in entries] == ["UnRAR", "Bandizip CLI"]
+    assert all(entry["status"] == "text" for entry in entries)
     assert len(entries[0]["license_files"]) == 2
-    assert sum(1 for path in evidence.rglob("*") if path.is_file()) == 2
+    assert len(entries[1]["license_files"]) == 2
+    assert sum(1 for path in evidence.rglob("*") if path.is_file()) == 4
 
 
-def test_real_repo_lock_and_vendored_snapshot(tmp_path):
-    """Read-only check of the real tracked lock and UnRAR snapshot."""
+def test_real_repo_lock_and_vendored_snapshots(tmp_path):
+    """Read-only check of the real tracked lock and both vendored snapshots."""
     lock = sdt.load_lock(REPO_ROOT)
     tools = sdt.lock_tools(lock)
-    assert [tool["id"] for tool in tools] == ["unrar"]
-    tool = tools[0]
-    assert tool["version"] == "7.13.0"
-    assert tool["vendored_archive"] == VENDOR_RELATIVE
-    assert sdt._vendored_problems(tool, REPO_ROOT) == []
-    with zipfile.ZipFile(REPO_ROOT / VENDOR_RELATIVE) as handle:
-        names = sorted(handle.namelist())
-    assert names == ["UnRAR-License.txt", "UnRAR.exe", "WinRAR-License.txt"]  # flat, no rarreg.key
+    assert [tool["id"] for tool in tools] == ["unrar", "bandizip"]
+    unrar, bandizip = tools
+    assert unrar["version"] == "7.13.0"
+    assert unrar["vendored_archive"] == "tools/desktop-vendor/unrar-7.13-windows-x64.zip"
+    assert sdt._vendored_problems(unrar, REPO_ROOT) == []
+    with zipfile.ZipFile(REPO_ROOT / unrar["vendored_archive"]) as handle:
+        unrar_names = sorted(handle.namelist())
+    assert unrar_names == ["UnRAR-License.txt", "UnRAR.exe", "WinRAR-License.txt"]
     # Unpack-only hash check of the three public files; nothing is executed.
-    sdt._extract_zip(tool, REPO_ROOT / VENDOR_RELATIVE, tmp_path)
-    assert sorted(path.name for path in tmp_path.iterdir()) == names
+    sdt._extract_zip(unrar, REPO_ROOT / unrar["vendored_archive"], tmp_path / "unrar")
+    assert sorted(path.name for path in (tmp_path / "unrar").iterdir()) == unrar_names
+
+    assert bandizip["version"] == "7.40.0.1"
+    assert bandizip["vendored_archive"] == "tools/desktop-vendor/bandizip-cli-7.40.0.1-windows-x64.zip"
+    assert sdt._vendored_problems(bandizip, REPO_ROOT) == []
+    bandizip_names = sorted(item["path"] for item in bandizip["files"])
+    assert bandizip_names == ["ArkLicense.txt", "Bandizip-EULA.pdf", "LGPL-2.1.txt",
+                              "Permission-Basis.txt", "ark.x64.dll", "ark.x64.lgpl.dll", "bz.exe"]
+    assert {item["path"] for item in bandizip["files"]} >= {"ark.x64.dll", "ark.x64.lgpl.dll"}
+    sdt._extract_zip(bandizip, REPO_ROOT / bandizip["vendored_archive"], tmp_path / "bandizip")
+    assert sorted(path.name for path in (tmp_path / "bandizip").iterdir()) == bandizip_names

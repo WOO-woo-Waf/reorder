@@ -1,17 +1,23 @@
-# 归序（ReOrder Engine）
+# 星绫解封 · Hoshiribbon
 
-## Windows 桌面首版
+> 把压缩的次元，一层层展开。
 
-已按 Tauri 2 + Svelte 5 + TypeScript + Vite、Rust 宿主、Python 引擎和 SQLite 实施手动批处理桌面版，Windows x64 首交付。当前产物与检查记录见 [实施状态](docs/desktop-status.md)，操作与真实文件人工验收见 [用户指南](docs/desktop-user-guide.md)。
+面向二次元收藏者的本地桌面整理工具：将下载的资源按文件组识别，在工作副本上恢复与解压，发布成品后归档原包。支持普通压缩包、分卷和部分伪装/嵌入格式；具体方式、效果和限制见 [格式支持指南](docs/desktop-format-support.md)。手动批处理优先，文件在本机处理。
 
-- 制作方：[代码阅读指南](docs/desktop-code-guide.md)、[语言指南](docs/desktop-language-guide.md)。
-- 面向对象设计：[职责、类图、时序和状态图](docs/desktop-design.md)。
-- 构建：Windows 下 `scripts/build_desktop_windows.ps1`，生成 NSIS 安装包与便携 ZIP。
-- [完整产品方案](docs/product_plan.md) 保留跨平台路线；浏览器、目录监听和 Agent 留后续。原 CLI 继续保留。
+## Windows 桌面 0.3.0 预览
 
-“归序”是一个面向 **离线下载数据整理** 的自动化流水线：对杂乱的压缩包集合进行 **识别 → 统一命名 →（可选）解密准备 → 调用本地解压工具解压**，并为大量不可预期的文件名/分卷格式提供可扩展的策略体系。
+- 自带 Python 引擎、**7-Zip 25.01、UnRAR 7.13、Bandizip CLI 7.40.0.1**，无需另装 Python 或解压工具。Bandizip 按所有者已取得书面分发许可的声明纳入固定依赖，包含所需 DLL 和公开许可说明。
+- 内置 Git 公开库的 **115 条默认密码、8 条关键词**。私人密码优先，默认密码可关闭；关键词仅清理成品顶层名称，**默认关闭**。内置公开库与私人系统凭据分开。
+- 星夜少女背景、浅紫粉主题，可选择本地图片并调整遮罩、模糊或关闭背景；素材与来源见 [视觉说明](docs/desktop-artwork.md)。
+- 用户：[操作与人工验收指南](docs/desktop-user-guide.md)、[实际交付与机器检查记录](docs/desktop-status.md)、[第三方组件](docs/desktop-third-party.md)。
+- 制作方：[代码阅读指南](docs/desktop-code-guide.md)、[语言指南](docs/desktop-language-guide.md)、[面向对象架构图](docs/desktop-design.md)。
+- 构建：`scripts/build_desktop_windows.ps1`；Tauri 2 + Svelte 5 + TypeScript + Vite、Rust 宿主、Python 引擎、SQLite。Windows x64 首交付。
 
-> 你原来叫“解压助手”。这里换成更委婉抽象的名字：**归序**（把混乱归于秩序）。
+真实资源、GUI、安装卸载和主观效果待用户人工验收；工程检查范围与限制在实施状态中列明。跨平台路线保持，浏览器、监听和 Agent 留后续。
+
+## 保留的 ReOrder Engine / CLI
+
+内部包名 `reorder_engine` 与应用 identifier `io.reorder.desktop` 保留，已有设置和历史的归属不变。以下是原 CLI/Beta 的使用资料，与桌面版的默认库和文件生命周期分开。
 
 ## 目标（先实现阶段 1 + 2）
 - 阶段 1：文件名清洗/重命名（可插拔策略；关键字库来自 `resources/keywords.txt`）
@@ -50,7 +56,7 @@ package_reorder_skill.bat
 输出为 `dist/reorder-engine-skill.zip`。它包含 repo-local skill、项目源码、测试、资源文件和工具准备脚本；`dist/` 是生成物目录，不建议直接提交 ZIP。
 
 ## Beta：把当前目录“尽量解出来”并分流
-当你把 [reorder_engine/beta_here.bat](reorder_engine/beta_here.bat) 放到某个下载目录并双击运行时：
+当你把 [beta_here.bat](beta_here.bat) 放到某个下载目录并双击运行时：
 - 默认先展平：把子文件夹里的文件移动到当前目录（不递归保留结构）
 - 使用 bat 所在目录作为输入目录
 - 就地解压到该目录
@@ -124,7 +130,7 @@ Compress-Archive -Force -Path D:\bandzip\bz.exe,D:\bandzip\Bandizip.exe,D:\bandz
 把 `7z.exe`、`Rar.exe`/`UnRAR.exe`、`bz.exe` 放到 [tools/README.md](tools/README.md) 所说的 `tools/` 目录，代码会优先使用这些二进制文件。
 
 ### 配置文件
-默认使用项目根目录的 [reorder_engine/config.json](reorder_engine/config.json)。首次运行若找不到 `7z.exe`，会尝试联网从 7-zip.org 下载 MSI 并解包到 `tools/7zip/`，然后把路径写回 `config.json`。
+默认使用项目根目录的 `config.json`。首次运行若找不到 `7z.exe`，会尝试联网从 7-zip.org 下载 MSI 并解包到 `tools/7zip/`，然后把路径写回 `config.json`。
 
 ### 关键字库与密码库格式（txt）
 - 一行一个条目

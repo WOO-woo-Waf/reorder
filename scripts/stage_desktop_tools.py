@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """Stage the version-locked UnRAR and Bandizip tools into the desktop engine.
 
-The mandatory Windows tool is UnRAR; ``bandizip`` is an allowed optional entry
-for a future build that has a written redistribution licence. Both are pinned by
-the tracked ``scripts/desktop-tools.lock.json`` (``schema_version`` 1,
-``platform`` ``windows-x64``). This module never guesses a version, never falls
-back to a tool found on ``PATH``, and never accepts an unpinned ``latest`` build:
+Both ``unrar`` and ``bandizip`` are mandatory, pinned by the tracked
+``scripts/desktop-tools.lock.json`` (``schema_version`` 1, ``platform``
+``windows-x64``). This module never guesses a version, never falls back to a tool
+found on ``PATH``, and never accepts an unpinned ``latest`` build:
 
 * :func:`stage_fixed_tools` reuses ``runtime/desktop-tool-cache/<id>/<version>/``
   offline and only downloads the locked ``https`` archive when ``fetch=True``; a
@@ -15,7 +14,7 @@ back to a tool found on ``PATH``, and never accepts an unpinned ``latest`` build
   cache and stage only after every recorded ``sha256`` matches;
 * :func:`validate_fixed_tools` re-checks the staged files against the lock and
   requires the record id set to equal the lock id set, so a package can never be
-  reported as complete while UnRAR is missing or a stale Bandizip tree leaks in.
+  reported as complete while either locked tool is missing or an unlocked tree leaks in.
 
 Only the approved ``files`` are copied out; a ``7z-sfx`` dependency is unpacked
 with a trusted 7-Zip binary, never executed as a self-extracting installer.
@@ -46,9 +45,8 @@ BACKUP_RELATIVE = Path("artifacts/desktop/tool-backups")
 TOOLS_DIRECTORY = "tools"
 RECORD_NAME = "fixed-tools.json"
 
-# ``unrar`` is mandatory; ``bandizip`` may only be added once a written
-# redistribution licence exists. No other id is accepted.
-REQUIRED_TOOL_IDS = ("unrar",)
+# Both locked tools are mandatory for this release; no other id is accepted.
+REQUIRED_TOOL_IDS = ("unrar", "bandizip")
 ALLOWED_TOOL_IDS = ("unrar", "bandizip")
 ARCHIVE_FORMATS = ("zip", "7z-sfx")
 
@@ -419,7 +417,7 @@ def _stale_directory_problems(stage: Path, locked_ids: set[str]) -> list[str]:
         path = Path(stage) / TOOLS_DIRECTORY / tool_id
         if path.exists() or path.is_symlink():
             problems.append(f"stale tools/{tool_id} is not part of the locked set; "
-                            "remove it or list it in the lock once redistribution is licensed")
+                            "remove it or list it in the lock")
     return problems
 
 
@@ -467,7 +465,7 @@ def staged_tool_problems(stage: Path) -> list[str]:
     stage = Path(stage)
     path = stage / TOOLS_DIRECTORY / RECORD_NAME
     if not path.is_file():
-        return [f"missing {TOOLS_DIRECTORY}/{RECORD_NAME} (fixed UnRAR staging record)"]
+        return [f"missing {TOOLS_DIRECTORY}/{RECORD_NAME} (fixed UnRAR/Bandizip staging record)"]
     try:
         problems, tools = _record_tools(json.loads(path.read_text(encoding="utf-8")))
     except (OSError, json.JSONDecodeError) as exc:
@@ -784,7 +782,7 @@ def _unique_backup(backup_root: Path, prefix: str) -> Path:
 
 
 def _archive_stale_tool_dirs(stage: Path, repo: Path, tools: list[dict]) -> None:
-    """Move an allowed-but-unlocked tool dir (for example a stale Bandizip) aside."""
+    """Move an allowed-but-unlocked tool dir aside."""
     locked = {tool["id"] for tool in tools}
     for tool_id in ALLOWED_TOOL_IDS:
         if tool_id in locked:

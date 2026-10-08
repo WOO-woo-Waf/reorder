@@ -45,9 +45,9 @@ function jobSnapshot(overrides: Partial<JobSnapshot> & { job_id: string }): JobS
   return { plan_id: 'plan', state: 'running', created_at: '', updated_at: '', packages: [], last_seq: 0, retry_of: null, ...overrides };
 }
 const systemInfo: SystemInfo = {
-  settings: { version: 1, options: { deep_extract: false, max_depth: 2, min_archive_mb: 100, final_single_mb: 1024, preserve_payload_names: true, recursive: false, tool_timeout_sec: 600, max_output_gb: 50, keep_workspace: false }, tools: { seven_zip: null, unrar: null, bandizip: null } },
+  settings: { version: 1, options: { deep_extract: false, max_depth: 2, min_archive_mb: 100, final_single_mb: 1024, preserve_payload_names: true, recursive: false, tool_timeout_sec: 600, max_output_gb: 50, keep_workspace: false, use_builtin_passwords: true, clean_builtin_keywords: false }, tools: { seven_zip: null, unrar: null, bandizip: null } },
   tools: { seven_zip: null, unrar: null, bandizip: null },
-  passwords: { count: 0, storage: 'session' }, version: '0.2.0', protocol_version: 1, platform: 'win32', data_root: '/data', capabilities: [],
+  passwords: { count: 0, storage: 'session' }, version: '0.3.0', protocol_version: 1, platform: 'win32', data_root: '/data', capabilities: [],
 };
 
 describe('manual processing workflow', () => {
@@ -88,7 +88,7 @@ describe('desktop lifecycle regressions', () => {
     await controller.loadHistory();
     expect(state().ready).toBe(true);
     expect(state().error).toBe('');
-    expect(state().info?.version).toBe('0.2.0');
+    expect(state().info?.version).toBe('0.3.0');
   });
 
   it('shows the full active task from jobs.get instead of the truncated jobs.list summary', async () => {
@@ -109,6 +109,24 @@ describe('desktop lifecycle regressions', () => {
     expect(state().job?.package_count).toBe(7);
   });
 
+  it('reports a declined cancellation and refreshes the terminal snapshot', async () => {
+    vi.useFakeTimers();
+    const client = new FakeClient(); const controller = new DesktopController(client); instances.push(controller);
+    const state = observe(controller);
+    client.script['system.info'] = () => systemInfo;
+    client.script['jobs.list'] = () => [];
+    client.script['jobs.get'] = params => jobSnapshot({ job_id: String(params.job_id), state: 'succeeded', packages: [] });
+    client.script['jobs.cancel'] = () => ({ accepted: false });
+    await controller.initialize();
+    controller.selectJob(jobSnapshot({ job_id: 'active', state: 'running', packages: packageRows(1) }));
+    controller.addInputs(['blocked.zip']);
+    expect(state().inputs).toEqual([]);
+    expect(state().notice).toContain('任务正在处理');
+    await controller.cancel();
+    expect(state().notice).toBe('任务已结束，无需取消。');
+    expect(state().job?.state).toBe('succeeded');
+  });
+
   it('delivers cancel while another operation is busy without clearing its busy state', async () => {
     vi.useFakeTimers();
     const client = new FakeClient(); const controller = new DesktopController(client); instances.push(controller);
@@ -123,6 +141,9 @@ describe('desktop lifecycle regressions', () => {
     controller.selectJob(jobSnapshot({ job_id: 'active', state: 'running', packages: packageRows(1) }));
     const inFlight = controller.showLogs();
     expect(state().busy).toBe(true);
+    await controller.showLogs();
+    expect(client.callsOf('jobs.logs')).toHaveLength(1);
+    expect(state().notice).toContain('当前操作尚未完成');
     await controller.cancel();
     expect(client.callsOf('jobs.cancel')).toHaveLength(1);
     expect(state().busy).toBe(true);

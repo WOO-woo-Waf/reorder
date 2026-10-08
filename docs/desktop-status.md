@@ -1,8 +1,55 @@
 # 桌面软件实施状态与新聊天交接
 
-更新时间：2026-10-08（Asia/Shanghai）。Windows x64 手动桌面首版预览已交付：EXE、NSIS、便携 ZIP、OO 图与制作方指南已具备。真实文件、体验及干净机器安装仍待用户人工验收，整体产品目标尚未验收完成。
+更新时间：2026-10-08（Asia/Shanghai）。Windows x64 手动桌面首版已具备 EXE、NSIS、便携 ZIP、OO 图与制作方指南，本轮更新星绫解封 0.3.0。真实文件、体验及干净机器安装仍待用户人工验收，整体产品目标尚未验收完成。
 
 方案：[product_plan.md](product_plan.md)。正式设计：[desktop-design.md](desktop-design.md)。
+
+## 0.0 2026-10-08 星绫解封 0.3.0（当前切片）
+
+本节优先于下方 0.2.0 和迁移记录。用户再次授权实现、Windows构建、commit和重试push；真实文件、GUI与安装体验继续由用户人工验收。内部 `reorder_engine` 与 `io.reorder.desktop` 保留，旧便携目录及 `data/` 保留。
+
+### 已批准与实现
+
+- 显示名 **星绫解封 · Hoshiribbon**，介绍“把压缩的次元，一层层展开”；日系紫粉界面、新图标、默认原创成年少女星夜背景。
+- 可选择本地 PNG/JPEG/WebP（2 MiB），调节遮罩、模糊、无背景与恢复默认；外观仅在 WebView 本地存储。
+- Git公开词库作为固定数据资源：115密码、8关键词；私人密码优先、去重后追加默认密码。内置密码默认开启，私人库清空不删除内置库，DTO只含条数/开关，日志对两库脱敏。
+- **用户明确选择关键词清理默认关闭**。开启后只清理成品顶层名，保留扩展名、包内层级、原件及归档名；非法/空名保留，同名安全分配。
+- Bandizip CLI 7.40.0.1：所有者声明已取得官方书面分发许可，本轮据此固定捆绑 `bz.exe`、两个 Ark DLL、公开 EULA/Ark/LGPL文本与授权依据说明；没有审阅许可函原文。GUI/更新器/宿主私人配置排除。
+- 7-Zip 25.01 / UnRAR 7.13 保持；所有解压路径先经7-Zip安全预检，不能因 Bandizip 支持 ALZ/EGG 就宣称项目端到端可用。见 [格式指南](desktop-format-support.md) 与 [视觉说明](desktop-artwork.md)。
+- 交接界面风险已修：未提交密码文本统一清理；取消按 accepted 显示提示；运行时拖入、忙时拒绝操作有反馈。
+
+### 本轮证据与交付入口
+
+新任务使用独立 V1 正文及显式 DeepSeek/high，未恢复旧子线程。证据在 ignored `artifacts/desktop/hoshiribbon-20261008/`。未受影响的历史核心检查复用；外观审查修复后已定向重查，新增检查只覆盖变动风险；当前已完成以下定向检查（不相加声称全套）：
+
+| 范围 | 命令/方式 | 结果与证据 |
+| --- | --- | --- |
+| 外观导入/存储边界 | `npx --no-install vitest run src/lib/appearance.test.ts` | exit 0，23 passed；`main/appearance-final-test.log`（加入头部尺寸/像素上限，原20项证据留作历史） |
+| 内置库与成品改名 | `PYTHONPATH=src python -m pytest tests/test_builtin_desktop_defaults.py -q` | exit 0，34 passed；`defaults/pytest-builtin-defaults.txt` |
+| 既有设置/脱敏 | `pytest tests/test_desktop_engine.py::test_rpc_invalid_params_and_no_password_persistence -q` | exit 0，1 passed；`defaults/pytest-existing-settings-info.txt` |
+| 工具/词库暂存与发行命名 | `pytest tests/test_desktop_tool_staging.py tests/test_desktop_default_staging.py -q` | exit 0，97 passed；`packaging/packaging-slice-evidence.json` |
+| 取消/忙时/启动恢复 | `npx --no-install vitest run src/lib/desktop-controller.test.ts` | exit 0，7 passed；`main/controller-test.log`。首次失败为测试期望仍写0.2.0，修正fixture后通过，初始日志保留 |
+| 前端类型/产物 | `npm run check`、`npm run build` | 均exit 0；0 errors/0 warnings；`main/frontend-final-results.json` |
+| Windows 引擎重新冻结 | Windows venv Python执行 `scripts/stage_desktop_engine.py` | exit 0；含工具与defaults严格校验；`main/engine-stage-result.json` 与 `main/freeze.log` |
+
+Windows最终release/NSIS/ZIP已构建成功（exit 0，release约1m33s），已嵌入外观审查修复后的最终前端；最终包完整性由 `main/windows-build-final-result.json` 与 `package-validation/final-result.json` 记录证明。本表不代替实际内容或GUI验收。
+
+最终资源已通过有限包校验：`rtk proxy bash run_final_check.sh final` exit 0，102项结构断言与11项NSIS断言无错误；ZIP CRC和773个清单文件的大小/hash一致，NSIS/便携 engine 157、docs 22、licenses 591逐文件差异为0。只解包安装器，未执行安装/GUI/内容。完整记录 `package-validation/final-result.json`，复用冻结help证据。
+
+本轮最终便携目录为 `artifacts/desktop/Hoshiribbon-0.3.0-windows-x64-r2z6_rpx/`；同名无后缀目录为构建中间树，最终验收请使用此目录或下面的ZIP。安装包与ZIP在 `artifacts/desktop/`：
+
+- ZIP SHA-256：`5d81f79753519329c39d1542e2231ad721ec80053ff2c499300de020596d1e0e`。
+- NSIS SHA-256：`b09c0f1a98514492a4878feaf1f04abd972bd4ec912ec253a77a5da16097ab03`。
+
+发行包内实施状态为封包时快照；本仓库本节另补录最终检查结果，其他操作与格式指南一致。
+
+Windows发行名称：`Hoshiribbon.exe`、`Hoshiribbon_0.3.0_x64-setup.exe`、`Hoshiribbon-0.3.0-windows-x64.zip`；实际路径和hash以最终打包记录为准。源码/资源变动后重新冻结引擎、构建前端与Rust宿主，不以旧内容smoke代替新版本业务验收。
+
+独立UI审查的尺寸上限、保存归一化与存储提示问题均已修复并复核闭环；引擎独立审查无阻断。证据见 `ui-review/findings-ui-review.md`、`engine-review/review-disposition.json`。公开库含10条不足4字符的密码，脱敏有意覆盖完整命中片段，可能使相应日志片段隐藏；不改变成品与原件内容。损坏内置资源会报错，需恢复安装资源；不静默降级。当前冻结Python3.13.5的junction检查可用，较低Python开发环境未验证。
+
+### 人工验收仍未完成
+
+按 [用户指南](desktop-user-guide.md) 新增清单核对：默认背景/本地换图/重启保存/缩放/窄窗，内置与私人库分别启停，关键词开关的成品改名，真实 ZIP/AES ZIP/7z/RAR/分卷/错密码/嵌套，以及安装卸载与已有历史迁移。浏览器、监听与Agent继续留后续。安装包未签名，离线干净机器仍需要系统WebView2；工程检查不等于这些验收已通过。
 
 ## 0. 本轮继续状态（优先于下方迁移快照）
 
