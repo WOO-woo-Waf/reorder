@@ -49,6 +49,10 @@ Windows发行名称：`Hoshiribbon.exe`、`Hoshiribbon_0.3.0_x64-setup.exe`、`H
 
 ### Git 与下一步
 
+2026-10-08 已按用户授权公开发布 **[星绫解封 0.3.0 Windows x64 预发布](https://github.com/WOO-woo-Waf/reorder/releases/tag/v0.3.0)**，附安装包、便携 ZIP 和 `SHA256SUMS.txt`；下载入口见 [Release 下载说明](github_release_download.md)。`v0.3.0` 的发布目标为 `b47cb92988a16596b36e3f3f3bad6c506cb64505`（功能提交后补充交付记录）。安装包和 ZIP 未重建，复用上述最终包证据；发布不代表人工验收完成。
+
+发布检查：发布前 GitHub API GET 与成功发布 PATCH 响应均已核对三个附件的名称、大小、上传状态和服务端 SHA-256，全部与本地产物一致；服务端返回 `draft=false`、`prerelease=true` 和正式 `v0.3.0` 下载 URL。记录为 ignored `artifacts/desktop/release-0.3.0/{draft-assets-check,published-assets-check}.json`。发布后独立 GET / tag ref 查询因代理 TLS EOF 未完成，未额外下载附件；不把这一限制写成已验证公网下载。
+
 功能提交 `60e13228f52e38a7cc6264ba3006d67e51b9f5fd` 已推送到 `origin/main`，远程提交号独立核对一致；上一轮固定UnRAR提交也一并送达。WSL初次TLS握手失败，Windows Git缺登录凭据，随后WSL保留代理/证书校验并使用TLS1.2成功；记录在 `main/push-wsl-retry-result.json`、`main/remote-main-check.json`。源码、公开背景与锁定Bandizip输入随Git同步；WindowsEXE/NSIS/ZIP位于上述本地交付入口。
 
 下一步为用户按副本真实文件、界面、安装与历史验收清单核对；收到明确反馈后再实施相应修复，不重复本轮有效机器检查。整体产品仍未人工验收完成。

@@ -1,6 +1,20 @@
 # GitHub Release 下载与使用说明
 
-本文档说明如何把 Windows 便携版 ZIP 发布到 GitHub，并让别人通过公网链接下载使用。
+## 当前桌面版：星绫解封 0.3.0
+
+Windows x64 预发布已上线：[v0.3.0 Release](https://github.com/WOO-woo-Waf/reorder/releases/tag/v0.3.0)。
+
+| 附件 | 使用方式 |
+| --- | --- |
+| [安装包](https://github.com/WOO-woo-Waf/reorder/releases/download/v0.3.0/Hoshiribbon_0.3.0_x64-setup.exe) | 当前用户安装，安装后从开始菜单启动 |
+| [便携 ZIP](https://github.com/WOO-woo-Waf/reorder/releases/download/v0.3.0/Hoshiribbon-0.3.0-windows-x64.zip) | 完整解压到可写目录，双击 `Start-Portable.cmd`；保留整个引擎目录 |
+| [SHA256SUMS.txt](https://github.com/WOO-woo-Waf/reorder/releases/download/v0.3.0/SHA256SUMS.txt) | 核对安装包和 ZIP 的 SHA-256 |
+
+无需另装 Python 或解压工具，需要系统 WebView2；安装包未签名。真实文件、GUI、安装卸载仍待人工验收。详见 [桌面版用户指南](desktop-user-guide.md) 和 [格式支持指南](desktop-format-support.md)。
+
+## 旧 CLI/Beta 便携版发布资料
+
+以下内容保留旧命令行便携版的包结构、构建和使用方法。
 
 最终使用者下载 ZIP 后的具体操作，见 [Windows 便携版用户使用指南](portable_user_guide.md)。
 

@@ -6,6 +6,8 @@
 
 ## Windows 桌面 0.3.0 预览
 
+已发布 Windows x64 **预发布**：[Release 页面](https://github.com/WOO-woo-Waf/reorder/releases/tag/v0.3.0) · [安装包](https://github.com/WOO-woo-Waf/reorder/releases/download/v0.3.0/Hoshiribbon_0.3.0_x64-setup.exe) · [便携 ZIP](https://github.com/WOO-woo-Waf/reorder/releases/download/v0.3.0/Hoshiribbon-0.3.0-windows-x64.zip) · [SHA-256 校验和](https://github.com/WOO-woo-Waf/reorder/releases/download/v0.3.0/SHA256SUMS.txt)。
+
 - 自带 Python 引擎、**7-Zip 25.01、UnRAR 7.13、Bandizip CLI 7.40.0.1**，无需另装 Python 或解压工具。Bandizip 按所有者已取得书面分发许可的声明纳入固定依赖，包含所需 DLL 和公开许可说明。
 - 内置 Git 公开库的 **115 条默认密码、8 条关键词**。私人密码优先，默认密码可关闭；关键词仅清理成品顶层名称，**默认关闭**。内置公开库与私人系统凭据分开。
 - 星夜少女背景、浅紫粉主题，可选择本地图片并调整遮罩、模糊或关闭背景；素材与来源见 [视觉说明](docs/desktop-artwork.md)。
@@ -13,7 +15,7 @@
 - 制作方：[代码阅读指南](docs/desktop-code-guide.md)、[语言指南](docs/desktop-language-guide.md)、[面向对象架构图](docs/desktop-design.md)。
 - 构建：`scripts/build_desktop_windows.ps1`；Tauri 2 + Svelte 5 + TypeScript + Vite、Rust 宿主、Python 引擎、SQLite。Windows x64 首交付。
 
-真实资源、GUI、安装卸载和主观效果待用户人工验收；工程检查范围与限制在实施状态中列明。跨平台路线保持，浏览器、监听和 Agent 留后续。
+运行需要 Windows 10/11 x64 与系统 WebView2，安装包尚未签名。真实资源、GUI、安装卸载和主观效果待用户人工验收；工程检查范围与限制在实施状态中列明。跨平台路线保持，浏览器、监听和 Agent 留后续。
 
 ## 保留的 ReOrder Engine / CLI
 
