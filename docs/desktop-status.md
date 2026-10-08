@@ -47,6 +47,12 @@ Windows发行名称：`Hoshiribbon.exe`、`Hoshiribbon_0.3.0_x64-setup.exe`、`H
 
 独立UI审查的尺寸上限、保存归一化与存储提示问题均已修复并复核闭环；引擎独立审查无阻断。证据见 `ui-review/findings-ui-review.md`、`engine-review/review-disposition.json`。公开库含10条不足4字符的密码，脱敏有意覆盖完整命中片段，可能使相应日志片段隐藏；不改变成品与原件内容。损坏内置资源会报错，需恢复安装资源；不静默降级。当前冻结Python3.13.5的junction检查可用，较低Python开发环境未验证。
 
+### Git 与下一步
+
+功能提交 `60e13228f52e38a7cc6264ba3006d67e51b9f5fd` 已推送到 `origin/main`，远程提交号独立核对一致；上一轮固定UnRAR提交也一并送达。WSL初次TLS握手失败，Windows Git缺登录凭据，随后WSL保留代理/证书校验并使用TLS1.2成功；记录在 `main/push-wsl-retry-result.json`、`main/remote-main-check.json`。源码、公开背景与锁定Bandizip输入随Git同步；WindowsEXE/NSIS/ZIP位于上述本地交付入口。
+
+下一步为用户按副本真实文件、界面、安装与历史验收清单核对；收到明确反馈后再实施相应修复，不重复本轮有效机器检查。整体产品仍未人工验收完成。
+
 ### 人工验收仍未完成
 
 按 [用户指南](desktop-user-guide.md) 新增清单核对：默认背景/本地换图/重启保存/缩放/窄窗，内置与私人库分别启停，关键词开关的成品改名，真实 ZIP/AES ZIP/7z/RAR/分卷/错密码/嵌套，以及安装卸载与已有历史迁移。浏览器、监听与Agent继续留后续。安装包未签名，离线干净机器仍需要系统WebView2；工程检查不等于这些验收已通过。
