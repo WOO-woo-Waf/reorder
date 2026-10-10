@@ -6,14 +6,14 @@
 
 ## 0. 交付范围与验收边界
 
-本指南对应 Windows x64 桌面版 **0.3.1**（本地待确认）。**0.3.1 尚未发布**，本轮不新增 Release 链接；当前对外仍是 0.3.0 预发布。当前构建是否成功、Git 提交和检查记录统一见 [desktop-status.md](desktop-status.md)；本指南介绍运行方法。真实文件、操作体验与干净机器安装仍由用户按第 12 节人工验收。
+本指南对应 Windows x64 桌面版 **0.3.1 便携预发布**，用户已确认本轮修复并授权发布。下载：[Release 页面](https://github.com/WOO-woo-Waf/reorder/releases/tag/v0.3.1) · [便携 ZIP](https://github.com/WOO-woo-Waf/reorder/releases/download/v0.3.1/Hoshiribbon-0.3.1-windows-x64.zip) · [SHA-256](https://github.com/WOO-woo-Waf/reorder/releases/download/v0.3.1/SHA256SUMS.txt)。当前构建是否成功、Git 提交和检查记录统一见 [desktop-status.md](desktop-status.md)；本指南介绍运行方法。真实文件、操作体验与干净机器安装仍由用户按第 12 节人工验收。
 
 | 项目 | 交付入口 | 说明 |
 | --- | --- | --- |
 | 桌面源码 | `apps/desktop`、`src/reorder_engine` | 已批准技术栈；保留 CLI |
 | Python 冻结引擎 | `engine/reorder-engine.exe` | 必须保留完整 `_internal` 与工具目录 |
 | 桌面 EXE | `Hoshiribbon.exe` | 使用系统 WebView2 |
-| NSIS 安装包 | `Hoshiribbon_0.3.1_x64-setup.exe` | 用户级安装，尚未签名（该文件名对应本地待确认的 0.3.1 构建） |
+| NSIS 安装包 | 本版不提供 | 0.3.0 历史安装器仍有效；不要把旧安装器当成 0.3.1 |
 | 便携 ZIP | `Hoshiribbon-0.3.1-windows-x64.zip` | 解压整个目录；完整性看 `SHA256SUMS.txt` |
 | 真实窗口、文件、安装卸载 | 用户人工验收 | 合成引擎检查和源码检查不能替代这一项 |
 
@@ -40,7 +40,7 @@
 
 ## 2. 你会拿到什么（产物形态与文件树）
 
-发行产物有两种形态；拿到后按下列结构核对完整目录。
+0.3.1 发布便携 ZIP；安装器说明仅供历史版本与制作方参考。拿到后按下列结构核对完整目录。
 
 ### 2.1 便携包（ZIP 解压即用）
 
@@ -72,9 +72,9 @@ Hoshiribbon-portable\
 - 双击 `Hoshiribbon.exe` 使用默认用户数据目录；双击 `Start-Portable.cmd`（等价于 `Hoshiribbon.exe --portable`）使用 EXE 旁的 `data\`，该目录必须可写，公开密码文件也持久保存在那里的 `data\passwords.txt`。两者都需要系统 WebView2。
 - 包内指南和图表可直接阅读；制作方指南中的源码链接需要在完整 Git 仓库内打开。
 
-### 2.2 安装包（NSIS）
+### 2.2 安装包（NSIS；0.3.1 未提供）
 
-由 `npm run tauri build` 生成，位置：
+制作方可由 `npm run tauri build` 生成，预期位置如下；这不是 0.3.1 的可下载附件：
 
 ```text
 apps\desktop\src-tauri\target\release\bundle\nsis\Hoshiribbon_0.3.1_x64-setup.exe

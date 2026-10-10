@@ -4,13 +4,13 @@
 
 面向二次元收藏者的本地桌面整理工具：将下载的资源按文件组识别，在工作副本上恢复与解压，发布成品后归档原包。支持普通压缩包、分卷和部分伪装/嵌入格式；具体方式、效果和限制见 [格式支持指南](docs/desktop-format-support.md)。手动批处理优先，文件在本机处理。
 
-## Windows 桌面 0.3.1（本地验收版）
+## Windows 桌面 0.3.1（预发布）
 
-0.3.1 提供本地验收产物；完成你的人工作业验收后再发布新版 Release。当前已发布的仍是 Windows x64 **0.3.0 预发布**，下载链接保持有效：
+用户于 2026-10-10 确认当前修复并授权发布 **0.3.1 Windows x64 便携版**。下载：[Release 页面](https://github.com/WOO-woo-Waf/reorder/releases/tag/v0.3.1) · [便携 ZIP](https://github.com/WOO-woo-Waf/reorder/releases/download/v0.3.1/Hoshiribbon-0.3.1-windows-x64.zip) · [SHA-256 校验和](https://github.com/WOO-woo-Waf/reorder/releases/download/v0.3.1/SHA256SUMS.txt)。解压到新目录后运行 `Start-Portable.cmd`；本版不提供新版安装器。
 
 已发布 Windows x64 **预发布（0.3.0）**：[Release 页面](https://github.com/WOO-woo-Waf/reorder/releases/tag/v0.3.0) · [安装包](https://github.com/WOO-woo-Waf/reorder/releases/download/v0.3.0/Hoshiribbon_0.3.0_x64-setup.exe) · [便携 ZIP](https://github.com/WOO-woo-Waf/reorder/releases/download/v0.3.0/Hoshiribbon-0.3.0-windows-x64.zip) · [SHA-256 校验和](https://github.com/WOO-woo-Waf/reorder/releases/download/v0.3.0/SHA256SUMS.txt)。
 
-0.3.1 的实现与人工验收要点：
+0.3.1 的更新要点：
 
 - **公开密码库改为一个可直接编辑的明文文件**：首次运行在数据目录生成 `passwords.txt`，写入随包的 **115 条公开密码**；之后完全由你维护——可查看、添加、编辑、删除或清空。界面的“从文件追加”是**追加**，“保存密码列表”才整体替换；空行忽略，重复、空格和 `#` 都按字面内容保留，不去重、也不当作注释。
 - **不再使用系统凭据后端，也不加密或脱敏**：密码文件是明文，日志不再把密码替换成 `[密码已隐藏]`。归档密码以公开数据处理，可直接查看和编辑。
@@ -24,7 +24,7 @@
 - 制作方：[代码阅读指南](docs/desktop-code-guide.md)、[语言指南](docs/desktop-language-guide.md)、[面向对象架构图](docs/desktop-design.md)。
 - 构建：`scripts/build_desktop_windows.ps1`；Tauri 2 + Svelte 5 + TypeScript + Vite、Rust 宿主、Python 引擎、SQLite。桌面端包裹现有引擎策略，不缩减旧管线的分组、成品命名与嵌套整理能力。Windows x64 首交付。
 
-运行需要 Windows 10/11 x64 与系统 WebView2，安装包尚未签名。0.3.1 的真实资源、GUI、安装卸载和主观效果待用户人工验收；工程检查范围与限制在实施状态中列明。跨平台路线保持，浏览器、监听和 Agent 留后续。
+运行需要 Windows 10/11 x64 与系统 WebView2，程序尚未签名。用户已确认本轮修复并同意发布；其他真实资源、干净机器启动、真实跨盘与大盘性能仍需按需验收，工程检查范围与限制在实施状态中列明。跨平台路线保持，浏览器、监听和 Agent 留后续。
 
 ## 保留的 ReOrder Engine / CLI
 
