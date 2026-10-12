@@ -182,7 +182,8 @@ class JobRunner:
                         actions = [a for a in self.repository.actions(job_id)
                             if a["package_id"] == package.package_id
                             and a["kind"] not in {"workspace", "recovery_note"}]
-                        committed = [a["destination"] for a in actions if a["phase"] == "committed"]
+                        committed = [a["destination"] for a in actions if a["phase"] == "committed"
+                                     and a["kind"] not in {"source_edit", "source_rename"}]
                         review = any(a["phase"] not in {"committed", "abandoned"} for a in actions) or bool(committed)
                         state = "needs_review" if review else ("cancelled" if isinstance(exc, ProcessingCancelled) else "failed")
                         code = exc.code if isinstance(exc, EngineError) else "PROCESSING_FAILED"
@@ -190,7 +191,9 @@ class JobRunner:
                             # Keep a bounded local traceback for frozen-runtime
                             # failures; the UI still gets the concise message.
                             self._log(job_id, traceback.format_exc(limit=8))
-                        message = str(exc) if isinstance(exc, EngineError) else "处理异常，原件保留；请查看诊断记录。"
+                        message = str(exc) if isinstance(exc, EngineError) else "处理异常，请查看诊断记录。"
+                        if review:
+                            message += " 已有文件动作，请核对实际文件与动作记录，未自动重试。"
                         message = self.processor.secrets.redact(message)
                         self._log(job_id, f"{code}: {message}")
                         self.repository.update_package(job_id, package.package_id, state=state,

@@ -78,7 +78,7 @@
   <g id="node-processor" data-graph-role="node" data-node-id="processor" data-semantic-role="rect" data-motion-role="" data-motion-stage="" data-motion-order="" data-parent="" data-deployment-id="" data-topic-id="" data-span-id="" data-station-order="" data-status="" data-start-ms="" data-duration-ms="" data-parent-span="" data-graph-bounds="60,550,480,640">
   <rect x="60.0" y="550.0" width="420.0" height="90.0" rx="10.0" fill="#ffffff" stroke="#d1d5db" stroke-width="1.8"/>
   <text data-text-role="title" data-full-text="PackageProcessor" data-text-max-width="396.0" x="270.0" y="595.0" text-anchor="middle" class="node-title" font-size="18">PackageProcessor</text>
-  <text data-text-role="subtitle" data-full-text="workspace copy / pipeline / publish" data-text-max-width="396.0" x="270.0" y="617.0" text-anchor="middle" class="node-sub" font-size="12">workspace copy / pipeline / publish</text>
+  <text data-text-role="subtitle" data-full-text="direct sources / pipeline / publish" data-text-max-width="396.0" x="270.0" y="617.0" text-anchor="middle" class="node-sub" font-size="12">direct sources / pipeline / publish</text>
   </g>
   <g id="node-store" data-graph-role="node" data-node-id="store" data-semantic-role="rect" data-motion-role="" data-motion-stage="" data-motion-order="" data-parent="" data-deployment-id="" data-topic-id="" data-span-id="" data-station-order="" data-status="" data-start-ms="" data-duration-ms="" data-parent-span="" data-graph-bounds="620,550,1040,640">
   <rect x="620.0" y="550.0" width="420.0" height="90.0" rx="10.0" fill="#ecfdf5" stroke="#10b981" stroke-width="1.8"/>

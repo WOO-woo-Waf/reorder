@@ -10,13 +10,14 @@ from typing import Callable
 
 from reorder_engine.application.errors import EngineError
 from reorder_engine.application.models import PlannedPackage, ProcessingOptions
-from reorder_engine.application.planning import reject_links, validate_source
+from reorder_engine.application.planning import reject_links
 from reorder_engine.domain.models import KeywordLibrary
 from reorder_engine.infrastructure.archive_safety import ArchiveSafetyInspector, GuardedExtractor, WorkspaceGuard
 from reorder_engine.infrastructure.builtin_defaults import BuiltinDefaults
 from reorder_engine.infrastructure.command_runner import ExternalCommandRunner
 from reorder_engine.infrastructure.desktop_paths import DesktopPaths
-from reorder_engine.infrastructure.file_transaction import FileTransaction, check_cancel, copy_verified
+from reorder_engine.infrastructure.file_transaction import FileTransaction, check_cancel
+from reorder_engine.infrastructure.source_session import DirectSourceSession, SourceRenamer, SourceRestoration
 from reorder_engine.infrastructure.job_repository import JobRepository
 from reorder_engine.infrastructure.secret_store import SecretStore
 from reorder_engine.infrastructure.settings_repository import SettingsRepository
@@ -118,7 +119,7 @@ def clean_output_entry_names(root: Path, keywords: tuple[str, ...], *,
 
 
 class PackageProcessor:
-    """Adapt the existing pipeline on copies; publish and archive real sources centrally."""
+    """Run the legacy pipeline on selected originals; publish and route centrally."""
 
     def __init__(self, paths: DesktopPaths, settings: SettingsRepository,
                  repository: JobRepository, secrets: SecretStore,
@@ -157,19 +158,17 @@ class PackageProcessor:
         # folder) before creating anything, in case a link appeared after scanning.
         reject_links(output_root)
         output_root.mkdir(parents=True, exist_ok=True)
-        # Reject symlink/junction escapes before any source is copied, so bulk work
+        # Reject symlink/junction escapes before preparing outputs, so bulk work
         # cannot be redirected outside the chosen output folder.
         guard_workspace_path(output_root, output_root)
-        source_bytes = sum(member.size for member in package.members)
-        # The defensive work copy and (only when the originals live on another
-        # volume) the routed archives consume new space. Publishing and same-volume
-        # routing are exclusive moves, so they are not counted twice.
-        needed = source_bytes * 2 + 64 * 1024 * 1024
+        # Reading originals and same-volume routing allocate no archive copy.
+        # Only cross-volume archives must be copied; extraction is guarded live.
+        needed = 64 * 1024 * 1024
         output_device = os.stat(output_root).st_dev
-        if any(member.device != output_device for member in package.members):
-            needed += source_bytes
+        needed += sum(member.size for member in package.members if member.device != output_device)
         if shutil.disk_usage(output_root).free < needed:
-            raise EngineError("DISK_FULL", "准备副本和归档需要的可用空间不足。")
+            raise EngineError("DISK_FULL", "解压工作空间或跨盘归档需要的可用空间不足。")
+        sources = DirectSourceSession(package, self.repository, job_id=job_id)
         workspace = allocate_run_workspace(output_root, job_id, package.package_id)
         try:
             # Record the actual run location so recovery finds it even when a unique
@@ -179,13 +178,10 @@ class PackageProcessor:
                 "source": "", "destination": str(workspace), "snapshot": None})
             self.repository.action_phase(workspace_action, "committed")
             progress("preparing")
-            for member in package.members:
-                validate_source(member)
-                copy_verified(Path(member.path), workspace / Path(member.path).name, cancel_event=cancel)
             tool_tmp = workspace / "tmp"
             tool_tmp.mkdir(parents=True, exist_ok=True)
             quota = options.max_output_gb * 1024 ** 3
-            guard = WorkspaceGuard(workspace, byte_limit=source_bytes * 4 + quota)
+            guard = WorkspaceGuard(workspace, byte_limit=quota)
             runner = ExternalCommandRunner(encoding="utf-8", cancel_event=cancel,
                 guard=guard.check, timeout_sec=options.tool_timeout_sec, line_sink=log,
                 cwd=tool_tmp, env={"TMP": str(tool_tmp), "TEMP": str(tool_tmp),
@@ -200,6 +196,7 @@ class PackageProcessor:
             inspector = ArchiveSignatureInspector()
             restore = RestorationService([RestoreABRestorer(), ApateRestorer(inspector, rounds=3),
                 EmbeddedArchiveRestorer(inspector), SuffixVariantBuilder(inspector)], inspector=inspector)
+            restore = SourceRestoration(restore, sources, workspace)
 
             def emit(message: str) -> None:
                 check_cancel(cancel)
@@ -214,13 +211,15 @@ class PackageProcessor:
                 deep_extract=BetaDeepExtractConfig(options.deep_extract, options.max_depth,
                     options.min_archive_mb, options.final_single_mb),
                 preserve_payload_names=options.preserve_payload_names,
-                archive_min_mb=options.min_archive_mb)
+                archive_min_mb=options.min_archive_mb,
+                volume_sets=(sources.volume_set(),), manage_originals=False,
+                renamer=SourceRenamer(sources))
             progress("extracting")
             result = pipeline.run()
             check_cancel(cancel)
             guard.check(force=True)
             if len(result.packages) != 1:
-                raise EngineError("GROUP_MISMATCH", "副本分组与处理计划不同，原件保留。")
+                raise EngineError("GROUP_MISMATCH", "实际处理分组与计划不同，请检查任务记录。")
             outcome = result.packages[0]
             transaction = FileTransaction(self.repository, job_id=job_id,
                 package_id=package.package_id, output_root=output_root)
@@ -237,7 +236,8 @@ class PackageProcessor:
                 destination = output_root / "deferred_volumes" / package.package_id
             else:
                 destination = output_root / "error_files" / (outcome.category or "unknown")
-            results.extend(transaction.route_sources(package, destination))
+            results.extend(transaction.route_sources(sources.routing_package(), destination))
+            sources.complete()
             # Tool failures usually finish with the actionable error line.
             return PackageOutcome(outcome.state, self.secrets.redact(outcome.message)[-2000:], results)
         finally:

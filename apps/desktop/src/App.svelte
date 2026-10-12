@@ -37,7 +37,7 @@
   const done = $derived(view.job?.packages.filter(p => terminalPackages.has(p.state)).length ?? 0);
   const total = $derived(view.job?.packages.length ?? view.plan?.packages.length ?? 0);
   const retryCount = $derived(view.job?.packages.filter(p => retryable.has(p.state)).length ?? 0);
-  const names: Record<string, string> = { queued: '等待', running: '处理中', preparing: '准备副本', extracting: '恢复 / 解压', publishing: '发布成品', archiving: '归档原包', cancelling: '正在取消', succeeded: '完成', partial: '部分完成', failed: '失败', deferred: '等待补卷', cancelled: '已取消', interrupted: '已中断', needs_review: '需要检查' };
+  const names: Record<string, string> = { queued: '等待', running: '处理中', preparing: '准备解压', extracting: '恢复 / 解压', publishing: '发布成品', archiving: '归档原包', cancelling: '正在取消', succeeded: '完成', partial: '部分完成', failed: '失败', deferred: '等待补卷', cancelled: '已取消', interrupted: '已中断', needs_review: '需要检查' };
   const size = (bytes: number) => bytes >= 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(1)} GB` : `${(bytes / 1024 ** 2).toFixed(1)} MB`;
   const formatBytes = (bytes: number) => bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(2)} MiB` : `${Math.max(1, Math.round(bytes / 1024))} KiB`;
   const MB_LIMIT = MAX_IMAGE_BYTES / 1024 / 1024;

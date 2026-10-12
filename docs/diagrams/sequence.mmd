@@ -6,6 +6,7 @@ sequenceDiagram
   participant API as EngineFacade
   participant Job as JobRunner
   participant Core as PackageProcessor
+  participant Sources as DirectSourceSession
   participant FS as FileTransaction
   participant DB as JobRepository
   User->>UI: 拖放目录或文件
@@ -26,19 +27,25 @@ sequenceDiagram
     Job->>Core: process(package, options, cancel, job_id, output_root, log, progress)
     Core-->>Job: progress(preparing)
     Job->>DB: update_package(preparing)
-    Core->>Core: 复核源、复制工作副本、恢复 / 解压
+    Core->>Sources: 复核选中原包；直接源组
     Core-->>Job: progress(extracting)
     Job->>DB: update_package(extracting)
     Core->>Core: BetaFolderPipeline.run()
+    opt 原包需要还原 / 改名
+      Core->>Sources: 记录原地变换；更新本次身份
+      Sources->>DB: source_edit / source_rename -> applied
+    end
     Core-->>Job: progress(publishing)
     Job->>DB: update_package(publishing)
     Core->>FS: publish_children(workspace, output_root)
     FS->>DB: record_action(publish) -> published -> committed
     Core-->>Job: progress(archiving)
     Job->>DB: update_package(archiving)
-    Core->>FS: route_sources(package, 归档 / 错误 / 缺卷目录)
+    Core->>Sources: routing_package() 复核真实路径
+    Core->>FS: route_sources(当前原包, 归档 / 错误 / 缺卷目录)
     FS->>DB: record_action(route_source) -> copied
     FS->>FS: 同卷全部独占落位并复核后删源；跨卷全部复制校验后删源
+    Core->>Sources: complete() 原地动作 -> committed
     Core-->>Job: PackageOutcome(state)
     Job->>DB: update_package(终态)
   end

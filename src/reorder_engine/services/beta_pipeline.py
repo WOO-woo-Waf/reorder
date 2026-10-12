@@ -79,6 +79,9 @@ class BetaFolderPipeline:
         preserve_payload_names: bool = True,
         path_compress: bool = True,
         archive_min_mb: int = 100,
+        volume_sets: tuple[VolumeSet, ...] | None = None,
+        manage_originals: bool = True,
+        renamer: SafeRenamer | None = None,
     ):
         self._folder = folder
         self._decrypt = decrypt_service
@@ -95,7 +98,9 @@ class BetaFolderPipeline:
         self._preserve_payload_names = bool(preserve_payload_names)
         self._path_compress = bool(path_compress)
         self._archive_min_mb = max(1, int(archive_min_mb))
-        self._renamer = SafeRenamer()
+        self._renamer = renamer or SafeRenamer()
+        self._volume_sets = volume_sets
+        self._manage_originals = manage_originals
 
     def run(self, *, dry_run: bool = False) -> BetaRunResult:
         success_dir = self._folder / "success"
@@ -111,9 +116,15 @@ class BetaFolderPipeline:
             error_dir.mkdir(parents=True, exist_ok=True)
             deferred_volume_dir.mkdir(parents=True, exist_ok=True)
 
-        all_files = [p for p in self._folder.glob("*") if p.is_file()]
-        all_files = [p for p in all_files if p.name not in self._exclude_names and p.suffix.lower() not in self._exclude_exts]
-        volume_sets = self._grouper.group(all_files)
+        if self._volume_sets is None:
+            all_files = [p for p in self._folder.glob("*") if p.is_file()]
+            all_files = [p for p in all_files if p.name not in self._exclude_names and p.suffix.lower() not in self._exclude_exts]
+            volume_sets = self._grouper.group(all_files)
+        else:
+            # The desktop selects explicit original groups. The folder is only
+            # the output workspace; no full archive staging copy is required.
+            volume_sets = self._volume_sets
+            all_files = [p for group in volume_sets for p in group.members]
         self._emit(f"SCAN: folder={self._folder} files={len(all_files)} groups={len(volume_sets)} dry_run={dry_run}")
 
         ok = 0
@@ -1026,6 +1037,8 @@ class BetaFolderPipeline:
         return target
 
     def _defer_missing_volume_set(self, vs: VolumeSet, *, dry_run: bool) -> list[Path]:
+        if not self._manage_originals:
+            return [member for member in vs.members if member.exists()]
         moved: list[Path] = []
         for member in list(vs.members):
             if not member.exists():
@@ -1062,6 +1075,8 @@ class BetaFolderPipeline:
         return duplicate_root / target_name
 
     def _move_original_members(self, vs: VolumeSet, dest_dir: Path, *, package_name: str, dry_run: bool) -> None:
+        if not self._manage_originals:
+            return
         for member in vs.members:
             if not member.exists():
                 continue

@@ -62,7 +62,7 @@
       "width": 420,
       "height": 90,
       "label": "PackageProcessor",
-      "sublabel": "workspace copy / pipeline / publish",
+      "sublabel": "direct sources / pipeline / publish",
       "flat": true
     },
     {

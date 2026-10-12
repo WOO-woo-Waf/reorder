@@ -1,10 +1,49 @@
 # 桌面软件实施状态与新聊天交接
 
-更新时间：2026-10-10（Asia/Shanghai）。Windows x64 手动桌面首版已具备 EXE、便携 ZIP、OO 图与制作方指南；用户已确认 0.3.1 当前修复并授权发布新版便携包。0.3.0 的历史安装器保留。其他真实样本、干净机器启动、真实跨盘与大盘性能仍未验证。
+更新时间：2026-10-12（Asia/Shanghai）。Windows x64 手动桌面首版已具备 EXE、便携 ZIP、OO 图与制作方指南；用户已确认 0.3.1 当前修复并授权发布新版便携包。0.3.0 的历史安装器保留。其他真实样本、干净机器启动、真实跨盘与大盘性能仍未验证。
 
 方案：[product_plan.md](product_plan.md)。正式设计：[desktop-design.md](desktop-design.md)。
 
-## 0.0.1 星绫解封 0.3.1：公开词库、工作文件夹与旧版兼容（当前交付）
+## 0.0.0 星绫解封 0.3.2：原地处理（当前切片）
+
+本节优先于下方 0.3.1 历史副本策略。用户要求“直接原地解压，参考旧 BAT，最大化节省磁盘”，已授权持续修复、自检、commit/push；2026-10-12 又明确授权生成完成后发布新版 Release。保留 main 未提交修改与旧 Release。当前产物/发布状态由本节最终证据和 [v0.3.2](https://github.com/WOO-woo-Waf/reorder/releases/tag/v0.3.2) 核实。
+
+### 实现与边界
+
+- 删除开始时 `copy_verified(original, workspace/name)`；BetaFolderPipeline 直接使用计划选中的真实源路径。普通包字节不变，必要的 Apate/嵌入还原与后缀归一化按旧版原地操作，成功归档处理后的真实包。
+- DirectSourceSession 验证身份并记录本次变换；无变化探测 abandoned，真实修改 applied，直到整组归档才 committed。外部变化、部分写入后失败/取消或中断进入 needs_review，不盲目重试。历史改写/改名源路径不作为普通结果返回。
+- 解压、restoreAB 必需的派生恢复、嵌套层与工具 TEMP/TMP/TMPDIR/cwd 全在指定工作文件夹。本次工作区独占，已有同名目录复用、冲突不覆盖，未选兄弟文件不动。
+- 同盘取消整包副本和两份源包空间估算，发布/归档优先移动；跨盘归档仍必须校验复制。必要派生恢复和多层内容仍占空间，没有“绝对零额外 I/O”承诺。Windows 无硬链接可独占改名；少数 POSIX 文件系统仍可能回退复制，源改名身份变化会停止核对。
+- 继续复用旧分组、原名/内容名、包装目录、嵌套候选和停止策略。extract_here/beta_here/2000 MB/智能识别 BAT 使用不同预设；桌面保持已批准的明确选中范围、可选递归与不预展平，未提供所有 CLI 高级开关。公开 115 条可编辑密码、关键词默认关闭、配置记忆和背景保持。
+- 本轮不对真实 BG57 原件运行新原地模式；0.3.1 的隔离副本检查只作历史兼容证据。无整包备份时强杀后不能保证自动恢复字节；旧管线失败尝试回滚仍保留。
+
+### 检查与交付记录
+
+证据目录：ignored `artifacts/desktop/hoshiribbon-0.3.2/`。复用未变资源锁、公开词库/工具许可和宿主权限证据；新代码必须重新冻结与检查。新 Luna/high 两个 scanner 派发因接口 `unknown type: additional_tools` 均未执行，运行时兼容脚本不是派发成功证据；主线程接手，没有换模型或恢复旧子线程。
+
+已完成的检查（范围部分重叠，不相加声称全量）：
+
+| 范围 | 方式 / 结果（均 exit 0） | 证据 |
+| --- | --- | --- |
+| 原地源 + 工作文件夹 + 伪装分卷 | 定向 pytest 41 passed | `direct-format-final-tests.log` |
+| 当前源路径、历史源路径不误报、派生恢复目录 | 最终 direct pytest 10 passed，含后补 2 个工作目录边界用例；与上一行重叠 | `derived-boundary-tests.log` |
+| 旧命名、包装、嵌套与生命周期 | beta pipeline/lifecycle 29 passed，12 subtests passed | `legacy-tests.log` |
+| 前端 | `npm run check` 0 errors/0 warnings；`npm run build` 成功 | `frontend-check.log`、`frontend-build.log` |
+| Windows 引擎 | PyInstaller 重新冻结；实际 EXE/原生工具运行 5 组、10 个归档成员：ZIP/AES/封面/7z 分卷/Apate 分卷 | `freeze.log`、`native-engine.json` |
+| 数据与目录 | 实际 EXE 无整包暂存、普通包 hash 不变、Apate 归档为修复字节；已有目录哨兵、恶意路径、公开文件和配置重启通过 | `native-engine.json` |
+| 对象/时序图 | architecture/modules/classes/sequence 重新渲染，PNG 视觉检查；修正时序使原地变换发生在 pipeline 内 | `diagrams.log`、`architecture-diagram.log`、`sequence-diagram-final.log` |
+
+首次新增 sparse fixture 因重复插入计划失败，调整 fixture 构建顺序后通过；Windows npm 缺少启动 shim，改用已有 WSL 前端依赖检查/构建，未安装或改动依赖。本轮未跑全库，未重复未变的历史资源/词库/权限检查。记录汇总 `check-results.json`。
+
+Windows 宿主 0.3.2 release 重建 exit 0（`windows-build.log`），已嵌入本轮前端。便携包组装 exit 0（`package.json`），最终 773 个清单文件逐个大小/hash/CRC、宿主与冻结引擎身份、实际包内 EXE 版本 0.3.2、初始 115 条明文库、固定工具与无用户数据校验均通过（`package-validation.json`，exit 0）。
+
+- ZIP：`D:\buff\reorder\artifacts\desktop\Hoshiribbon-0.3.2-windows-x64.zip`（28,059,854 bytes）。
+- SHA-256：`1571e5d9b5e50b4230a9f36a0ce0cc704129c393d5e6ee7ba8cbaee65bfaf0bd`。
+- 解压后运行 `Start-Portable.cmd`；本版没有安装器，旧版目录和 data 保留。建议选择与输入同盘的工作文件夹，检查中间区没有整包副本、普通包归档字节不变、伪装样本归档为处理后的内容/名称，以及原名/嵌套结果和已有内容保护。
+- 用户已授权发布；Git / tag / Release 与附件校验记录将在发布后补入。包内本文是封包时快照，最终状态以仓库和下载页为准。
+真实文件效果、GUI、干净机器、真实跨盘和大盘性能由用户验收，不把实现完成写成业务验收通过。
+
+## 0.0.1 星绫解封 0.3.1：公开词库、工作文件夹与旧版兼容（已发布历史）
 
 本节优先于下方历史记录。用户于 2026-10-10 表示当前修复没问题，明确授权重新打包并发布 **v0.3.1 Windows x64 预发布**；无需再次确认。发布范围为便携 ZIP 与本版 SHA-256 文件，不生成新版安装器，现有 v0.3.0 保留。用户的认可不替代未执行的干净机器、跨盘与大盘性能检查。发布状态及下载入口以 [v0.3.1 Release](https://github.com/WOO-woo-Waf/reorder/releases/tag/v0.3.1) 为准。
 

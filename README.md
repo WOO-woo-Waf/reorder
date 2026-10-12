@@ -2,9 +2,13 @@
 
 > 把压缩的次元，一层层展开。
 
-面向二次元收藏者的本地桌面整理工具：将下载的资源按文件组识别，在工作副本上恢复与解压，发布成品后归档原包。支持普通压缩包、分卷和部分伪装/嵌入格式；具体方式、效果和限制见 [格式支持指南](docs/desktop-format-support.md)。手动批处理优先，文件在本机处理。
+面向二次元收藏者的本地桌面整理工具：将下载的资源按文件组识别，直接读取选中原包，按旧版方式原地还原与解压，发布成品后归档处理后的原包。支持普通压缩包、分卷和部分伪装/嵌入格式；具体方式、效果和限制见 [格式支持指南](docs/desktop-format-support.md)。手动批处理优先，文件在本机处理。
 
-## Windows 桌面 0.3.1（预发布）
+## Windows 桌面 0.3.2（原地处理预发布）
+
+0.3.2 取消开始处理前的整包副本：普通包直接读取，必要的伪装还原和后缀改名沿用旧版原地方式。解压、恢复派生产物和工具临时数据全在指定工作文件夹，同盘归档与成品发布优先移动；跨盘归档仍需要校验复制。文件夹、原名保留与嵌套规则继续复用旧管线。完整说明与检查见 [实施状态](docs/desktop-status.md)。用户已授权检查完成后发布，下载状态以 [v0.3.2 Release](https://github.com/WOO-woo-Waf/reorder/releases/tag/v0.3.2) 为准。
+
+## Windows 桌面 0.3.1（历史预发布）
 
 用户于 2026-10-10 确认当前修复并授权发布 **0.3.1 Windows x64 便携版**。下载：[Release 页面](https://github.com/WOO-woo-Waf/reorder/releases/tag/v0.3.1) · [便携 ZIP](https://github.com/WOO-woo-Waf/reorder/releases/download/v0.3.1/Hoshiribbon-0.3.1-windows-x64.zip) · [SHA-256 校验和](https://github.com/WOO-woo-Waf/reorder/releases/download/v0.3.1/SHA256SUMS.txt)。解压到新目录后运行 `Start-Portable.cmd`；本版不提供新版安装器。
 
@@ -94,7 +98,7 @@ python -m reorder_engine.beta --folder D:\Downloads\data --no-flatten
 
 ### restoreAB 合并文件
 
-项目同时支持 `resources/restoreAB.exe` 处理的合并文件格式：文件前面是 PDF、图片或媒体内容，文件尾部嵌入 ZIP、RAR 或 7z。批处理管线会在解压前自动恢复归档副本，ZIP 的 AES 加密交给 `pyzipper` 识别，实际密码仍由 `resources/passwords.txt` 按顺序轮询。原始文件不会被原地改写。
+项目同时支持 `resources/restoreAB.exe` 处理的合并文件格式：文件前面是 PDF、图片或媒体内容，文件尾部嵌入 ZIP、RAR 或 7z。批处理管线会在解压前自动恢复归档副本，ZIP 的 AES 加密交给 `pyzipper` 识别，实际密码仍由 `resources/passwords.txt` 按顺序轮询。restoreAB 派生恢复不改写原包；Apate、嵌入格式与后缀归一化按旧版直接修改或改名，成功归档的是处理后的原包。
 
 该格式优先通过无界面 Python 策略处理；`restoreAB.exe` 保留为需要手动拖放和查看结果时的 Windows GUI 工具。
 

@@ -1,6 +1,6 @@
 # 桌面首版工程设计与实施契约
 
-日期：2026-10-07；2026-10-08 增补 0.3.1 公开密码文件与工作文件夹决策。产品依据：[产品方案](product_plan.md)。
+日期：2026-10-07；2026-10-08 增补 0.3.1；2026-10-12 增补 0.3.2 原地处理。产品依据：[产品方案](product_plan.md)。
 状态：设计已确定，用户已授权依此实施；用户已于 2026-10-10 确认当前修复并授权发布 0.3.1 便携预发布；实现、验证、人工验收分别记录在 [实施状态](desktop-status.md)。
 
 ## 1. 首版验收范围
@@ -8,7 +8,7 @@
 跨平台桌面架构，Windows x64 首交付。保留 CLI；桌面提供目录/文件拖放、只读计划、单队列执行、取消、错误重试、最近任务、密码与工具设置、结果打开。
 不在首版加入浏览器服务器、目录监听、托盘自动处理、云服务或 Agent。
 
-安全默认：不原地修改输入。需要变换的文件进入独立工作区（0.3.1 起位于所选工作文件夹的 `intermediate/` 下）。成品发布后再归档原件；归档不完整不报告成功。用户无需掌握工具命令或候选后缀。
+当前 0.3.2 直接读取选中原包；必要的伪装还原/改名沿用旧版原地方式，普通包不改写字节。派生恢复、解压和工具临时数据在所选工作文件夹内。成品发布后归档实际处理后的原包，归档不完整不报告成功。原地变化中断标记 needs_review，不能承诺无备份自动还原字节。
 
 ## 2. 依赖方向与对象职责
 
@@ -30,6 +30,8 @@ flowchart TB
     Jobs["JobRunner · 单工作线程"]
     Processor["PackageProcessor"]
     Files["FileTransaction"]
+    Sources["DirectSourceSession · 原包身份与动作"]
+    Restore["SourceRestoration / SourceRenamer"]
     Secrets["PasswordFile"]
     Settings["SettingsRepository"]
     Repo["JobRepository"]
@@ -50,13 +52,17 @@ flowchart TB
   Jobs --> Repo
   Processor --> Pipeline
   Processor --> Files
+  Processor --> Sources
+  Processor --> Restore
+  Restore --> Sources
+  Sources -->|动作日志| Repo
   Processor --> Secrets
   Files -->|动作日志| Repo
   Pipeline --> Runner
   Repo --> DB[("SQLite jobs.sqlite3")]
   Settings --> Cfg[("设置 · 用户数据目录")]
-  Secrets --> PW[("passwords.txt · 公开明文库")]
-  Files --> Out[("工作文件夹：final / success/archives / error_files / deferred_volumes / intermediate")]
+  Secrets --> OS[("公开可编辑 UTF-8 passwords.txt")]
+  Files --> Out[("工作文件夹 · final / archives / intermediate")]
 ```
 
 | 对象 | 接口与责任 | 所拥有的资源 / 生命周期 |
@@ -70,6 +76,7 @@ flowchart TB
 | PlanService | 只读输入扫描、分组、源快照、冲突与路径检查 | 计划 DTO；不能移动文件或自动下载工具 |
 | JobRunner | 单执行队列、取消、重试、终态与中断恢复 | 一个执行线程、每任务取消信号；引擎级对象 |
 | PackageProcessor | 准备工作区、调用现有管线、检查输出、生成包结果 | 一个包的工作区（0.3.1 起在工作文件夹 `intermediate/workspaces/` 下）和 Runner |
+| DirectSourceSession | 选中源身份、原地改写/改名动作与当前路由快照 | 每包一个对象；无需源字节副本 |
 | FileTransaction | 写入动作记录，发布输出，再路由真实原件 | 文件句柄、动作状态；包级对象 |
 | JobRepository | SQLite 数据版本、任务/包/事件/动作持久化与分页 | 一个受锁保护的连接；唯一数据库写入口 |
 | SettingsRepository | 读取/验证普通配置，工具路径与能力 | 用户数据目录；与项目样例 config 分离 |
@@ -169,12 +176,28 @@ classDiagram
     +replace(values) dict
     +info() dict
     +path Path
+    +mode str
   }
   class ExternalCommandRunner {
     +run(args, timeout_sec, output_sink) CommandResult
   }
   class BetaFolderPipeline {
     +run(dry_run) BetaRunResult
+  }
+  class DirectSourceSession {
+    +volume_set() VolumeSet
+    +change(path, operation)
+    +rename(source, target)
+    +routing_package() PlannedPackage
+    +complete()
+  }
+  class SourceRestoration {
+    +restore_with_rollbacks(path)
+    +force_apate_restore_with_rollbacks(path)
+    +rollback_apate(records)
+  }
+  class SourceRenamer {
+    +rename_file(source, target)
   }
   EngineClient <|.. TauriEngineClient
   DesktopController --> EngineClient : uses
@@ -191,6 +214,12 @@ classDiagram
   JobRunner --> JobRepository
   PackageProcessor --> BetaFolderPipeline
   PackageProcessor --> FileTransaction
+  PackageProcessor --> DirectSourceSession
+  PackageProcessor --> SourceRestoration
+  PackageProcessor --> SourceRenamer
+  SourceRestoration --> DirectSourceSession
+  SourceRenamer --> DirectSourceSession
+  DirectSourceSession --> JobRepository : 原地动作
   PackageProcessor --> PasswordFile
   FileTransaction --> JobRepository : records
   BetaFolderPipeline --> ExternalCommandRunner : through extractors
@@ -213,7 +242,7 @@ Rust 的 EngineBridge 与 Python 的 EngineFacade 属于不同进程，不是互
 - input_paths 由明确的系统对话框或拖放输入；选文件只处理所选文件组成的完整组，不处理旁边未选文件。
 - 输出不能覆盖软件安装目录或工作区，不接受空/相对/越界路径。
 - 开始前重验源快照；计划改变必须重新扫描。
-- 源路径不是恢复副本路径；包 ID 在所有阶段稳定。
+- 源路径为真实选中文件；本次原地变换后的路径/身份由 DirectSourceSession 更新，外部变化拒绝采纳；包 ID 在所有阶段稳定。
 
 ### JobSnapshot / PackageOutcome
 
@@ -226,7 +255,7 @@ Rust 的 EngineBridge 与 Python 的 EngineFacade 属于不同进程，不是互
 ### OperationRecord
 
 - action_id、job_id、package_id、kind、source、destination、phase、source_size、source_mtime_ns。
-- phase：prepared → copied/published → source_removed → committed。
+- phase：发布/归档 prepared → copied/published → source_removed → committed；原地操作 prepared → applied → committed（整组归档完成），无变化则 abandoned。
 - 记录意图再执行文件操作；不能把 SQLite commit 等同于文件系统事务。
 - 中断后检查真实路径与身份，禁止盲目删除原件或全任务自动重跑。
 
@@ -266,6 +295,7 @@ sequenceDiagram
   participant API as EngineFacade
   participant Job as JobRunner
   participant Core as PackageProcessor
+  participant Sources as DirectSourceSession
   participant FS as FileTransaction
   participant DB as JobRepository
   User->>UI: 拖放目录或文件
@@ -286,19 +316,25 @@ sequenceDiagram
     Job->>Core: process(package, options, cancel, job_id, output_root, log, progress)
     Core-->>Job: progress(preparing)
     Job->>DB: update_package(preparing)
-    Core->>Core: 复核源、复制工作副本、恢复 / 解压
+    Core->>Sources: 复核选中原包；直接源组
     Core-->>Job: progress(extracting)
     Job->>DB: update_package(extracting)
     Core->>Core: BetaFolderPipeline.run()
+    opt 原包需要还原 / 改名
+      Core->>Sources: 记录原地变换；更新本次身份
+      Sources->>DB: source_edit / source_rename -> applied
+    end
     Core-->>Job: progress(publishing)
     Job->>DB: update_package(publishing)
     Core->>FS: publish_children(workspace, output_root)
     FS->>DB: record_action(publish) -> published -> committed
     Core-->>Job: progress(archiving)
     Job->>DB: update_package(archiving)
-    Core->>FS: route_sources(package, 归档 / 错误 / 缺卷目录)
+    Core->>Sources: routing_package() 复核真实路径
+    Core->>FS: route_sources(当前原包, 归档 / 错误 / 缺卷目录)
     FS->>DB: record_action(route_source) -> copied
     FS->>FS: 同卷全部独占落位并复核后删源；跨卷全部复制校验后删源
+    Core->>Sources: complete() 原地动作 -> committed
     Core-->>Job: PackageOutcome(state)
     Job->>DB: update_package(终态)
   end
@@ -382,7 +418,7 @@ stateDiagram-v2
 | 有部分输出 | error_files/分类 | success/archives |
 | 完全失败 | 错误说明 | error_files/分类 |
 | 缺卷 | deferred 结果 | deferred_volumes/组 |
-| 取消 | 保留/清理本包工作区，不发布假成功 | 原位置保持 |
+| 取消 | 无变化可取消重试；原地改动后 needs_review | 按实际名称/内容与动作记录核对 |
 | 归档异常 | 已生成的成品登记保留 | 剩余原件保留并标记 needs_review |
 
 动作日志协调恢复；没有真实 7z 流内续传承诺。
@@ -486,3 +522,9 @@ classDiagram
 - `DesktopSettings` 增加 `work_root`；`ProcessingOptions.use_builtin_passwords` 仅作为旧配置兼容字段保留，实际以文件为准。
 
 工作文件夹的对象关系不变：`PackageProcessor` 仍在包级工作区上跑 `BetaFolderPipeline`，只是 0.3.1 起把工作区根从数据目录 `work/` 换成所选工作文件夹的 `intermediate/workspaces/<作业>/<文件组>/`，并在其中设定解压工具的 TEMP/TMP/TMPDIR 与当前目录。旧数据目录 `work/` 只保留作只读遗留恢复；发布与原件归档优先同卷独占移动/改名，跨卷或不可用时才回退到校验复制。机器证据由主线程汇总，本文不预判通过。
+
+## 13. 0.3.2 直接源适配
+
+PackageProcessor 为每包创建 DirectSourceSession，SourceRestoration/SourceRenamer 包住旧管线的还原和改名入口。BetaFolderPipeline 增加可选 volume_sets、manage_originals 与 renamer；桌面传真实源组、关闭内核归档，由 FileTransaction 集中路由，CLI 默认不变。还原 workspace 参数被限制在本次工作区，避免多卷旧入口把派生产物落到源目录。结果列表不把历史 source_edit/source_rename 路径当成产物，needs_review 仍返回动作供人工核对。
+
+同盘无整包预拷贝，Windows 无硬链接可独占改名；跨盘、restoreAB 派生和多层解压仍有必要写入。普通 ZIP、源身份、中断、旧命名/嵌套和 Windows 冻结引擎证据见实施状态；真实大盘与 GUI 不在机器验收范围。

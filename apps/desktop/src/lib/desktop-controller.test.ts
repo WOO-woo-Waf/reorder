@@ -58,7 +58,7 @@ const systemInfo: SystemInfo = {
   settings: { version: 1, options: { ...baseOptions, use_builtin_passwords: true }, tools: { ...baseTools }, work_root: null },
   tools: { ...baseTools },
   passwords: { count: 0, storage: 'plaintext', path: '/data/passwords.txt', values: [] },
-  version: '0.3.1', protocol_version: 1, platform: 'win32', data_root: '/data', capabilities: [],
+  version: '0.3.2', protocol_version: 1, platform: 'win32', data_root: '/data', capabilities: [],
 };
 
 describe('manual processing workflow', () => {
@@ -115,7 +115,7 @@ describe('desktop lifecycle regressions', () => {
     await controller.loadHistory();
     expect(state().ready).toBe(true);
     expect(state().error).toBe('');
-    expect(state().info?.version).toBe('0.3.1');
+    expect(state().info?.version).toBe('0.3.2');
   });
 
   it('shows the full active task from jobs.get instead of the truncated jobs.list summary', async () => {

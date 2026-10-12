@@ -91,6 +91,21 @@ classDiagram
   class BetaFolderPipeline {
     +run(dry_run) BetaRunResult
   }
+  class DirectSourceSession {
+    +volume_set() VolumeSet
+    +change(path, operation)
+    +rename(source, target)
+    +routing_package() PlannedPackage
+    +complete()
+  }
+  class SourceRestoration {
+    +restore_with_rollbacks(path)
+    +force_apate_restore_with_rollbacks(path)
+    +rollback_apate(records)
+  }
+  class SourceRenamer {
+    +rename_file(source, target)
+  }
   EngineClient <|.. TauriEngineClient
   DesktopController --> EngineClient : uses
   TauriEngineClient ..> EngineBridge : Tauri command
@@ -106,6 +121,12 @@ classDiagram
   JobRunner --> JobRepository
   PackageProcessor --> BetaFolderPipeline
   PackageProcessor --> FileTransaction
+  PackageProcessor --> DirectSourceSession
+  PackageProcessor --> SourceRestoration
+  PackageProcessor --> SourceRenamer
+  SourceRestoration --> DirectSourceSession
+  SourceRenamer --> DirectSourceSession
+  DirectSourceSession --> JobRepository : 原地动作
   PackageProcessor --> PasswordFile
   FileTransaction --> JobRepository : records
   BetaFolderPipeline --> ExternalCommandRunner : through extractors

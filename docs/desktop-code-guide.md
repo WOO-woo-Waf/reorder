@@ -1,6 +1,6 @@
 # 桌面首版代码阅读指南（面向熟悉 Python／Java／OO／C++ 的制作方）
 
-更新时间：2026-10-10（星绫解封 0.3.0 → 0.3.1 更新；用户已确认当前修复并授权发布便携预发布）。本指南基于工作区中的**实际源码**逐文件核对，不是按设计稿想象。
+更新时间：2026-10-12（星绫解封 0.3.2 原地处理；用户已授权检查完成后发布）。本指南基于工作区中的**实际源码**逐文件核对，不是按设计稿想象。
 阅读前请先确认基线：
 
 - 仓库 Windows 路径 `D:\buff\reorder`，WSL 路径 `/mnt/d/buff/reorder`，分支 `main`。
@@ -61,7 +61,7 @@ App.svelte
 3. **前端状态与工作流**：[engine-client.ts](../apps/desktop/src/lib/engine-client.ts) → [desktop-controller.ts](../apps/desktop/src/lib/desktop-controller.ts)。Controller 是“界面用例层”，等价于你在 Java 里写的 `XxxService`，区别于业务引擎。
 4. **宿主桥接**：[lib.rs](../apps/desktop/src-tauri/src/lib.rs) → [engine_bridge.rs](../apps/desktop/src-tauri/src/engine_bridge.rs)。重点看子进程启动、帧读写线程、请求-响应表、退出处理。
 5. **任务与文件事务**：[jobs.py](../src/reorder_engine/application/jobs.py) → [processing.py](../src/reorder_engine/application/processing.py) → [file_transaction.py](../src/reorder_engine/infrastructure/file_transaction.py) → [job_repository.py](../src/reorder_engine/infrastructure/job_repository.py)。这是数据完整性的核心。
-6. **既有业务管线**：[services/beta_pipeline.py](../src/reorder_engine/services/beta_pipeline.py)。这是被复用的老内核，桌面只在外层做“工作在副本上、发布后归档原件”。
+6. **既有业务管线**：[services/beta_pipeline.py](../src/reorder_engine/services/beta_pipeline.py)。这是被复用的老内核，桌面用真实源文件组调用旧管线，再集中发布与归档；`DirectSourceSession` 跟踪本次原地变换。
 7. **界面绑定**：[App.svelte](../apps/desktop/src/App.svelte)。最后读，因为此时你已经知道每个按钮背后会走哪条链路。
 8. **基础设施细节**：[command_runner.py](../src/reorder_engine/infrastructure/command_runner.py)、[process_control.py](../src/reorder_engine/infrastructure/process_control.py)、[archive_safety.py](../src/reorder_engine/infrastructure/archive_safety.py)、[workspace.py](../src/reorder_engine/infrastructure/workspace.py)、[secret_store.py](../src/reorder_engine/infrastructure/secret_store.py)、[settings_repository.py](../src/reorder_engine/infrastructure/settings_repository.py)、[desktop_paths.py](../src/reorder_engine/infrastructure/desktop_paths.py)、[engine_lock.py](../src/reorder_engine/infrastructure/engine_lock.py)。
 
@@ -164,7 +164,7 @@ def validate_source(snapshot: SourceSnapshot) -> None:
 2. `JobRunner.cancel`（[jobs.py:48-56](../src/reorder_engine/application/jobs.py)）只做两件事：给该任务的 `threading.Event` 置位，并把任务状态改成 `cancelling`。**它不杀线程**。
 3. 真正生效点在两个地方：
    - 工作线程进入每个包之前的检查（[jobs.py:106-108](../src/reorder_engine/application/jobs.py)），未开始的包直接标 `cancelled`。
-   - 处理过程中：`ExternalCommandRunner` 主循环（[command_runner.py:99-100](../src/reorder_engine/infrastructure/command_runner.py)）和复制循环（[file_transaction.py:42-43](../src/reorder_engine/infrastructure/file_transaction.py)）都会周期检查取消事件，命中即抛 `ProcessingCancelled`。
+   - 处理过程中：`ExternalCommandRunner` 主循环（[command_runner.py:99-100](../src/reorder_engine/infrastructure/command_runner.py)）会周期检查取消事件；发布与归档事务在安全边界完成后响应取消，命中即抛 `ProcessingCancelled`。
 4. 取消在**安全边界**生效：`FileTransaction.route_sources`（[file_transaction.py:157-186](../src/reorder_engine/infrastructure/file_transaction.py)）在改源文件的那一段**不检查取消**，避免“删了一半源文件却报告 cancelled”。设计文档 [desktop-design.md](desktop-design.md) 第 6 节对此有说明。
 5. 关闭窗口时会先尝试取消：`App.svelte` 的 `onCloseRequested`（[App.svelte:62-67](../apps/desktop/src/App.svelte)）在任务运行中弹确认框。
 
@@ -175,7 +175,7 @@ def validate_source(snapshot: SourceSnapshot) -> None:
 链路：
 
 1. `DesktopController.retry`（[desktop-controller.ts:128-139](../apps/desktop/src/lib/desktop-controller.ts)）只挑出状态在 `retryable` 集合里的包（`failed/deferred/cancelled/interrupted`，定义在 [contracts.ts:34](../apps/desktop/src/lib/contracts.ts)），发 `jobs.retry`，附带新幂等键。
-2. `JobRunner.retry`（[jobs.py:58-86](../src/reorder_engine/application/jobs.py)）做过更严的校验：只允许旧任务里 `failed/deferred/cancelled/interrupted` 的包；`needs_review`（需要人工核对）被明确排除。它把**已路由的失败原件路径**当成重试输入（`routed` 映射，[jobs.py:74-81](../src/reorder_engine/application/jobs.py)），而不是被恢复过的副本；然后复制出一份新计划、新 `package_id`，以 `retry_of` 关联旧任务。
+2. `JobRunner.retry`（[jobs.py:58-86](../src/reorder_engine/application/jobs.py)）做过更严的校验：只允许旧任务里 `failed/deferred/cancelled/interrupted` 的包；`needs_review`（需要人工核对）被明确排除。它把**已路由的失败原件路径**当成重试输入（`routed` 映射，[jobs.py:74-81](../src/reorder_engine/application/jobs.py)），直接跟踪当前实际归档的文件；然后复制出一份新计划、新 `package_id`，以 `retry_of` 关联旧任务。
 3. 成功后走 `submit`，因此同样会重验源、同样受幂等 key 保护。
 
 【实际源码】可重试集合（前后端各一份），[contracts.ts:34](../apps/desktop/src/lib/contracts.ts)：`failed/deferred/cancelled/interrupted`；`needs_review` 不在其中。
@@ -220,7 +220,7 @@ def validate_source(snapshot: SourceSnapshot) -> None:
 
 | 方法 | 分派行 | 说明 |
 |---|---|---|
-| `system.info` | [facade.py](../src/reorder_engine/application/facade.py) | 版本 `0.3.1`、`protocol_version=1`、平台、能力、工具与密码状态（path/count/values） |
+| `system.info` | [facade.py](../src/reorder_engine/application/facade.py) | 版本 `0.3.2`、`protocol_version=1`、平台、能力、工具与密码状态（path/count/values） |
 | `settings.get` / `settings.update` | [facade.py:56-60](../src/reorder_engine/application/facade.py) | 读／写设置；写要求空闲 |
 | `passwords.replace` / `passwords.import` | [facade.py](../src/reorder_engine/application/facade.py) | 整体替换或从 UTF-8 文件**追加**；导入限 512 KiB 普通文件，返回值含 path/count/values |
 | `plans.create` | [facade.py:74-82](../src/reorder_engine/application/facade.py) | 只读扫描 |
@@ -251,12 +251,12 @@ Schema 在 [job_repository.py:31-46](../src/reorder_engine/infrastructure/job_re
 
 在 `PackageProcessor.process`（[processing.py:45-122](../src/reorder_engine/application/processing.py)）里：
 
-1. **准备工作区**：0.3.1 起工作区在所选工作文件夹内，由 [infrastructure/workspace.py](../src/reorder_engine/infrastructure/workspace.py) 的 `allocate_run_workspace` 创建 `<output>/intermediate/workspaces/<job>/<package>`（固定叶子被占用时改用唯一同级目录），而不是数据目录 `data_root/work/`（后者改为只读遗留恢复）；`guard_workspace_path` 逐级拒绝链接/连接点越界，工具进程的 TEMP/TMP/TMPDIR 与当前目录也设在该次运行的目录内。先按 `source_bytes*2 + 64 MiB` 估算磁盘空间，跨卷原件归档再加源大小，不够就 `DISK_FULL`（[processing.py](../src/reorder_engine/application/processing.py)）。
-2. **复制原件到工作区**：逐成员 `validate_source` 后 `copy_verified`（[processing.py:61-63](../src/reorder_engine/application/processing.py)）。`copy_verified`（[file_transaction.py:33-57](../src/reorder_engine/infrastructure/file_transaction.py)）用 `open("xb")` 私有写、边写边算 sha256、`fsync`、再读回复算比对，不一致就 `COPY_MISMATCH` 且**不删原件**。
-3. **在工作副本上跑老管线**：`BetaFolderPipeline` 在 `workspace` 上产生 `workspace/final`、`workspace/error_files`、`workspace/deferred_volumes`、`workspace/success/archives`、`workspace/intermediate`。注意：老管线往 `workspace/success/archives` 移动的只是**副本**，后面会连同工作区一起丢弃。
-4. **发布成品**：只有 `succeeded`/`partial` 才发布，来源是 `workspace/{final,error_files,deferred_volumes}`（[processing.py:105-106](../src/reorder_engine/application/processing.py)）。发布用 `FileTransaction.publish`（[file_transaction.py:107-147](../src/reorder_engine/infrastructure/file_transaction.py)）：先建临时 `.partial`，走硬链接独占安装（失败退回复制），中途任何异常都清理临时文件，且**从不覆盖已存在目标**，同名冲突改投 `_duplicates/<job_id>/<package_id>/`（[file_transaction.py:88-98](../src/reorder_engine/infrastructure/file_transaction.py)）。
-5. **归档真实原件**：`route_sources`（[file_transaction.py:157-186](../src/reorder_engine/infrastructure/file_transaction.py)）按包结果选目的地：成功/部分 → `success/archives`；缺卷 → `deferred_volumes/<package_id>`；纯失败 → `error_files/<category>`（[processing.py:108-114](../src/reorder_engine/application/processing.py)）。关键是顺序：**同卷先独占链接落位并复核整组，再统一删源；跨卷先把整组复制校验好，再统一删源**，删除发生在取消边界之外。
-6. **收尾**：`finally`（[processing.py:116-121](../src/reorder_engine/application/processing.py)）在无未完成动作且未开 `keep_workspace` 时删除工作区；如果还有未完成动作，会保留工作区供人工恢复。
+1. **准备工作区**：`allocate_run_workspace` 在所选工作文件夹的 `intermediate/workspaces/<job>/<package>` 下创建本次独占目录；已有叶子占用时用唯一同级目录。工具的 TEMP/TMP/TMPDIR 与当前目录也设在这里。初始只预留 64 MiB 与确实跨盘归档的源大小；运行中继续检查输出空间。
+2. **跟踪真实源**：[DirectSourceSession](../src/reorder_engine/infrastructure/source_session.py) 保存选中成员快照，不复制字节。`SourceRenamer` 与 `SourceRestoration` 包住旧改名、还原入口，操作前验证身份，操作后只采纳本次变换。无变化探测记 abandoned；真正变化记 applied，直到整组归档完成才 committed。
+3. **直接调用旧管线**：`BetaFolderPipeline(volume_sets=真实源组, manage_originals=False)` 从实际源路径读取，所有提取内容与恢复派生产物写入 workspace。CLI 默认继续自己扫描和归档；桌面集中持有归档权。分组、命名、包装和嵌套策略保持原实现。
+4. **发布成品**：`FileTransaction.publish_children` 同盘移动/合并到工作文件夹的 `final/error_files/deferred_volumes`，复用已有目录，已有文件冲突安全隔离，不覆盖。成品发布不再通用复制或全文件哈希。
+5. **归档处理后的原包**：`routing_package()` 验证当前真实路径和身份，再交 `route_sources`。同盘优先整组独占链接后删源，Windows 无硬链接时独占改名；跨盘整组复制校验后删源。成功/部分到 success/archives，缺卷到 deferred_volumes，失败到 error_files。`complete()` 最后完成 source_edit/source_rename 记录；这些历史源位置不会作为普通结果返回。
+6. **收尾与中断**：无未完成动作且未开 keep_workspace 时只删除本次工作区。原地改动后异常/取消进入 needs_review，保留动作和中间数据；不自动回滚字节或重跑。没有整包备份时，强杀无法保证旧版变换自动复原。无变化失败和取消仍可正常重试。
 
 ### 6.2 动作日志的相位
 
@@ -264,6 +264,7 @@ Schema 在 [job_repository.py:31-46](../src/reorder_engine/infrastructure/job_re
 
 ```text
 prepared → copied / published → source_removed → committed
+prepared → applied（原地改写/改名） → committed（整组归档完成）
                                             （异常时为 abandoned）
 ```
 
@@ -279,7 +280,7 @@ prepared → copied / published → source_removed → committed
 
 代码里没有自动回滚、自动重做文件或 `FileTransaction.reconcile()`。正式类图已经对齐实现；恢复只更新任务/包状态、登记保留工作区，再由用户人工核对或明确重试。未决动作按 `(job_id, package_id)` 区分，不能把旧任务动作套到同包 ID 的新任务。
 
-落地实现是 `recover_interrupted()` + `incomplete_actions()`；`JobRunner._register_retained_workspaces` 将中断副本登记为已提交的 `recovery_note`，让结果查询可返回人工检查位置。日志设备失败只写通用 stderr 诊断，不阻断文件处理或终态。`workspace`/`recovery_note` 只登记位置，不表示已发布成品；异常判断会排除这些记账动作，保留正常失败/取消与重试。
+落地实现是 `recover_interrupted()` + `incomplete_actions()`；`JobRunner._register_retained_workspaces` 将中断工作区登记为已提交的 `recovery_note`，让结果查询可返回人工检查位置。日志设备失败只写通用 stderr 诊断，不阻断文件处理或终态。`workspace`/`recovery_note` 只登记位置，不表示已发布成品；异常判断会排除这些记账动作，保留正常失败/取消与重试。
 
 ## 7. 错误层级与状态机
 
@@ -436,3 +437,7 @@ Rust 与前端配置：[tauri.conf.json](../apps/desktop/src-tauri/tauri.conf.js
 - [DesktopSettings](../src/reorder_engine/application/models.py) 新增 `work_root`；`DesktopController.setOutput` 会用同类 `settings.update` 合并保存它，`initialize` 时回填到界面，所以工作文件夹重启后仍被记住。`saveSettings` 会保留用户当前选择，避免对话框里的旧值覆盖。
 - 工作区根从 `data_root/work/` 改为所选工作文件夹的 `intermediate/workspaces/<job>/<package>`（[workspace.py](../src/reorder_engine/infrastructure/workspace.py) `allocate_run_workspace`，占用时用唯一同级目录，`guard_workspace_path` 拒绝链接越界）；发布与原件归档优先同卷独占移动/改名，跨卷或不可用时回退到校验复制（[file_transaction.py](../src/reorder_engine/infrastructure/file_transaction.py) 的 `install_exclusive`/`publish`/`route_sources`）。旧 `work/` 只作只读遗留恢复。
 - 前端 `contracts.ts` 增加 `PasswordInfo` 与 `work_root`，`App.svelte` 的密码区改为显示文件路径/条数并区分“导入（追加）/保存（替换）/重新载入”；`use_builtin_passwords` 在 TS 侧降级为可选兼容字段，不在界面出现。
+
+## 10. 0.3.2 与旧 BAT 的边界
+
+`extract_here.bat` 开启深解压和保留内容名；`beta_here.bat`、2000 MB 与智能识别 BAT 使用各自预设，不能视作完全相同默认值。桌面复用同一 BetaFolderPipeline 与命名/包装/嵌套策略，保留已批准的明确选中范围、可选递归扫描和不预展平输入。CLI 的额外阈值、预展平及其他高级参数未全部提供界面控件。restoreAB 派生归档属于格式恢复所需数据，不是通用源包副本。真实大盘性能没有量化证据。

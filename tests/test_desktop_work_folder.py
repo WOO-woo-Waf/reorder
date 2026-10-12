@@ -139,7 +139,9 @@ def test_workspace_note_does_not_block_failure_or_cancel_retry(engine, tmp_path,
     assert final.packages[0].results == []
     assert source.read_bytes() == original
     notes = engine.repository.actions(job["job_id"])
-    assert notes and all(a["kind"] == "workspace" for a in notes)
+    assert notes and all(a["kind"] == "workspace" or
+                         (a["kind"] == "source_edit" and a["phase"] == "abandoned")
+                         for a in notes)
     assert engine.dispatch("results.get", {"job_id": job["job_id"]})["paths"] == []
     monkeypatch.setattr("reorder_engine.application.processing.SevenZipExtractor", SyntheticExtractor)
     retry = engine.dispatch("jobs.retry", {"job_id": job["job_id"],

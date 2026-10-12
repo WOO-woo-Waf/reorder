@@ -117,7 +117,19 @@ def main() -> None:
             final = finish(job["job_id"])
             assert final["state"] == "succeeded", final
             archived = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in (output / "success/archives").rglob("*") if p.is_file()}
-            assert archived == originals
+            # Legacy direct restoration archives the repaired disguise, rather
+            # than an untouched staging copy. Ordinary archive bytes stay intact.
+            ordinary = {name: digest for name, digest in originals.items()
+                        if not name.startswith("disguised.")}
+            assert all(archived.get(name) == digest for name, digest in ordinary.items()), archived
+            assert len(archived) == len(originals), archived
+            for index, piece in enumerate(pieces, 1):
+                candidates = [name for name in archived
+                              if name in {f"disguised.zip.{index:03}", f"disguised.zip.{index:03}.mp4"}]
+                assert len(candidates) == 1, archived
+                assert archived[candidates[0]] == hashlib.sha256(piece).hexdigest()
+            staged_names = {p.name for p in (output / "intermediate/workspaces").rglob("*") if p.is_file()}
+            assert not (staged_names & set(originals)), staged_names
             assert sentinel.read_bytes() == b"preserve-existing-content"
             assert not (data / "work").exists()
             assert (output / "intermediate/workspaces").is_dir()
@@ -133,7 +145,9 @@ def main() -> None:
             registered = request("results.get", {"job_id": job["job_id"]})
             assert registered["output_root"] == str(output)
             assert not any(Path(p).is_relative_to(output / "intermediate/workspaces") for p in registered["paths"])
-            evidence["checks"].append({"native_formats_and_original_hashes": "passed", "groups": 5, "archive_members": len(originals), "apate_disguised_volumes": "passed"})
+            evidence["checks"].append({"native_formats_and_direct_archives": "passed", "groups": 5,
+                "archive_members": len(originals), "ordinary_hashes": "unchanged",
+                "apate_disguised_volumes": "repaired_bytes_archived", "no_archive_staging": "passed"})
             unsafe = inputs / "unsafe.zip"
             with zipfile.ZipFile(unsafe, "w") as handle:
                 handle.writestr("../outside.txt", "must not be published")

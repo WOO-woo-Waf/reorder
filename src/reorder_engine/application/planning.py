@@ -102,7 +102,7 @@ class PlanService:
             raise EngineError("BATCH_TOO_LARGE", "单批文件组超过 1000，请分批处理。")
         if request.options.recursive:
             warnings.append("已扫描子目录；原件按文件组归档，不会预先展平输入。")
-        warnings.append("处理完成后原包会移动到输出目录的归档或错误分类，处理前不会改写原件。")
+        warnings.append("直接读取原包解压，不准备整包副本；伪装还原和后缀调整按旧版原地执行，原包随后移动到归档或错误分类。")
         return ProcessingPlan(
             plan_id=str(uuid4()), created_at=utc_now(), output_root=str(output),
             options=request.options, settings_revision=self.settings.revision(),
