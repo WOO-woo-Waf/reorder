@@ -6,7 +6,7 @@
 
 ## Windows 桌面 0.3.2（原地处理预发布）
 
-0.3.2 取消开始处理前的整包副本：普通包直接读取，必要的伪装还原和后缀改名沿用旧版原地方式。解压、恢复派生产物和工具临时数据全在指定工作文件夹，同盘归档与成品发布优先移动；跨盘归档仍需要校验复制。文件夹、原名保留与嵌套规则继续复用旧管线。完整说明与检查见 [实施状态](docs/desktop-status.md)。用户已授权检查完成后发布，下载状态以 [v0.3.2 Release](https://github.com/WOO-woo-Waf/reorder/releases/tag/v0.3.2) 为准。
+0.3.2 取消开始处理前的整包副本：普通包直接读取，必要的伪装还原和后缀改名沿用旧版原地方式。解压、恢复派生产物和工具临时数据全在指定工作文件夹，同盘归档与成品发布优先移动；跨盘归档仍需要校验复制。文件夹、原名保留与嵌套规则继续复用旧管线。完整说明与检查见 [实施状态](docs/desktop-status.md)。已发布：[v0.3.2 Release](https://github.com/WOO-woo-Waf/reorder/releases/tag/v0.3.2) · [便携 ZIP](https://github.com/WOO-woo-Waf/reorder/releases/download/v0.3.2/Hoshiribbon-0.3.2-windows-x64.zip) · [SHA-256](https://github.com/WOO-woo-Waf/reorder/releases/download/v0.3.2/SHA256SUMS.txt)。解压到新目录，运行 `Start-Portable.cmd`；本版不提供新版安装器。
 
 ## Windows 桌面 0.3.1（历史预发布）
 

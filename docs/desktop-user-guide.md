@@ -6,7 +6,7 @@
 
 ## 0. 交付范围与验收边界
 
-本指南对应 Windows x64 桌面版 **0.3.2 原地处理便携预发布**。用户已授权检查完成后直接发布；下载状态以 [v0.3.2 Release](https://github.com/WOO-woo-Waf/reorder/releases/tag/v0.3.2) 为准。旧的 [0.3.1 Release](https://github.com/WOO-woo-Waf/reorder/releases/tag/v0.3.1) 保留。当前构建是否成功、Git 提交和检查记录统一见 [desktop-status.md](desktop-status.md)；本指南介绍运行方法。真实文件、操作体验与干净机器安装仍由用户按第 12 节人工验收。
+本指南对应 Windows x64 桌面版 **0.3.2 原地处理便携预发布**。已发布：[v0.3.2 Release](https://github.com/WOO-woo-Waf/reorder/releases/tag/v0.3.2) · [便携 ZIP](https://github.com/WOO-woo-Waf/reorder/releases/download/v0.3.2/Hoshiribbon-0.3.2-windows-x64.zip) · [SHA-256](https://github.com/WOO-woo-Waf/reorder/releases/download/v0.3.2/SHA256SUMS.txt)。旧的 [0.3.1 Release](https://github.com/WOO-woo-Waf/reorder/releases/tag/v0.3.1) 保留。当前构建是否成功、Git 提交和检查记录统一见 [desktop-status.md](desktop-status.md)；本指南介绍运行方法。真实文件、操作体验与干净机器安装仍由用户按第 12 节人工验收。
 
 | 项目 | 交付入口 | 说明 |
 | --- | --- | --- |

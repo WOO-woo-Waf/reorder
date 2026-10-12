@@ -1,6 +1,6 @@
 # 桌面软件实施状态与新聊天交接
 
-更新时间：2026-10-12（Asia/Shanghai）。Windows x64 手动桌面首版已具备 EXE、便携 ZIP、OO 图与制作方指南；用户已确认 0.3.1 当前修复并授权发布新版便携包。0.3.0 的历史安装器保留。其他真实样本、干净机器启动、真实跨盘与大盘性能仍未验证。
+更新时间：2026-10-12（Asia/Shanghai）。Windows x64 手动桌面首版已具备 EXE、便携 ZIP、OO 图与制作方指南；0.3.2 原地处理修复已生成并发布 Windows x64 便携预发布。0.3.0 的历史安装器保留。其他真实样本、干净机器启动、真实跨盘与大盘性能仍未验证。
 
 方案：[product_plan.md](product_plan.md)。正式设计：[desktop-design.md](desktop-design.md)。
 
@@ -40,7 +40,8 @@ Windows 宿主 0.3.2 release 重建 exit 0（`windows-build.log`），已嵌入�
 - ZIP：`D:\buff\reorder\artifacts\desktop\Hoshiribbon-0.3.2-windows-x64.zip`（28,059,854 bytes）。
 - SHA-256：`1571e5d9b5e50b4230a9f36a0ce0cc704129c393d5e6ee7ba8cbaee65bfaf0bd`。
 - 解压后运行 `Start-Portable.cmd`；本版没有安装器，旧版目录和 data 保留。建议选择与输入同盘的工作文件夹，检查中间区没有整包副本、普通包归档字节不变、伪装样本归档为处理后的内容/名称，以及原名/嵌套结果和已有内容保护。
-- 用户已授权发布；Git / tag / Release 与附件校验记录将在发布后补入。包内本文是封包时快照，最终状态以仓库和下载页为准。
+- 实现提交 `513acfb` 已推送 main；tag `v0.3.2` 指向该提交并已推送。新发布记录见 [v0.3.2 Release](https://github.com/WOO-woo-Waf/reorder/releases/tag/v0.3.2)，发布为非 draft 的预发布，旧 Release 保留。
+- 附件仅 ZIP 与 `SHA256SUMS.txt`；GitHub API 返回两项 state=uploaded，服务器 SHA-256 与本地逐一匹配（`release-receipt.json`、`final-result.json`，exit 0）。包内本文是封包时快照，发布后仅补文档记录，ZIP 不因此重建；最终状态以仓库和下载页为准。
 真实文件效果、GUI、干净机器、真实跨盘和大盘性能由用户验收，不把实现完成写成业务验收通过。
 
 ## 0.0.1 星绫解封 0.3.1：公开词库、工作文件夹与旧版兼容（已发布历史）

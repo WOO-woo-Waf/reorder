@@ -4,7 +4,7 @@
 阅读前请先确认基线：
 
 - 仓库 Windows 路径 `D:\buff\reorder`，WSL 路径 `/mnt/d/buff/reorder`，分支 `main`。
-- 0.3.0 发布后的 `HEAD = f981596`（`docs: publish Hoshiribbon 0.3.0 Windows release links`）；0.3.1 的行为按本轮实现更新，提交状态见实施状态；行号可能随修复移动，阅读时优先按符号名定位。
+- 0.3.2 实现提交 `513acfb`，tag `v0.3.2`；发布后仅补文档记录。旧 0.3.1/0.3.0 保留，当前提交与检查状态见实施状态；行号可能移动，按符号名定位。
 - 提交与检查状态统一见 [desktop-status.md](desktop-status.md)；源码持续调整时行号可能移动，阅读时优先按链接后的符号名定位。
 - 配套文档：[桌面设计](desktop-design.md)、[实施状态](desktop-status.md)、[产品方案](product_plan.md)、[架构图源](diagrams/architecture.json)。
 - 用户操作见 [用户指南](desktop-user-guide.md)，格式与效果边界见 [格式指南](desktop-format-support.md)。
