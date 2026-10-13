@@ -1,6 +1,6 @@
 # 桌面首版第三方组件与许可清单
 
-日期：2026-10-08（Asia/Shanghai）。适用范围：Windows x64 桌面首版发行包所携带的组件。
+日期：2026-10-08（Asia/Shanghai）；更新：2026-10-13（0.3.3 将随包 7-Zip 受控升级到 26.04；Bandizip 已随包，不再属排除项）。适用范围：Windows x64 桌面发行包所携带的组件。
 本文只整理第三方组件、许可与证据位置；**不决定本项目根 `LICENSE`**，最终打包集成由主线程完成。
 相关文档：[实施状态](desktop-status.md)、[工程设计](desktop-design.md)。
 
@@ -11,7 +11,7 @@
 - 不读取用户秘密：脚本不接触 `resources/passwords.txt`、用户 `config.json`、`.env` 或任何凭据。
 - 不编辑冻结引擎暂存目录：脚本只写 `artifacts/desktop/license-evidence/`（被 `.gitignore` 忽略），不修改 `apps/desktop/src-tauri/resources/engine/`。
 - **固定随包分发**：7-Zip、UnRAR、Bandizip CLI。Bandizip依据所有者已取得书面分发许可的声明纳入，见第8节。`restoreAB.exe` 与私人配置不随包。
-- 冻结引擎 `build-info.json` 的 `excluded` 保留 `passwords.txt`、`config.json`、`restoreAB.exe`、`Bandizip`；`bundled_tools` 及 `tools/fixed-tools.json` 记录固定 UnRAR 身份。
+- 冻结引擎 `build-info.json` 的 `excluded` 为 `passwords.txt`、`config.json`、`restoreAB.exe`——这三者是**不进入引擎镜像**的输入：`passwords.txt` 是运行时在数据目录播种的**公开**密码文件（词条来自随包只读 `builtin_defaults`，不是私人凭据），`config.json` 是 CLI 配置，`restoreAB.exe` 是人工备用 GUI（恢复主用项目 Python 实现）。Bandizip 已随包，**不在**排除项；`bundled_tools`（及 `tools/fixed-tools.json`）记录固定的 UnRAR 与 Bandizip，`primary_seven_zip` 另记固定 7-Zip 身份。
 
 ## 2. 收集方法与复现
 
@@ -165,7 +165,7 @@ Windows 可达图内 254 个 crate **全部取得许可文本**（含 7 个通�
 
 ### 7.2 7-Zip 发布许可
 
-随包工具：`tools/7zip/Files/7-Zip/`（`7z.exe`、`7z.dll` 等），来源 7-Zip **25.01** x64，`readme.txt`、`License.txt` 已收集。
+随包工具：`tools/7zip/26.04/`（`7z.exe`、`7z.dll`、`License.txt`、`readme.txt`），来源 7-Zip **26.04** x64（0.3.3 由 25.01 受控升级，25.01 的 MSI 与解包目录作为历史保留），许可文本已收集。版本与逐文件 SHA-256 锁在 [desktop-sevenzip.lock.json](../scripts/desktop-sevenzip.lock.json)。
 
 - `7z.dll` 主许可 GNU **LGPL**；其中部分代码为 LGPL with unRAR restriction、BSD 3-clause、BSD 2-clause。
 - 其余文件：GNU **LGPL**。
@@ -177,7 +177,7 @@ unRAR 限制原文（`License.txt` 第 131–146 行）：
 
 含义：7-Zip 自带 RAR **解压**能力合法，但不得用来开发 RAR 兼容的**压缩**器。本项目只用其解压。随包必须附带 7-Zip `License.txt`；`scripts/stage_desktop_engine.py` 已强制校验 `License.txt` 存在，缺失即报错。
 
-## 8. UnRAR 固定依赖与未随包工具
+## 8. UnRAR 与 Bandizip 固定依赖
 
 UnRAR **7.13.0 x64** 从 Windows 宿主已签名的稳定 CLI 获取，EXE 未修改。Git 输入为 [unrar-7.13-windows-x64.zip](../tools/desktop-vendor/unrar-7.13-windows-x64.zip)，版本、来源、包及逐文件 SHA-256 由 [desktop-tools.lock.json](../scripts/desktop-tools.lock.json) 固定；stage 对缺失/哈希不符报错，不用 PATH 或最新 beta 替代。工具落在 `engine/tools/unrar/`，与两个公开许可文本一起进入 NSIS / ZIP。
 

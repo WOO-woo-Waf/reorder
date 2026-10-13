@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Callable
 
 from reorder_engine.domain.models import ArchiveKind, ArchiveProbe, ExtractionRequest, ExtractionResult, VolumeSet
+from reorder_engine.application.errors import EngineError, ProcessingCancelled
 from reorder_engine.interfaces.grouping import VolumeGroupingStrategy
 from reorder_engine.services.archive_naming import split_archive_name
 from reorder_engine.services.cleaning import SafeRenamer
@@ -16,7 +17,9 @@ from reorder_engine.services.decrypting import DecryptionService
 from reorder_engine.services.extracting import ExtractionService
 from reorder_engine.services.flattening import deepest_wrapper_dir
 from reorder_engine.services.rename_session import RenameSession
+from reorder_engine.infrastructure.tools import contains_nonempty_regular_file
 from reorder_engine.services.restoring import RestorationService
+from reorder_engine.services.restore_ab import RestoreABError
 
 
 @dataclass(frozen=True)
@@ -58,6 +61,9 @@ class _VolumeRevealSession:
         except Exception:
             return False
         return True
+
+
+PARTIAL_WARNING = "完成，有损坏或缺失警告：已保留可用文件，跳过继续解压"
 
 
 class BetaFolderPipeline:
@@ -146,6 +152,19 @@ class BetaFolderPipeline:
             )
             source_volume_set = result.source_volume_set or result.volume_set
 
+            if self._result_partial(result) and layer1_dir is not None and self._has_nonempty_file(layer1_dir):
+                # Extraction kept usable plain files under a damage/missing
+                # warning. Stop every further extraction and deep dig and publish
+                # what is available.
+                ok += 1
+                message = PARTIAL_WARNING
+                final_dir = self._promote_final_dir(layer1_dir, final_root, package_name=package_name, dry_run=dry_run)
+                outcomes.append(BetaPackageResult(volume_set.entry, "partial", None, message))
+                self._move_original_members(source_volume_set, archives_dir, package_name=package_name, dry_run=dry_run)
+                self._emit(f"FINAL: {message}")
+                self._emit(f"FINAL-DIR: {final_dir}")
+                continue
+
             if result.ok and layer1_dir is not None:
                 deep_ok, final_dir, message = self._continue_after_extract(
                     package_name=package_name,
@@ -166,7 +185,7 @@ class BetaFolderPipeline:
                         self._emit(f"FINAL-DIR: {final_dir}")
                     continue
 
-            if not result.ok and layer1_dir is not None and self._has_any_file(layer1_dir):
+            if not result.ok and layer1_dir is not None and self._has_nonempty_file(layer1_dir):
                 fail_category = self._failure_category(result, layer1_dir)
                 moved_dir = self._move_partial_outputs_to_error(
                     layer1_dir,
@@ -246,7 +265,7 @@ class BetaFolderPipeline:
             )
             # Successful/partial normalized volumes retain their new names;
             # empty failures have already rolled those names back.
-            source_vs = result.volume_set if result.ok or out_dir is not None else vs
+            source_vs = result.volume_set if (result.ok or self._result_partial(result) or out_dir is not None) else vs
             return replace(result, source_volume_set=source_vs), out_dir
 
         last = ExtractionResult(volume_set=vs, ok=False, tool="none", message="No candidate executed")
@@ -265,9 +284,16 @@ class BetaFolderPipeline:
             source_vs = vs if candidate != vs.entry else res.volume_set
             res = replace(res, source_volume_set=source_vs)
             last = res
-            if res.ok or (out_dir is not None and self._has_any_file(out_dir)):
+            if res.ok or self._result_partial(res) or (out_dir is not None and self._has_nonempty_file(out_dir)):
                 return res, out_dir
             self._rollback_attempt(attempt, dry_run=dry_run)
+            if self._result_stop_all(res):
+                # A serious no-output failure already classified as stop_all
+                # (missing volume / permission / disk-write / space /
+                # exit 7/8/124/255) cannot be fixed by a forced Apate
+                # rewrite or a later candidate; escalating would edit the
+                # selected original for nothing.
+                return res, None
 
         force_attempt = self._force_apate_attempt_if_useful(vs.entry, dry_run=dry_run)
         if force_attempt is not None:
@@ -282,7 +308,7 @@ class BetaFolderPipeline:
             source_vs = vs if force_attempt.path != vs.entry else res.volume_set
             res = replace(res, source_volume_set=source_vs)
             last = res
-            if res.ok or (out_dir is not None and self._has_any_file(out_dir)):
+            if res.ok or self._result_partial(res) or (out_dir is not None and self._has_nonempty_file(out_dir)):
                 return res, out_dir
             self._rollback_attempt(force_attempt, dry_run=dry_run)
         return replace(last, source_volume_set=vs), None
@@ -295,21 +321,35 @@ class BetaFolderPipeline:
         dry_run: bool,
         preferred_password: str | None = None,
     ) -> tuple[ExtractionResult, Path | None]:
-        reveal = self._reveal_disguised_volume_members(vs, dry_run=dry_run)
+        # Read and in-place suffix normalization first; only a failure without
+        # usable output escalates to in-place disguise restoration of the set.
         result, out_dir = self._extract_volume_set_body(
             vs,
             layer_root,
             dry_run=dry_run,
             preferred_password=preferred_password,
         )
-        if result.ok or (out_dir is not None and self._has_any_file(out_dir)):
+        if result.ok or self._result_partial(result) or (out_dir is not None and self._has_nonempty_file(out_dir)):
             return result, out_dir
-        if reveal is not None:
-            if not reveal.rollback_best_effort(dry_run=dry_run):
-                self._emit(f"VOLUME-REVEAL-ROLLBACK-FAILED: entry={vs.entry.name}")
-                raise RuntimeError("分卷伪装回滚失败，未继续归档，请检查工作文件。")
-            self._emit(f"VOLUME-REVEAL-ROLLBACK: entry={vs.entry.name}")
-        return result, None
+        if self._result_stop_all(result):
+            return result, None
+
+        reveal = self._reveal_disguised_volume_members(vs, dry_run=dry_run)
+        if reveal is None:
+            return result, None
+        reveal_result, reveal_out_dir = self._extract_volume_set_body(
+            vs,
+            layer_root / "attempt_2_revealed",
+            dry_run=dry_run,
+            preferred_password=preferred_password,
+        )
+        if reveal_result.ok or self._result_partial(reveal_result) or (reveal_out_dir is not None and self._has_nonempty_file(reveal_out_dir)):
+            return reveal_result, reveal_out_dir
+        if not reveal.rollback_best_effort(dry_run=dry_run):
+            self._emit(f"VOLUME-REVEAL-ROLLBACK-FAILED: entry={vs.entry.name}")
+            raise RuntimeError("分卷伪装回滚失败，未继续归档，请检查工作文件。")
+        self._emit(f"VOLUME-REVEAL-ROLLBACK: entry={vs.entry.name}")
+        return reveal_result, None
 
     def _reveal_disguised_volume_members(
         self,
@@ -386,7 +426,7 @@ class BetaFolderPipeline:
                 dry_run=dry_run,
                 preferred_password=preferred_password,
             )
-            if result.ok or (normalized_out_dir is not None and self._has_any_file(normalized_out_dir)):
+            if result.ok or (normalized_out_dir is not None and self._has_nonempty_file(normalized_out_dir)):
                 return result, normalized_out_dir
 
             session.rollback_best_effort(dry_run=dry_run)
@@ -407,7 +447,7 @@ class BetaFolderPipeline:
                 dry_run=dry_run,
                 preferred_password=preferred_password,
             )
-            if result.ok or (normalized_out_dir is not None and self._has_any_file(normalized_out_dir)):
+            if result.ok or (normalized_out_dir is not None and self._has_nonempty_file(normalized_out_dir)):
                 return result, normalized_out_dir
 
             session.rollback_best_effort(dry_run=dry_run)
@@ -428,7 +468,7 @@ class BetaFolderPipeline:
                 dry_run=dry_run,
                 preferred_password=preferred_password,
             )
-            if result.ok or (normalized_out_dir is not None and self._has_any_file(normalized_out_dir)):
+            if result.ok or (normalized_out_dir is not None and self._has_nonempty_file(normalized_out_dir)):
                 return result, normalized_out_dir
 
             session.rollback_best_effort(dry_run=dry_run)
@@ -443,8 +483,10 @@ class BetaFolderPipeline:
             dry_run=dry_run,
             preferred_password=preferred_password,
         )
-        if last.ok or (out_dir is not None and self._has_any_file(out_dir)):
+        if last.ok or self._result_partial(last) or (out_dir is not None and self._has_nonempty_file(out_dir)):
             return last, out_dir
+        if self._result_stop_all(last):
+            return last, None
 
         normalized = self._normalize_middle_numbered_volume_set(vs, dry_run=dry_run)
         if normalized is None:
@@ -460,7 +502,7 @@ class BetaFolderPipeline:
             dry_run=dry_run,
             preferred_password=preferred_password,
         )
-        if result.ok or (normalized_out_dir is not None and self._has_any_file(normalized_out_dir)):
+        if result.ok or (normalized_out_dir is not None and self._has_nonempty_file(normalized_out_dir)):
             return result, normalized_out_dir
 
         session.rollback_best_effort(dry_run=dry_run)
@@ -502,7 +544,7 @@ class BetaFolderPipeline:
                 dry_run=dry_run,
             )
             if not candidates:
-                if self._has_any_file(current_dir):
+                if self._has_nonempty_file(current_dir):
                     final_dir = self._promote_final_dir(current_dir, final_root, package_name=package_name, dry_run=dry_run)
                     return True, final_dir, f"depth={depth} reason=no-candidates"
                 return False, None, f"depth={depth} no candidates"
@@ -529,6 +571,12 @@ class BetaFolderPipeline:
                     preferred_password=current_password,
                     method=attempt.method,
                 )
+                if self._result_partial(res):
+                    # Usable files with a damage/missing warning: stop digging and
+                    # publish what is available instead of retrying this layer.
+                    partial_dir = target_dir if target_dir is not None else target_dir_root
+                    final_dir = self._promote_final_dir(partial_dir, final_root, package_name=package_name, dry_run=dry_run)
+                    return True, final_dir, PARTIAL_WARNING
                 if res.ok:
                     if res.password:
                         current_password = res.password
@@ -537,10 +585,10 @@ class BetaFolderPipeline:
                     break
                 self._rollback_attempt(attempt, dry_run=dry_run)
             if not extracted:
-                if deferred and not self._has_any_file(current_dir):
+                if deferred and not self._has_nonempty_file(current_dir):
                     self._remove_empty_dirs(current_dir)
                     return True, None, f"depth={depth} reason=deferred-volume-fragments"
-                if self._has_any_file(current_dir):
+                if self._has_nonempty_file(current_dir):
                     final_dir = self._promote_final_dir(current_dir, final_root, package_name=package_name, dry_run=dry_run)
                     return True, final_dir, f"depth={depth} reason=candidates-failed"
                 return False, None, f"depth={depth} all candidates failed"
@@ -600,8 +648,19 @@ class BetaFolderPipeline:
             preferred_password=preferred_password,
             method=method,
         )
-        if direct_result.ok or len(volume_set.members) > 1 or (direct_dir is not None and self._has_any_file(direct_dir)):
+        if (
+            direct_result.ok
+            or len(volume_set.members) > 1
+            or self._result_partial(direct_result)
+            or (direct_dir is not None and self._has_nonempty_file(direct_dir))
+        ):
             return direct_result, direct_dir
+        if self._result_stop_all(direct_result):
+            # A serious no-output failure the extraction service already classified
+            # as stop_all (missing volume / permission / disk-write / space /
+            # exit 7/8/124/255) cannot be fixed by a rename or a disguise restore;
+            # escalating would edit the selected original for nothing.
+            return replace(direct_result, volume_set=volume_set), None
 
         last = direct_result
         variant_plans = self._restore.variant_plans(volume_set.entry)
@@ -626,13 +685,112 @@ class BetaFolderPipeline:
                 method=f"{method}+rename:{plan.rule_name}",
             )
             last = result
-            if result.ok or (out_dir is not None and self._has_any_file(out_dir)):
+            if result.ok or self._result_partial(result) or (out_dir is not None and self._has_nonempty_file(out_dir)):
                 return result, out_dir
             session.rollback_best_effort(dry_run=dry_run)
             self._emit(f"RENAME-ROLLBACK: {renamed_entry.name} -> {volume_set.entry.name} rule={plan.rule_name}")
+            if self._result_stop_all(result):
+                return replace(result, volume_set=volume_set), None
 
-        # Failed suffix attempts were rolled back to the input volume set.
+        # In-place suffix attempts were rolled back to the input volume set. Only
+        # now escalate to disguise restoration, which may edit the source in place.
+        restored = self._restore_after_failure(
+            volume_set,
+            base_output_dir,
+            probe=probe,
+            dry_run=dry_run,
+            prefix=prefix,
+            preferred_password=preferred_password,
+            method=method,
+        )
+        if restored is not None:
+            result, out_dir = restored
+            if result.ok or self._result_partial(result) or (out_dir is not None and self._has_nonempty_file(out_dir)):
+                return replace(result, volume_set=volume_set), out_dir
+            return replace(result, volume_set=volume_set), None
         return replace(last, volume_set=volume_set), None
+
+    def _restore_after_failure(
+        self,
+        volume_set: VolumeSet,
+        base_output_dir: Path,
+        *,
+        probe: ArchiveProbe,
+        dry_run: bool,
+        prefix: str,
+        preferred_password: str | None,
+        method: str,
+    ) -> tuple[ExtractionResult, Path | None] | None:
+        """Apply disguise restoration only after a read/suffix pass produced nothing.
+
+        A confirmed Apate/embedded disguise is passed as preferred_kind so the
+        polyglot (RestoreAB) scanner cannot preempt it on a single file; RestoreAB
+        remains the final fallback for otherwise UNKNOWN covers. Any in-place edit
+        is rolled back when restoration still yields no usable output.
+        """
+        if probe.kind == ArchiveKind.ARCHIVE:
+            return None
+        self._emit(f"RESTORE-TRY: entry={volume_set.entry.name} kind={probe.kind.value}")
+        before = self._source_signature(volume_set.entry)
+        try:
+            restored, rollbacks = self._restore.restore_with_rollbacks(
+                volume_set.entry,
+                workspace=base_output_dir,
+                dry_run=dry_run,
+                preferred_kind=probe.kind,
+            )
+        except (EngineError, ProcessingCancelled):
+            raise
+        except RestoreABError as exc:
+            # The in-place planner rejected this layout (for example ZIP64). That is
+            # an ordinary single-package failure, not an internal processing error;
+            # surface the real reason instead of needs_review / PROCESSING_FAILED.
+            self._emit(
+                f"RESTORE-ERROR: entry={volume_set.entry.name} kind={probe.kind.value} error={exc}"
+            )
+            return ExtractionResult(volume_set=volume_set, ok=False, tool="restore", message=str(exc)), None
+        restored_paths = list(restored or [])
+        in_place = bool(restored_paths) and all(candidate == volume_set.entry for candidate in restored_paths)
+        changed = in_place and self._source_signature(volume_set.entry) != before
+        name_getter = getattr(self._restore, "last_restorer_name", None)
+        restorer_name = name_getter() if callable(name_getter) else None
+        method_getter = getattr(self._restore, "last_method", None)
+        restored_marker = method_getter() if callable(method_getter) else None
+        if in_place and not changed:
+            # A no-op restore (for example an unregistered suffix rule) is not a
+            # usable result and must not be labeled as a restoration method.
+            return None
+        restore_method = self._restore_method(
+            probe,
+            tuple(rollbacks),
+            restorer_name=restorer_name,
+            in_place=changed,
+            last_method=restored_marker,
+        )
+        last_result: ExtractionResult | None = None
+        for index, restored_path in enumerate(restored_paths or [volume_set.entry], start=1):
+            restore_vs = VolumeSet(entry=restored_path, members=(restored_path,), group_key=volume_set.group_key)
+            restore_probe = self._restore.identify(restored_path)
+            result, out_dir = self._run_extract_attempt(
+                restore_vs,
+                probe=restore_probe,
+                output_dir=base_output_dir.parent / f"{base_output_dir.name}_restore_{index}",
+                dry_run=dry_run,
+                prefix=prefix,
+                preferred_password=preferred_password,
+                method=restore_method,
+            )
+            last_result = result
+            if result.ok or self._result_partial(result) or (out_dir is not None and self._has_nonempty_file(out_dir)):
+                return result, out_dir
+        if rollbacks:
+            self._restore.rollback_apate(list(rollbacks), dry_run=dry_run)
+            self._emit(f"RESTORE-ROLLBACK: entry={volume_set.entry.name} method={restore_method}")
+        # Report the restore attempt's error so the failure category stays
+        # actionable even though the derive produced no usable output.
+        if last_result is not None:
+            return last_result, None
+        return None
 
     def _run_extract_attempt(
         self,
@@ -658,21 +816,35 @@ class BetaFolderPipeline:
             preferred_password=preferred_password,
             method=method,
         )
-        result = self._extractor.extract_one(req, preference="auto", probe=probe, dry_run=dry_run)
+        try:
+            result = self._extractor.extract_one(req, preference="auto", probe=probe, dry_run=dry_run)
+        except (EngineError, ProcessingCancelled):
+            # Cancellation and engine error codes (UNSAFE_ARCHIVE / OUTPUT_LIMIT /
+            # DISK_FULL / TOOL_TIMEOUT / TOOL_START_FAILED / ...) must abort the job
+            # with their real code. Downgrading them to a per-attempt failure would
+            # let rename/restore run on and mis-report the outcome as partial.
+            raise
+        except Exception as exc:  # a crashed tool/attempt is a failure, not a package abort
+            self._emit(
+                f"{prefix}-ERROR: entry={volume_set.entry.name} method={method} "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            return ExtractionResult(volume_set=volume_set, ok=False, tool="error", message=str(exc)), None
         self._emit_extract_result(prefix, volume_set.entry.name, result, output_dir=output_dir, method=method)
-        if result.ok or self._has_any_file(output_dir):
+        if result.ok or self._result_partial(result) or self._has_nonempty_file(output_dir):
             return result, output_dir
         return result, None
 
     def _candidate_chain(self, path: Path, *, probe: ArchiveProbe, workspace: Path, dry_run: bool) -> list[CandidateAttempt]:
-        if probe.kind == ArchiveKind.ARCHIVE:
-            return [CandidateAttempt(path, method="direct", source=path)]
-        restored, rollbacks = self._restore.restore_with_rollbacks(path, workspace=workspace, dry_run=dry_run)
-        method = self._restore_method(probe, tuple(rollbacks))
-        return [
-            CandidateAttempt(candidate, tuple(rollbacks), method=method, source=path)
-            for candidate in (restored or [path])
-        ]
+        # Candidates are read-only: yield only the original path for a direct
+        # read plus in-place suffix attempts. Disguise restoration is deferred
+        # until those fail without usable output, so candidate preparation never
+        # materializes a recovery copy or a fresh backup of the source.
+        _ = (workspace, probe)
+        # The first attempt is always a plain read of the original path; no
+        # disguise has been restored yet, so it must not claim a "reveal" method.
+        # A real method label is applied only by _restore_after_failure.
+        return [CandidateAttempt(path, method="direct", source=path)]
 
     def _rollback_attempt(self, attempt: CandidateAttempt, *, dry_run: bool) -> None:
         if not attempt.rollbacks:
@@ -680,7 +852,20 @@ class BetaFolderPipeline:
         self._restore.rollback_apate(list(attempt.rollbacks), dry_run=dry_run)
         self._emit(f"RESTORE-ROLLBACK: entry={attempt.path.name} method={attempt.method}")
 
-    def _restore_method(self, probe: ArchiveProbe, rollbacks: tuple) -> str:
+    def _restore_method(
+        self,
+        probe: ArchiveProbe,
+        rollbacks: tuple,
+        *,
+        restorer_name: str | None = None,
+        in_place: bool = False,
+        last_method: str | None = None,
+    ) -> str:
+        # Prefer the marker the active restorer reported for an actual in-place
+        # edit; a marker left over from an earlier call must not relabel a copy
+        # or an untouched UNKNOWN file as a successful restore.
+        if last_method and in_place:
+            return last_method
         names = [getattr(record, "rule_name", "") for record in rollbacks]
         names = [name for name in names if name]
         if names:
@@ -689,6 +874,10 @@ class BetaFolderPipeline:
             return "apate-reveal"
         if probe.kind == ArchiveKind.EMBEDDED:
             return "embedded-archive-strip-prefix"
+        # Only an actual in-place RestoreAB edit earns this label; an UNKNOWN
+        # file must not be reported as restoreAB just because it fell back here.
+        if in_place and restorer_name == "RestoreABRestorer":
+            return "restore-ab-in-place"
         return "direct"
 
     def _force_apate_attempt_if_useful(self, path: Path, *, dry_run: bool) -> CandidateAttempt | None:
@@ -1228,6 +1417,35 @@ class BetaFolderPipeline:
             return any(path.is_file() for path in root.rglob("*"))
         except OSError:
             return False
+
+    def _has_nonempty_file(self, root: Path) -> bool:
+        # A zero-byte output is not a usable result and must not stop retries.
+        # Delegates to the shared guard so symlinks/special files are never counted.
+        return contains_nonempty_regular_file(root)
+
+    @staticmethod
+    def _result_partial(result: ExtractionResult) -> bool:
+        # ExtractionResult.partial_output is added by a parallel worker; tolerate
+        # its absence so this module works before and after that change.
+        return bool(getattr(result, "partial_output", False))
+
+    @staticmethod
+    def _result_stop_all(result: ExtractionResult) -> bool:
+        # Consult the extraction service's own disposition. A serious no-output
+        # failure (missing volume / permission / disk-write / space / exit
+        # 7/8/124/255) must not trigger an in-place rename or disguise restore.
+        disposition = ExtractionService.classify_failure(
+            result.message, exit_code=result.exit_code
+        )
+        return disposition == "stop_all"
+
+    @staticmethod
+    def _source_signature(path: Path) -> tuple[int, int] | None:
+        try:
+            stat = path.stat()
+        except OSError:
+            return None
+        return (stat.st_size, stat.st_mtime_ns)
 
     def _remove_empty_dirs(self, root: Path) -> None:
         if not root.exists() or not root.is_dir():

@@ -56,9 +56,14 @@ class ExternalCommandRunner:
 
     def run(self, args: list[str], *, cwd: Path | None = None,
             timeout_sec: int | None = None, stream: bool | None = None,
-            output_sink: Callable[[str], None] | None = None) -> CommandResult:
+            output_sink: Callable[[str], None] | None = None,
+            abort_on_line: Callable[[str], bool] | None = None) -> CommandResult:
         use_stream = self._stream if stream is None else stream
         timeout = self._timeout if timeout_sec is None else timeout_sec
+        # A per-run guard takes precedence so a single command (for example one
+        # extraction attempt) can abort on its own failure lines without changing
+        # pre-checks or other runs that share this runner.
+        abort_guard = abort_on_line if abort_on_line is not None else self._abort_on_line
         workdir = cwd if cwd is not None else self._cwd
         environ = None
         if self._env is not None:
@@ -135,7 +140,7 @@ class ExternalCommandRunner:
                         self._line_sink(line)
                     elif use_stream:
                         print(line)
-                    if self._abort_on_line and self._abort_on_line(line):
+                    if abort_guard and abort_guard(line):
                         reason = "aborted by output guard: " + line
                         terminate_process_tree(process)
                         eof = True

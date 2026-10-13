@@ -99,7 +99,10 @@ class BetaCliAndExtractingTests(unittest.TestCase):
             self.assertEqual(first.calls, [])
             self.assertEqual(second.calls, [None])
 
-    def test_extraction_service_exhausts_tool_password_matrix_on_archive_mismatch(self) -> None:
+    def test_extraction_service_skips_passwords_on_archive_mismatch(self) -> None:
+        # New stop policy: a format/tool mismatch on a tool advances to the next
+        # tool once (no password polling for that tool). A tool whose message is
+        # neither a mismatch nor a password error still walks its password list.
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             archive = root / "a.7z.001"
@@ -136,8 +139,8 @@ class BetaCliAndExtractingTests(unittest.TestCase):
 
             self.assertFalse(result.ok)
             self.assertEqual(result.tool, "bandizip")
-            self.assertEqual(first.calls, [None, "pw1", "pw2"])
-            self.assertEqual(second.calls, [None, "pw1", "pw2"])
+            self.assertEqual(first.calls, [None])
+            self.assertEqual(second.calls, [None])
             self.assertEqual(third.calls, [None, "pw1", "pw2"])
 
     def test_extraction_service_tries_preferred_password_first(self) -> None:

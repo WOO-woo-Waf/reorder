@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "platform": "windows-x64",
+  "seven_zip": {
+    "name": "7-Zip",
+    "version": "26.04",
+    "url": "https://github.com/ip7z/7zip/releases/download/26.04/7z2604-x64.exe",
+    "sha256": "d54bf805f9f3704d1e8db2fa3498ae7ef2df0312b40b558e7c71c734430a665d",
+    "vendored_directory": "tools/7zip/26.04",
+    "files": [
+      {
+        "path": "7z.exe",
+        "sha256": "95fff19b73eff77c87c0d7bd32822e43fb90dd2932459f962eb532d8dfb6ba53"
+      },
+      {
+        "path": "7z.dll",
+        "sha256": "899cd73d7fc60e1c1c35c7de0f5bed3dc69bfe2cecbd48014d868a347970a0b1"
+      },
+      {
+        "path": "License.txt",
+        "sha256": "519ac0a4bded9c18ea02e0afb71f663d8c47373bd9facd3ac96a79f51d77765d"
+      },
+      {
+        "path": "readme.txt",
+        "sha256": "6929cb624c82d5d1c55a146b5dcb4542445628e4ad8bcfe6272a0814e1383618"
+      }
+    ],
+    "license_files": [
+      "License.txt"
+    ],
+    "provenance": {
+      "source_archive": "https://github.com/ip7z/7zip/releases/download/26.04/7z2604-x64.exe",
+      "download_page": "https://www.7-zip.org/download.html",
+      "verified_against": "artifacts/desktop/hoshiribbon-0.3.3/research/HOSHI-033-TOOLS-EXPERIMENT.md",
+      "note": "Same x64 7z.exe/7z.dll as the isolated official download; supersedes 25.01 for post-25.01 security fixes. The 4 vendored files are the unchanged official installer payload."
+    }
+  }
+}

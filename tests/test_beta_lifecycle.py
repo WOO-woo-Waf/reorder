@@ -116,10 +116,17 @@ class BetaLifecycleTests(unittest.TestCase):
 
                 self._assert_routed(root, result, outcome=outcome, expected_sources={original.name: data})
                 self.assertTrue(extractor.entries)
-                self.assertTrue(all(entry.parent.name == "restore_ab" for entry in extractor.entries))
+                # 0.3.3 reads the original and in-place suffix variants first; a
+                # restoreAB copy is derived only when those leave no usable output.
                 copies = list((root / "intermediate").rglob("*_restoreAB.zip"))
-                self.assertEqual(len(copies), 1)
-                self.assertEqual(copies[0].read_bytes(), archive_data)
+                if outcome == "failure":
+                    self.assertTrue(
+                        any(entry.parent.name == "restore_ab" for entry in extractor.entries)
+                    )
+                    self.assertEqual(len(copies), 1)
+                    self.assertEqual(copies[0].read_bytes(), archive_data)
+                else:
+                    self.assertEqual(copies, [], "a directly readable polyglot needs no restoreAB copy")
                 self.assertEqual(pipeline.run().total, 0, "a routed original must not be processed again")
 
     def test_suffix_rename_routes_live_path_or_rolled_back_original(self) -> None:

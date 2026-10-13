@@ -30,10 +30,13 @@ sequenceDiagram
     Core->>Sources: 复核选中原包；直接源组
     Core-->>Job: progress(extracting)
     Job->>DB: update_package(extracting)
-    Core->>Core: BetaFolderPipeline.run()
-    opt 原包需要还原 / 改名
+    Core->>Core: BetaFolderPipeline.run() 先直接读 / 原地改名
+    opt 无可用结果且需要还原
       Core->>Sources: 记录原地变换；更新本次身份
       Sources->>DB: source_edit / source_rename -> applied
+    end
+    opt 工具报错且已有非空文件
+      Core->>Core: 保留输出，停止重试与深挖，标记 partial
     end
     Core-->>Job: progress(publishing)
     Job->>DB: update_package(publishing)
@@ -44,7 +47,7 @@ sequenceDiagram
     Core->>Sources: routing_package() 复核真实路径
     Core->>FS: route_sources(当前原包, 归档 / 错误 / 缺卷目录)
     FS->>DB: record_action(route_source) -> copied
-    FS->>FS: 同卷全部独占落位并复核后删源；跨卷全部复制校验后删源
+    FS->>FS: 同盘独占移动；跨盘保留原位置并登记结果
     Core->>Sources: complete() 原地动作 -> committed
     Core-->>Job: PackageOutcome(state)
     Job->>DB: update_package(终态)

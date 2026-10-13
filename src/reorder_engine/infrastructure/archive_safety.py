@@ -184,7 +184,10 @@ class ArchiveSafetyInspector:
                     raise EngineError("UNSAFE_ARCHIVE", "归档成员信息存在歧义。")
                 record[key] = value
 
-        args = [self.seven_zip, "l", "-slt", "-ba", "-sccUTF-8", "-p" + (password or ""), str(archive.resolve())]
+        # Always define a noninteractive probe password instead of omitting -p
+        # and relying on EOF. 7-Zip treats -p- as the literal password "-";
+        # unencrypted archives ignore it, encrypted headers report a password error.
+        args = [self.seven_zip, "l", "-slt", "-ba", "-sccUTF-8", "-p" + (password if password is not None else "-"), str(archive.resolve())]
         result = self.runner.run(args, output_sink=consume)
         finish()
         if result.exit_code == 124:

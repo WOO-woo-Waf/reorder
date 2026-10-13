@@ -1,14 +1,14 @@
 # 桌面首版工程设计与实施契约
 
-日期：2026-10-07；2026-10-08 增补 0.3.1；2026-10-12 增补 0.3.2 原地处理。产品依据：[产品方案](product_plan.md)。
-状态：设计已确定，用户已授权依此实施；用户已于 2026-10-10 确认当前修复并授权发布 0.3.1 便携预发布；实现、验证、人工验收分别记录在 [实施状态](desktop-status.md)。
+日期：2026-10-07；2026-10-08 增补 0.3.1；2026-10-12 增补 0.3.2 原地处理；2026-10-13 增补 0.3.3 磁盘读写优先。产品依据：[产品方案](product_plan.md)。
+状态：设计已确定，用户已授权依此实施；用户已于 2026-10-10 确认当前修复并授权发布 0.3.1 便携预发布；0.3.3 源码与工程自检已完成，Windows 产物及发布状态见实施状态。实现、验证、人工验收分别记录在 [实施状态](desktop-status.md)。
 
 ## 1. 首版验收范围
 
 跨平台桌面架构，Windows x64 首交付。保留 CLI；桌面提供目录/文件拖放、只读计划、单队列执行、取消、错误重试、最近任务、密码与工具设置、结果打开。
 不在首版加入浏览器服务器、目录监听、托盘自动处理、云服务或 Agent。
 
-当前 0.3.2 直接读取选中原包；必要的伪装还原/改名沿用旧版原地方式，普通包不改写字节。派生恢复、解压和工具临时数据在所选工作文件夹内。成品发布后归档实际处理后的原包，归档不完整不报告成功。原地变化中断标记 needs_review，不能承诺无备份自动还原字节。
+当前 0.3.3 直接读取选中原包；优先原地后缀调整，失败且无可用结果才做原地 Apate / 嵌入封面 / restoreAB 还原，普通包不改写字节。解压与工具临时数据在所选工作文件夹内，restoreAB 桌面路径不生成恢复整包副本。成品发布后整理原包：同盘独占移动，跨盘保留原包当前位置并登记结果。归档不完整不报告成功。原地变化中断标记 needs_review，不能承诺无备份自动还原字节。
 
 ## 2. 依赖方向与对象职责
 
@@ -333,7 +333,7 @@ sequenceDiagram
     Core->>Sources: routing_package() 复核真实路径
     Core->>FS: route_sources(当前原包, 归档 / 错误 / 缺卷目录)
     FS->>DB: record_action(route_source) -> copied
-    FS->>FS: 同卷全部独占落位并复核后删源；跨卷全部复制校验后删源
+    FS->>FS: 同盘全部独占落位并复核后删源；跨盘保留原包当前位置并登记结果（0.3.3）
     Core->>Sources: complete() 原地动作 -> committed
     Core-->>Job: PackageOutcome(state)
     Job->>DB: update_package(终态)
@@ -521,10 +521,47 @@ classDiagram
 - 密码需每行一个、UTF-8，单条上限 4096 字符、最多 10000 条、文件不超过 512 KiB；超限报 `INVALID_PASSWORD_FILE`。这些边界配合 1 MiB 协议帧，避免整库回传把响应撑爆。
 - `DesktopSettings` 增加 `work_root`；`ProcessingOptions.use_builtin_passwords` 仅作为旧配置兼容字段保留，实际以文件为准。
 
-工作文件夹的对象关系不变：`PackageProcessor` 仍在包级工作区上跑 `BetaFolderPipeline`，只是 0.3.1 起把工作区根从数据目录 `work/` 换成所选工作文件夹的 `intermediate/workspaces/<作业>/<文件组>/`，并在其中设定解压工具的 TEMP/TMP/TMPDIR 与当前目录。旧数据目录 `work/` 只保留作只读遗留恢复；发布与原件归档优先同卷独占移动/改名，跨卷或不可用时才回退到校验复制。机器证据由主线程汇总，本文不预判通过。
+工作文件夹的对象关系不变：`PackageProcessor` 仍在包级工作区上跑 `BetaFolderPipeline`，只是 0.3.1 起把工作区根从数据目录 `work/` 换成所选工作文件夹的 `intermediate/workspaces/<作业>/<文件组>/`，并在其中设定解压工具的 TEMP/TMP/TMPDIR 与当前目录。旧数据目录 `work/` 只保留作只读遗留恢复；发布与原件整理优先同盘独占移动/改名。机器证据由主线程汇总，本文不预判通过。（本节为 0.3.1 历史；跨盘行为已由 0.3.3 改为保留原包当前位置，见第 14 节。）
 
 ## 13. 0.3.2 直接源适配
 
 PackageProcessor 为每包创建 DirectSourceSession，SourceRestoration/SourceRenamer 包住旧管线的还原和改名入口。BetaFolderPipeline 增加可选 volume_sets、manage_originals 与 renamer；桌面传真实源组、关闭内核归档，由 FileTransaction 集中路由，CLI 默认不变。还原 workspace 参数被限制在本次工作区，避免多卷旧入口把派生产物落到源目录。结果列表不把历史 source_edit/source_rename 路径当成产物，needs_review 仍返回动作供人工核对。
 
-同盘无整包预拷贝，Windows 无硬链接可独占改名；跨盘、restoreAB 派生和多层解压仍有必要写入。普通 ZIP、源身份、中断、旧命名/嵌套和 Windows 冻结引擎证据见实施状态；真实大盘与 GUI 不在机器验收范围。
+同盘无整包预拷贝，Windows 无硬链接可独占改名；多层解压与部分失败输出仍有必要写入。普通 ZIP、源身份、中断、旧命名/嵌套和 Windows 冻结引擎证据见实施状态；真实大盘与 GUI 不在机器验收范围。（本节为 0.3.2 历史；0.3.3 把桌面 restoreAB 改为原地修复、跨盘改为保留原包当前位置，见第 14 节。）
+
+## 14. 0.3.3 磁盘读写优先适配
+
+本节记录 0.3.3 已实现的对象与契约变化；以类/函数名定位，不引用会漂移的行号。仅列与设计有关的差异，压缩/密码/深度等旧策略不变。
+
+### 14.1 六类核心处理方式
+
+`PackageProcessor` 装配 `RestorationService`，桌面顺序为 `RestoreABRestorer(in_place=True)`、`ApateRestorer(rounds=3)`、`EmbeddedArchiveRestorer`、`SuffixVariantBuilder`。每个文件组的方法标记由此与管线派生：
+
+- 直接解压 `direct`；后缀改名 `direct+rename:<规则>`（`SuffixVariantBuilder.plan_variants` + `RenameSession`）。
+- Apate 还原 `apate-reveal`、嵌入封面剥离 `embedded-archive-strip-prefix`（`_probe_method` / `_restore_method`；类型 APATE/EMBEDDED 经 `preferred_kind` 优先对应还原器）。
+- restoreAB 原地 `restore-ab-in-place`（仅真正的原地 RestoreAB 编辑才用该标签）。
+- 强制 Apate 兜底 `apate-force-reveal`（`_force_apate_attempt_if_useful`，名字 one/two/three 提示轮数）。
+
+后缀改名规则 `SuffixVariantBuilder` 现注册 **7 条**（0.3.2 基线 5 条，本轮新增 `media-to-zip`、`no-suffix-to-zip`）；分卷归一化 `BetaFolderPipeline` 有 **4 条**（`disguised-split-suffix`、`sfx-volume`、`numbered-tail-volume`、`middle-numbered-volume`）。嵌套层与分卷数量不与方式分类累加。
+
+### 14.2 原地 restoreAB
+
+`RestoreABRestorer(in_place=True)`：单 `r+b` 句柄，先规划校验再前移 + `truncate` + 回写 ZIP 偏移，`restore_with_rollbacks` 原地返回同路径、空回滚；`_build_zip_plan` 对 ZIP64/布局异常在写前抛 `RestoreABError`。`in_place=False` 的旧派生语义保留给 CLI（`beta.py`）。`SourceRestoration` 仍把 workspace 限制在本次工作区。
+
+### 14.3 结果保留与快速停止契约
+
+- `ExtractionResult` 新增 `partial_output: bool`。`Extracting._partial_result_for_output`：非零退出码 + 本次输出目录存在非空常规文件 → `ok=True, partial_output=True`，管线据此停止密码/工具矩阵与深挖，包状态 `partial`（界面“完成，有警告”），不认证完整性。
+- `ExtractionService._failure_disposition` 的处置：格式不匹配 → `next_tool`；缺卷/写盘/权限 → `stop_all`；密码失败 → `retry`；CRC/Data Error → `next_tool`；退出码 7/8/124/255 → `stop_all`。取消/超时/guard 异常照常上抛，永不 `partial`。
+- `ExternalCommandRunner.run` 新增每调用 `abort_on_line` 覆盖；`tools.py` 的 `_extract_abort_guard` 只在输出仍为空时按强失败标记终止进程树。抽取命令：7-Zip 钉 `-sccUTF-8` 与字面 `-p-`（密码为 `-`，仅完全无 `-p` 才可能交互），UnRAR 加 `-kb`。
+
+### 14.4 原包归档
+
+`FileTransaction.route_sources(package, destination, copy_across_volumes=False)`：跨盘时登记已核验的当前路径（动作 `retain_source`）并返回，不改字节；同盘仍走 `_route_sources_in_place`。`PackageProcessor` 传入该参数并在跨盘时向结果追加“已保留原包当前位置，未复制归档”。因此桌面不再需要跨盘整包复制，也不需要 restoreAB 派生副本。
+
+### 14.5 工具
+
+随包 7-Zip 由 25.01 受控升级到 26.04（`scripts/desktop-sevenzip.lock.json`，25.01 历史保留），UnRAR 7.13.0 / Bandizip 7.40.0.1 固定；bsdtar 本版不捆绑，ALZ/EGG 不宣称支持。来源与退出语义见 [工具研究](desktop-tool-research.md)。
+
+### 14.6 未验证
+
+真实大盘 I/O、真实原件上的跨盘保留与原地 restoreAB、7-Zip 26.04 冻结引擎行为、`partial_output` 在真实损坏包上的表现，均不在本文机器验收范围，留用户人工验收。

@@ -81,20 +81,22 @@ def test_password_failure_is_not_masked_by_a_later_format_mismatch(tmp_path, pas
     assert not result.ok
     assert result.message == password_message  # the earlier, actionable failure survives
     assert category_of(result, req.volume_set.entry) == "password_error"
-    # The full tool x password matrix is unchanged: None then pw1, for every tool.
+    # The password tool still walks its password list; the later tool is skipped
+    # after its format/tool mismatch instead of polling passwords again.
     assert seven.calls == [None, "pw1"]
-    assert unrar.calls == [None, "pw1"]
+    assert unrar.calls == [None]
 
 
-def test_later_tool_success_still_succeeds_without_shrinking_the_matrix(tmp_path):
+def test_later_tool_with_password_still_succeeds(tmp_path):
     req = make_request(tmp_path)
-    seven = FakeExtractor("7z", [(False, "Wrong password"), (False, "Wrong password")])
-    unrar = FakeExtractor("unrar", [(False, "not RAR archive"), (True, "ok")])
+    seven = FakeExtractor("7z", [(False, "not RAR archive"), (False, "not RAR archive")])
+    unrar = FakeExtractor("unrar", [(False, "Wrong password"), (True, "ok")])
 
     result = ExtractionService([seven, unrar]).extract_one(req)
 
     assert result.ok and result.tool == "unrar" and result.password == "pw1"
-    assert seven.calls == [None, "pw1"]
+    # 7z is skipped after the mismatch; unrar still walks None -> pw1 and succeeds.
+    assert seven.calls == [None]
     assert unrar.calls == [None, "pw1"]
 
 
@@ -118,8 +120,11 @@ def test_a_specific_final_error_is_not_replaced_by_a_password_failure(tmp_path):
 
     result = ExtractionService([seven, unrar]).extract_one(req)
 
-    assert result.tool == "unrar" and result.message == "disk full"  # a disk error stays visible
+    # A disk write error is a hard stop: it stays visible and is not replaced by
+    # the earlier password failure, and no further passwords are attempted.
+    assert result.tool == "unrar" and result.message == "cannot write to the output file"
     assert category_of(result, req.volume_set.entry) == "extract_failed"
+    assert unrar.calls == [None]
     pipeline = BetaFolderPipeline.__new__(BetaFolderPipeline)
     assert not pipeline._looks_like_password_error(result.message or "")
 

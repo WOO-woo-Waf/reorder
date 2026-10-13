@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import shutil
 import threading
 import re
@@ -162,12 +161,11 @@ class PackageProcessor:
         # cannot be redirected outside the chosen output folder.
         guard_workspace_path(output_root, output_root)
         # Reading originals and same-volume routing allocate no archive copy.
-        # Only cross-volume archives must be copied; extraction is guarded live.
+        # Cross-volume originals stay at their current paths; only extracted
+        # content consumes work-folder space, guarded while the tool runs.
         needed = 64 * 1024 * 1024
-        output_device = os.stat(output_root).st_dev
-        needed += sum(member.size for member in package.members if member.device != output_device)
         if shutil.disk_usage(output_root).free < needed:
-            raise EngineError("DISK_FULL", "解压工作空间或跨盘归档需要的可用空间不足。")
+            raise EngineError("DISK_FULL", "解压工作空间的可用空间不足。")
         sources = DirectSourceSession(package, self.repository, job_id=job_id)
         workspace = allocate_run_workspace(output_root, job_id, package.package_id)
         try:
@@ -194,7 +192,7 @@ class PackageProcessor:
                     delegates.append(cls(runner, exe=tool))
             extractor = ExtractionService([GuardedExtractor(d, safety, guard) for d in delegates])
             inspector = ArchiveSignatureInspector()
-            restore = RestorationService([RestoreABRestorer(), ApateRestorer(inspector, rounds=3),
+            restore = RestorationService([RestoreABRestorer(in_place=True), ApateRestorer(inspector, rounds=3),
                 EmbeddedArchiveRestorer(inspector), SuffixVariantBuilder(inspector)], inspector=inspector)
             restore = SourceRestoration(restore, sources, workspace)
 
@@ -236,10 +234,19 @@ class PackageProcessor:
                 destination = output_root / "deferred_volumes" / package.package_id
             else:
                 destination = output_root / "error_files" / (outcome.category or "unknown")
-            results.extend(transaction.route_sources(sources.routing_package(), destination))
+            current_package = sources.routing_package()
+            routed = transaction.route_sources(current_package, destination, copy_across_volumes=False)
+            results.extend(routed)
+            retained = (routed == [member.path for member in current_package.members]
+                        and any(Path(path).parent != destination for path in routed))
             sources.complete()
             # Tool failures usually finish with the actionable error line.
-            return PackageOutcome(outcome.state, self.secrets.redact(outcome.message)[-2000:], results)
+            message = outcome.message
+            if retained:
+                note = "原包与工作文件夹跨盘，已保留原包当前位置，未复制归档。原包位置已登记在结果中。"
+                log(note)
+                message = f"{message}\n{note}" if message else note
+            return PackageOutcome(outcome.state, self.secrets.redact(message)[-2000:], results)
         finally:
             # Journaled actions may need these files for manual recovery.
             incomplete = any(a["job_id"] == job_id and a["package_id"] == package.package_id

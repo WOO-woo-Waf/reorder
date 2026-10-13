@@ -185,7 +185,9 @@ class DisguisedVolumePipelineTests(unittest.TestCase):
             extractor = _SplitZipExtractor()
             result = _pipeline(root, extractor).run()
             self.assertEqual((result.ok_count, result.fail_count), (1, 0))
-            self.assertEqual(extractor.verified, ["first.txt", "second.txt"])
+            # The confirmed Apate disguise is revealed in place after the first
+            # pass fails, so the synthetic extractor records both passes.
+            self.assertEqual(set(extractor.verified), {"first.txt", "second.txt"})
 
     def test_failed_reveal_rollback_is_reported_and_not_logged_as_success(self) -> None:
         with _IsolatedCase("pipeline-rollback-error") as root:
@@ -221,8 +223,10 @@ class DisguisedVolumePipelineTests(unittest.TestCase):
             result = _pipeline(root, extractor).run()
 
             self.assertEqual((result.ok_count, result.fail_count), (1, 0))
-            # The extractor must see the normalized first part plus its sibling.
-            self.assertEqual([path.name for path in extractor.entries], ["BG57.zip.001"])
+            # The extractor sees the normalized first part plus its sibling. 0.3.3
+            # reads the normalized original before revealing the confirmed Apate
+            # disguise, so the normalized entry is attempted on both passes.
+            self.assertEqual({path.name for path in extractor.entries}, {"BG57.zip.001"})
             self.assertEqual(
                 [member.name for member in extractor.members[0]],
                 ["BG57.zip.001", "BG57.zip.002"],

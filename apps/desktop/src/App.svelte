@@ -37,7 +37,7 @@
   const done = $derived(view.job?.packages.filter(p => terminalPackages.has(p.state)).length ?? 0);
   const total = $derived(view.job?.packages.length ?? view.plan?.packages.length ?? 0);
   const retryCount = $derived(view.job?.packages.filter(p => retryable.has(p.state)).length ?? 0);
-  const names: Record<string, string> = { queued: '等待', running: '处理中', preparing: '准备解压', extracting: '恢复 / 解压', publishing: '发布成品', archiving: '归档原包', cancelling: '正在取消', succeeded: '完成', partial: '部分完成', failed: '失败', deferred: '等待补卷', cancelled: '已取消', interrupted: '已中断', needs_review: '需要检查' };
+  const names: Record<string, string> = { queued: '等待', running: '处理中', preparing: '准备解压', extracting: '恢复 / 解压', publishing: '发布成品', archiving: '整理原包', cancelling: '正在取消', succeeded: '完成', partial: '完成，有警告', failed: '失败', deferred: '等待补卷', cancelled: '已取消', interrupted: '已中断', needs_review: '需要检查' };
   const size = (bytes: number) => bytes >= 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(1)} GB` : `${(bytes / 1024 ** 2).toFixed(1)} MB`;
   const formatBytes = (bytes: number) => bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(2)} MiB` : `${Math.max(1, Math.round(bytes / 1024))} KiB`;
   const MB_LIMIT = MAX_IMAGE_BYTES / 1024 / 1024;
@@ -212,13 +212,13 @@
   <header><div class="brand"><span class="mark">星</span><div><h1>星绫解封 <span>· Hoshiribbon</span></h1><p>把压缩的次元，一层层展开。</p></div></div><div class="header-actions"><button class="quiet" onclick={openAppearance}><Palette size={16} />外观</button><button class="quiet icon-button" onclick={editSettings} disabled={!view.ready || running}><Settings2 size={16} />设置</button></div></header>
   <main>
     <div class="workspace-heading"><div><span class="eyebrow">LOCAL WORKSPACE</span><h2>让复杂归档，回到简单。</h2><p>所有处理都在本机完成，按文件组安全整理。</p></div><span class="offline-badge"><ShieldCheck size={14} /> 本地处理</span></div>
-    <div class="overview"><div><span class="overview-icon"><FileArchive size={19} /></span><div><span>待处理文件组</span><strong>{total || '—'}</strong></div></div><div><span class="overview-icon"><Layers3 size={19} /></span><div><span>处理模式</span><strong>{view.settings?.settings.options.deep_extract ? '深度解压' : '单层解压'}</strong></div></div><div><span class="overview-icon"><ShieldCheck size={19} /></span><div><span>原包归档</span><strong>校验后移动</strong></div></div></div>
+    <div class="overview"><div><span class="overview-icon"><FileArchive size={19} /></span><div><span>待处理文件组</span><strong>{total || '—'}</strong></div></div><div><span class="overview-icon"><Layers3 size={19} /></span><div><span>处理模式</span><strong>{view.settings?.settings.options.deep_extract ? '深度解压' : '单层解压'}</strong></div></div><div><span class="overview-icon"><ShieldCheck size={19} /></span><div><span>原包归档</span><strong>同盘移动 · 跨盘保留</strong></div></div></div>
     <section class="input-card" class:dragging>
       <div class="section-heading"><h2>01 <span>添加文件</span></h2><span class="muted">可拖入文件或文件夹</span></div>
       <div class="input-actions"><button onclick={() => pick('files')} disabled={running || view.busy}><FileArchive size={16} />添加文件</button><button onclick={() => pick('folder')} disabled={running || view.busy}><FolderPlus size={16} />添加文件夹</button></div>
       {#if !view.inputs.length}<div class="empty"><span class="upload-icon"><Upload size={24} /></span>把待处理的压缩包拖到这里<br /><span>支持分卷、伪装后缀、合并文件恢复和加密归档</span></div>{:else}<ul class="path-list">{#each view.inputs as path}<li><span title={path}>{path}</span><button class="text-button" onclick={() => controller.removeInput(path)} disabled={running}>移除</button></li>{/each}</ul>{/if}
       <div class="output-row"><label for="output">工作文件夹</label><input id="output" readonly value={view.outputRoot} placeholder="选择保存成品、原包和临时处理的位置" /><button onclick={() => pick('output')} disabled={running || view.busy}>选择</button></div>
-      <p class="hint">所选工作文件夹容纳全部产物：成品写入 final，成功原包归档到 success，失败或缺卷的文件进入 error，中间结果和临时工作区也在这里。会复用已存在的同名目录，不会覆盖已有文件。</p>
+      <p class="hint">成品写入 final，中间结果和工具临时文件都在工作文件夹。同盘原包按成功、失败或缺卷分类移动；跨盘原包保留当前位置。会复用同名目录，不覆盖已有文件。</p>
     </section>
 
     {#if view.error || dialogError}<div role="alert" class="notice error">{view.error || dialogError}<button class="text-button" onclick={() => { dialogError = ''; void controller.loadHistory(); }}>刷新任务</button></div>{/if}
@@ -236,7 +236,7 @@
       {#if view.job}<details><summary onclick={() => controller.showLogs()}>查看处理记录</summary><pre>{view.logs.join('\n') || '暂无记录。'}</pre></details>{/if}
     </section>
     <section class="history"><div class="section-heading"><h2 class="icon-label"><History size={15} />最近任务</h2><button class="text-button" onclick={() => controller.loadHistory()} disabled={view.busy}>刷新</button></div><div class="history-list">{#each view.history as job}<button class="history-item" onclick={() => controller.selectHistoryJob(job)} disabled={running}><span>{new Date(job.created_at).toLocaleString()}</span><span>{job.package_count ?? job.packages.length} 组 · {names[job.state]}</span></button>{:else}<p class="muted">处理记录保存在本机。</p>{/each}</div></section>
-    <section class="support"><details><summary class="icon-label"><Info size={14} />支持方式说明</summary><p>支持的归档：ZIP、7z、RAR 及常见分卷。可尝试恢复伪装后缀、合并分片与 Apate 伪装文件。</p><p class="muted">以上为尽力恢复，个别文件不能保证 100% 成功；完整对照见用户指南。</p></details></section>
+    <section class="support"><details><summary class="icon-label"><Info size={14} />支持方式说明</summary><p>支持 ZIP、7z、RAR 及常见分卷。先直接解压、原地改名，再按需要还原 Apate、嵌入封面和合并文件；省磁盘读写优先，还原会改变选中的原包。</p><p>解压报错时，只要已有非空文件，就保留结果并停止重试，标为“完成，有警告”。这些文件可能损坏或缺失，请人工核对。</p><p class="muted">完整处理方式、原名与嵌套规则见用户指南。</p></details></section>
   </main>
   <footer><span>{view.info ? `${view.info.platform} · v${view.info.version}` : '跨平台桌面工具'}</span><span>本地处理 · 密码 {view.settings?.passwords.count ?? 0} 条</span></footer>
 </div>

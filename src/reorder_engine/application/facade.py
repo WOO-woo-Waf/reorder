@@ -71,7 +71,7 @@ class EngineFacade:
             if params:
                 raise EngineError("INVALID_PARAMS", "该操作不接受参数。")
             if method == "system.info":
-                return {"version": "0.3.2", "protocol_version": 1, "platform": platform.system(),
+                return {"version": "0.3.3", "protocol_version": 1, "platform": platform.system(),
                     "data_root": str(self.paths.data_root), "capabilities": ["manual_batch", "restore_ab", "cancel", "retry"],
                     **self.settings_info()}
             return self.settings_info()

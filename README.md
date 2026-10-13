@@ -2,11 +2,17 @@
 
 > 把压缩的次元，一层层展开。
 
-面向二次元收藏者的本地桌面整理工具：将下载的资源按文件组识别，直接读取选中原包，按旧版方式原地还原与解压，发布成品后归档处理后的原包。支持普通压缩包、分卷和部分伪装/嵌入格式；具体方式、效果和限制见 [格式支持指南](docs/desktop-format-support.md)。手动批处理优先，文件在本机处理。
+面向二次元收藏者的本地桌面整理工具：将下载的资源按文件组识别，直接读取选中原包，优先原地调整后缀与还原；成品发布后同盘独占移动原包归档，跨盘保留原包位置。支持普通压缩包、分卷和部分伪装/嵌入格式；具体方式、效果和限制见 [格式支持指南](docs/desktop-format-support.md)。手动批处理优先，文件在本机处理。
 
-## Windows 桌面 0.3.2（原地处理预发布）
+## Windows 桌面 0.3.3（磁盘读写优先，便携预发布）
 
-0.3.2 取消开始处理前的整包副本：普通包直接读取，必要的伪装还原和后缀改名沿用旧版原地方式。解压、恢复派生产物和工具临时数据全在指定工作文件夹，同盘归档与成品发布优先移动；跨盘归档仍需要校验复制。文件夹、原名保留与嵌套规则继续复用旧管线。完整说明与检查见 [实施状态](docs/desktop-status.md)。已发布：[v0.3.2 Release](https://github.com/WOO-woo-Waf/reorder/releases/tag/v0.3.2) · [便携 ZIP](https://github.com/WOO-woo-Waf/reorder/releases/download/v0.3.2/Hoshiribbon-0.3.2-windows-x64.zip) · [SHA-256](https://github.com/WOO-woo-Waf/reorder/releases/download/v0.3.2/SHA256SUMS.txt)。解压到新目录，运行 `Start-Portable.cmd`；本版不提供新版安装器。
+0.3.3 进一步减少磁盘读写：普通包直接读取，优先原地后缀调整，失败且没有可用结果才做原地 Apate / 嵌入封面 / restoreAB 还原；成品与临时数据都在所选工作文件夹。**同盘原包用独占移动归档，跨盘原包保留当前位置并登记结果，不再整包复制**；桌面 restoreAB 走原地修复，**任何恢复都不生成整包副本**。解压报错但只要本次已解出至少一个非空文件，就保留结果并停止继续尝试密码/工具与深挖，状态显示“完成，有警告”（内容可能损坏或缺失，需人工核对）。随包 7-Zip 由 25.01 受控升级到 26.04（固定目录 `tools/7zip/26.04/`，25.01 历史保留），UnRAR 7.13.0 与 Bandizip 7.40.0.1 不变。公开密码仍是单一明文本 `passwords.txt`（首次播种 115 条，可编辑、删除或清空，清空并重启不补回），界面多行框不再用黑点遮罩，日志保留原文。
+
+下载入口（随发布生效）：[v0.3.3 Release](https://github.com/WOO-woo-Waf/reorder/releases/tag/v0.3.3) · [便携 ZIP](https://github.com/WOO-woo-Waf/reorder/releases/download/v0.3.3/Hoshiribbon-0.3.3-windows-x64.zip) · [SHA-256](https://github.com/WOO-woo-Waf/reorder/releases/download/v0.3.3/SHA256SUMS.txt)。是否已发布以 Release 页面为准。解压整个目录，运行 `Start-Portable.cmd`；本版不提供新安装器。完整方式与限制见 [格式支持指南](docs/desktop-format-support.md)、[用户指南](docs/desktop-user-guide.md)、[工具来源](docs/desktop-tool-research.md)、[实施状态](docs/desktop-status.md)。
+
+## Windows 桌面 0.3.2（历史预发布）
+
+0.3.2 取消开始处理前的整包副本：普通包直接读取，必要的伪装还原和后缀改名沿用旧版原地方式。解压、恢复派生产物和工具临时数据全在指定工作文件夹，同盘归档与成品发布优先移动；跨盘归档**当时**仍需校验复制（0.3.3 起改为保留原包位置）。文件夹、原名保留与嵌套规则继续复用旧管线。已发布：[v0.3.2 Release](https://github.com/WOO-woo-Waf/reorder/releases/tag/v0.3.2) · [便携 ZIP](https://github.com/WOO-woo-Waf/reorder/releases/download/v0.3.2/Hoshiribbon-0.3.2-windows-x64.zip) · [SHA-256](https://github.com/WOO-woo-Waf/reorder/releases/download/v0.3.2/SHA256SUMS.txt)。解压到新目录，运行 `Start-Portable.cmd`。
 
 ## Windows 桌面 0.3.1（历史预发布）
 

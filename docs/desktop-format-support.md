@@ -2,27 +2,33 @@
 
 本说明面向拿到星绫解封（Hoshiribbon）Windows 桌面版的用户和验收人：它讲清楚软件能处理哪些压缩包、每种情况会走哪条路、成品和原件大致会落到哪里，以及哪些属于“尽力识别”而不保证成功。文中把“能稳定覆盖的格式”“靠识别与还原兜底的伪装/嵌套”“注定会失败或转入人工处理的情况”分开写。
 
-相关文档：安装、界面操作与人工验收清单见 [desktop-user-guide.md](desktop-user-guide.md)；随包组件与许可见 [desktop-third-party.md](desktop-third-party.md)；伪装机制背景见 [apate_multi_layer_mechanism.md](apate_multi_layer_mechanism.md)。
+更新：2026-10-13。状态：桌面版 0.3.3 磁盘读写优先修复已实现（下文第 11 节）；产物与发布状态见实施状态，真实文件效果与 GUI 仍属人工验收。
+
+相关文档：安装、界面操作与人工验收清单见 [desktop-user-guide.md](desktop-user-guide.md)；随包组件与许可见 [desktop-third-party.md](desktop-third-party.md)；工具来源与退出语义见 [desktop-tool-research.md](desktop-tool-research.md)；伪装机制背景见 [apate_multi_layer_mechanism.md](apate_multi_layer_mechanism.md)。
 
 ## 0. 先记住这几条
 
-- 处理顺序是：**分组 → 识别 → 还原伪装 → 解压 →（可选）继续解开内层 → 发布成品、归档原件**。0.3.2 直接读原包，必要的伪装还原与改名原地执行，成功后归档处理后的原包。
+- 处理顺序是：**分组 → 识别 →（必要时）原地还原伪装 → 解压 →（可选）继续解开内层 → 发布成品、整理原件**。0.3.3 直接读选中原包，优先原地后缀调整，失败且没有可用结果才做原地 Apate / 嵌入封面 / restoreAB 还原；成功后同盘移动原包归档，**跨盘原包保留当前位置并登记结果**。详见第 11 节。
+- 每个文件组只归入**六类核心处理方式**之一（直接解压、后缀改名、Apate 还原、嵌入封面剥离、restoreAB、强制 Apate 兜底）；嵌套层数与分卷数量不改变方式分类，详见第 11.1 节。
 - 主要处理路径覆盖 **ZIP / 加密 ZIP、7z（含分卷）、RAR / RAR5（含分卷）**。tar/gz 等依赖7-Zip的格式能力与项目识别路径，实际效果仍待验收，不能据此声称稳定覆盖。
 - **伪装后缀、合并进图片/视频的归档、Apate 伪装、多层嵌套**都有对应的识别与还原路径，但属于“尽力命中”，不覆盖所有变体。
 - **任何格式都不承诺 100% 成功**。缺分卷、密码不在密码集、文件损坏、专有格式都会失败或转入对应分类目录。
+- **解压报错但已有至少一个非空文件时保留结果**：软件停止继续尝试密码/工具与深挖，状态显示“完成，有警告”，内容可能损坏或缺失；这不是文件完整性认证，详见第 11.4 节。
 - Bandizip 是**可选备用工具**；它支持的专有格式（如 ALZ/EGG）**不代表本项目端到端可用**，原因见第 4 节。
 
 ## 1. 解压工具：必需、备用、可选
 
 | 工具 | 角色 | 本项目中的位置 |
 | --- | --- | --- |
-| 7-Zip **25.01** | **必需**。所有候选解压前的安全检查都用它做预检；ZIP 之外的格式基本靠它解压 | 随包内置（`engine\tools\7zip`） |
-| UnRAR **7.13** | **备用**。处理 RAR / RAR5（含分卷）时质量最好 | 随包内置（固定版本、含许可） |
+| 7-Zip **26.04**（由 25.01 受控升级） | **必需**。所有候选解压前的安全检查都用它做预检；ZIP 之外的格式基本靠它解压 | 随包内置（`engine\tools\7zip`；版本/哈希锁在 `scripts/desktop-sevenzip.lock.json`） |
+| UnRAR **7.13** | **备用**。处理 RAR / RAR5（含分卷）时为 RAR 专用工具 | 随包内置（固定版本、含许可） |
 | Bandizip `bz` **7.40.0.1** | **可选**。可作额外兜底解压工具 | 固定随包内置 |
 
 关于 Bandizip 的分发许可：**依据用户 2026-10-08 声明，已取得 Bandisoft 的书面分发许可**。本说明只记录这一声明，未查阅、也未核验许可函原文；不要求上传复核。
 
-本文的 7-Zip 25.01 / UnRAR 7.13 / Bandizip 7.40.0.1 保持固定随包版本。0.3.2 已重新冻结 Windows 引擎，并在实际 EXE 协议入口通过 5 组合成样本；证据见 `artifacts/desktop/hoshiribbon-0.3.2/native-engine.json`。该检查覆盖普通/加密 ZIP、封面恢复、7z 分卷与 Apate 分卷，没有把 RAR 或专有格式的静态支持写成实测通过。
+0.3.3 起 7-Zip 由 25.01 **受控固定升级到 26.04**（25.01 的 MSI 与解包目录作为历史保留，不就地覆盖），UnRAR 7.13.0 与 Bandizip 7.40.0.1 保持固定。升级理由、退出码语义与版本取舍见 [工具研究](desktop-tool-research.md)；升级的功能必要性尚未在本项目语料上证实，不宣称升级带来功能改进。
+
+0.3.2 已重新冻结 Windows 引擎，并在实际 EXE 协议入口通过 5 组合成样本；证据见 `artifacts/desktop/hoshiribbon-0.3.2/native-engine.json`。该检查覆盖普通/加密 ZIP、封面恢复、7z 分卷与 Apate 分卷，没有把 RAR 或专有格式的静态支持写成实测通过。0.3.3 的工具与停止策略变更见第 11 节，最终冻结 EXE 证据由主线程记录在实施状态。
 
 如果 7-Zip 缺失，软件会直接提示“没有找到 7-Zip，请在设置中选择 7z/7zz”，不会在没有 7-Zip 的情况下硬跑其它工具。
 
@@ -30,7 +36,7 @@
 
 1. **分组**：把一批文件按“分卷集合”归类，并挑出入口卷（例如 `.7z.001`、`.part01.rar`、`.r00` 的同伴 `.rar`）。
 2. **识别**：看文件头签名（ZIP/7z/RAR4/RAR5/gz）和文件名，判断“这大概是什么、该用哪个工具”。
-3. **还原伪装**：命中伪装规则时先还原再解压，例如去掉多加的后缀、剥离前置的图片/视频头、还原 Apate 伪装。沿用旧管线的失败尝试回滚；成功可能保留修复内容与新后缀。发生中断时按动作记录人工核对，不保证自动还原字节。restoreAB 派生数据写到指定工作文件夹。
+3. **还原伪装**：命中伪装规则时先还原再解压，例如去掉多加的后缀、剥离前置的图片/视频头、还原 Apate 伪装。失败尝试会回滚；成功可能保留修复内容与新后缀。桌面 restoreAB 走原地修复（同一路径，不生成派生副本，见第 11.3 节）；CLI 仍用派生接口。发生中断时按动作记录人工核对，不保证自动还原字节。
 4. **解压**：按“工具 × 密码”矩阵依次尝试，直到成功；缺分卷会直接停下并转入等待补卷。
 5. **继续解开内层（深度解压，默认开）**：解出的内容里若还有压缩包，会继续往下解，默认最多 4 层。
 6. **发布 + 归档**：把成品放到 `final\`，原件移动到 `success\archives\`；失败/缺卷/损坏按分类移动（见第 6 节）。桌面 0.3.1 起这些目录都在你选择的**工作文件夹**下。
@@ -111,14 +117,16 @@
 
 | 主题 | 位置 |
 | --- | --- |
-| 工具矩阵、失败分类、缺卷停止 | `src/reorder_engine/services/extracting.py`（class `ExtractionService` L132；密码标记 L136；格式不符标记 L151；`_failure_disposition` L192；缺卷停止 L207；`extract_one` L215） |
-| 7-Zip 预检、超限、链接、失败关闭 | `src/reorder_engine/infrastructure/archive_safety.py`（`validate_member` L20；`WorkspaceGuard` L29；`ArchiveSafetyInspector` L55/L63；`_inspect_cli` 用 `7z l -slt` L99/L129；不可读 L135；`GuardedExtractor` L138/L153/L158） |
-| 分组与入口卷选择 | `src/reorder_engine/services/grouping.py`（`_group_key` L31；分卷规则 L53/L65/L70/L76/L82；`_pick_entry` L112） |
-| 合并文件嵌入归档（restoreAB 类） | `src/reorder_engine/services/restore_ab.py`（签名 L19–L23；`RestoreABRestorer` L192；封面后缀 L195） |
-| 签名识别、嵌入扫描、Apate、多层候选 | `src/reorder_engine/services/restoring.py`（签名 L67；后缀 L74；媒体后缀 L87；嵌入后缀 L119；`probe_embedded_archive` L204；`probe_apate` L333；`preferred_tool_for_suffix` L374；`ApateRestorer` L849；`EmbeddedArchiveRestorer` L930；`SuffixVariantBuilder` L1017；`build_post_extract_candidates` L1163） |
-| 深度解压、失败分类、缺卷、成品判定 | `src/reorder_engine/services/beta_pipeline.py`（`_continue_after_extract` L365；`_nested_candidates` L443；缺卷识别 L1026；`_failure_category` L1032；成品判定 L1102） |
-| 输入过滤、直接源提示 | `src/reorder_engine/application/planning.py`（排除后缀 L16；排除名单 L17；直接源处理提示） |
-| 内置词库读取与校验 | `src/reorder_engine/infrastructure/builtin_defaults.py`（清单与只读校验 L108 起；`password_count` L149；`keyword_count` L153） |
+| 工具矩阵、失败分类、缺卷停止 | `src/reorder_engine/services/extracting.py`（class `ExtractionService`；`_PASSWORD_FAILURE_MARKERS`、`_FORMAT_MISMATCH_MARKERS`、`_CORRUPTION_MARKERS`、`_STOP_ALL_MARKERS`、`_STOP_ALL_EXIT_CODES`；`_failure_disposition`；`extract_one`；`_partial_result_for_output`） |
+| 7-Zip 预检、超限、链接、失败关闭 | `src/reorder_engine/infrastructure/archive_safety.py`（`validate_member`；`WorkspaceGuard`；`ArchiveSafetyInspector`；`_inspect_cli` 用 `7z l -slt`；`GuardedExtractor`） |
+| 分组与入口卷选择 | `src/reorder_engine/services/grouping.py`（`DefaultVolumeGroupingStrategy._group_key`；`_pick_entry`） |
+| 合并文件嵌入归档（restoreAB 类） | `src/reorder_engine/services/restore_ab.py`（容器签名常量；`RestoreABRestorer`；`_cover_suffixes`；`_build_zip_plan`；`_apply_in_place`） |
+| 签名识别、嵌入扫描、Apate、多层候选 | `src/reorder_engine/services/restoring.py`（`ArchiveSignatureInspector`；`probe_embedded_archive`；`probe_apate`；`preferred_tool_for_suffix`；`ApateRestorer`；`EmbeddedArchiveRestorer`；`SuffixVariantBuilder`；`build_post_extract_candidates`） |
+| 深度解压、失败分类、缺卷、成品判定、六类方式 | `src/reorder_engine/services/beta_pipeline.py`（`_entry_candidates`；`_extract_first_success`；`_extract_volume_set_body`；`_normalize_*_volume_set`；`_restore_after_failure`；`_probe_method`；`_restore_method`；`_force_apate_attempt_if_useful`；`_continue_after_extract`；`_nested_candidates`；`_failure_category`；`_is_missing_volume`；`_result_partial`） |
+| 抽取命令与快速失败 | `src/reorder_engine/infrastructure/tools.py`（`SevenZipCli`/`UnrarCli`/`BandizipCli.extract`；`contains_nonempty_regular_file`；`_extract_abort_guard`）与 `src/reorder_engine/infrastructure/command_runner.py`（`ExternalCommandRunner.run` 的 `abort_on_line`） |
+| 原包归档与跨盘保留 | `src/reorder_engine/infrastructure/file_transaction.py`（`FileTransaction.route_sources` 的 `copy_across_volumes`）与 `src/reorder_engine/application/processing.py`（`PackageProcessor` 跨盘保留提示） |
+| 输入过滤、直接源提示 | `src/reorder_engine/application/planning.py`（`EXCLUDED_EXTENSIONS`、`EXCLUDED_NAMES`、`PlanService.create` 的 warnings） |
+| 内置词库读取与校验 | `src/reorder_engine/infrastructure/builtin_defaults.py`（清单与只读校验；`password_count`；`keyword_count`） |
 | 处理开关默认值 | `src/reorder_engine/application/models.py`（`deep_extract` 默认真、`preserve_payload_names` 默认真、`clean_builtin_keywords` 默认假、`work_root` 新增；`use_builtin_passwords` 仅作旧配置兼容） |
 | 公开密码文件 | `src/reorder_engine/infrastructure/secret_store.py`（`PasswordFile`）、`src/reorder_engine/application/facade.py`（`passwords.replace/import`、`settings_info`） |
 | 工作文件夹与设置记忆 | `src/reorder_engine/application/models.py`（`DesktopSettings.work_root`）、`apps/desktop/src/lib/contracts.ts`、`apps/desktop/src/App.svelte`、`apps/desktop/src/lib/desktop-controller.ts` |
@@ -162,18 +170,75 @@
 | 输出目录 | `final` / `success/archives` / `error_files` / `deferred_volumes` / `intermediate` | 目录语义不变，整体落在所选**工作文件夹**下 | 源 + 策 |
 | 失败归类 | 缺卷 → `deferred`；有残留且失败 → `partial`；错误分类 `password_error` / `unknown_type` / `missing_volume` / `extract_failed` | 同上 | 源 |
 | 输入是否展平 | 旧 Beta 可配置处理前展平，BAT 预设不同 | 保持不展平；原件按文件组归档 | 源 + 策 |
-| 发布 / 归档的 I/O | 在单一处理目录内用 `shutil.move` 改名/移动 | 直接读原包，必要时原地修复；成品与处理后的原包用同卷**独占链接/改名**落位（`os.link` 优先，Windows 退化为独占改名）；跨卷或不可用时回退到校验复制 | 源 + 定向文件事务检查（大盘性能未测） |
+| 发布 / 归档的 I/O | 在单一处理目录内用 `shutil.move` 改名/移动 | 直接读原包，必要时原地修复；成品与处理后的原包用同盘**独占链接/改名**落位（`os.link` 优先，Windows 退化为独占改名）；**跨盘原包保留当前位置并登记结果**，不做整包复制 | 源 + 定向文件事务检查（大盘性能未测） |
 | 可调项范围 | 旧 CLI 有更多自定义项 | 桌面只暴露其中一部分（深挖、层数、识别下限、单文件阈值、保留原名、保留工作区等），**不宣称所有 CLI 开关都已暴露** | 源 |
 
 说明：
 
 - 上表按当前源码与 portable 基线对照得出，属于**静态核对**；桌面相对旧管线的增量是结果上报、源路由修正与安全预检；确认的 Apate/嵌入伪装在多卷路径中优先交给对应还原器，避免合并文件扫描器抢先误判，旧文件夹策略、命名保留与嵌套整理都保留。工作文件夹布局与独占移动已在当前工作区实现（`infrastructure/workspace.py`、`infrastructure/file_transaction.py`），有限机器检查见第 8 节，Windows 冻结引擎检查以实施状态记录为准。
-- 桌面发布与原件归档优先用同卷独占链接/改名落位而不是重拷贝，跨卷或无法独占时回退到校验复制；这不等于“绝对没有额外 I/O”，是否需要复制/校验取决于卷与文件系统，实际 I/O 次数未在真实大盘上测量。
+- 桌面发布与原件整理优先用同盘独占链接/改名落位而不是重拷贝；**跨盘原包保留当前位置并登记结果**，不做整包复制（跨盘时成品仍在工作文件夹，原包不再搬走）。这不等于“绝对没有额外 I/O”，实际字节与 I/O 次数未在真实大盘上测量。
 - 当前多卷扩展覆盖已确认的逐卷单层 Apate 伪装；更复杂的多重伪装或混合嵌入卷组仍需单独样本验收。
 - 0.3.1 已验证 BG57 这对样本；其他真实文件命中率、性能数字与界面体验仍待人工验收；本文不把静态或合成结论当作业务验收。
 
-## 10. 0.3.2 原地处理与磁盘占用
+## 10. 磁盘占用与跨盘行为（0.3.3）
 
-开始时不复制整包，也不对同盘归档做整文件复制/哈希。普通原包归档字节不变；Apate/嵌入修复及后缀归一化可能改变归档内容/名称，这是旧版语义。restoreAB 必要的派生归档、多层解压和部分失败输出仍占空间；跨盘归档必须复制校验。Windows 无硬链接的磁盘可独占改名；少数 POSIX 文件系统的安全落位仍可能回退复制，若原地改名身份改变则停下核对。只有本次任务独占目录可清理，已有内容和未选文件不动。
+开始时不复制整包，也不对同盘归档做整文件复制/哈希。普通原包归档字节不变；Apate/嵌入修复及后缀归一化可能改变归档内容/名称，这是旧版语义。桌面 restoreAB 走原地修复，**不生成恢复整包副本**；多层解压和部分失败输出仍占空间。**跨盘原包保留当前位置并登记结果，不做整包复制**；同盘归档用独占链接/改名移动。Windows 无硬链接的磁盘可独占改名；少数 POSIX 文件系统的安全落位仍可能回退复制，若原地改名身份改变则停下核对。只有本次任务独占目录可清理，已有内容和未选文件不动。
 
-检查范围与最终 EXE 证据见实施状态的 0.3.2 节；0.3.1 的 BG57 隔离副本结果是历史证据，不表示新直接模式已对真实原件验收。
+检查范围与最终 EXE 证据见实施状态；0.3.1 的 BG57 隔离副本结果是历史证据，不表示新直接模式已对真实原件验收。0.3.2 当时“跨盘归档校验复制”的说法由本节与第 11.5 节取代。
+
+## 11. 0.3.3 磁盘读写优先、停止策略与工具升级（当前切片）
+
+本节记录 0.3.3 正在实施的改动方向与实际范围边界。0.3.3 **尚未发布**；源代码仍在收敛，真实文件效果、GUI 与大盘 I/O 仍待用户人工验收。本节只给类/函数名与合成检查入口，不引用会随改动漂移的源码行号。
+
+### 11.1 六类核心处理方式
+
+每个文件组只归入以下**六类核心方式**之一；嵌套层数、分卷数量只是同一方式内的迭代或分流，**不**与方式数量累加。方法标记来自 `beta_pipeline.py` 的 `_probe_method`、`_restore_method` 与 `_force_apate_attempt_if_useful`：
+
+| # | 方式（方法标记） | 触发与行为 |
+| --- | --- | --- |
+| 1 | 直接解压（`direct`） | 文件头即归档签名或名字可靠时，直接读取选中原包解压；普通包字节不变。 |
+| 2 | 后缀改名（`direct+rename:<规则>`） | 签名或名字提示需要归一化后缀时，原地改名后再解压；失败即回滚原名。 |
+| 3 | Apate 还原（`apate-reveal`） | 尾部 4 字节长度标记命中时，按 `tools/apate.py` 原地还原真实头（默认 3 轮）。 |
+| 4 | 嵌入封面剥离（`embedded-archive-strip-prefix`） | 前缀是图片/视频、正文是归档时，原地剥掉前缀（ZIP 另修偏移）。 |
+| 5 | restoreAB（`restore-ab-in-place`） | 合并文件检索未命中封面/Apate 时的最终兜底；桌面按原地语义修复**同一路径**，不生成恢复整包副本。 |
+| 6 | 强制 Apate 兜底（`apate-force-reveal`） | 名字（one/two/three 等）或后缀提示疑似 Apate 时，强制多轮还原后再解压。 |
+
+旧版 tag 没有 restoreAB 原地修复，核心方式为 **5 类**；0.3.3 起为 **6 类**。类型为 APATE / EMBEDDED 的候选优先交给对应原地策略，避免合并文件扫描器在缺 EOCD 的分卷组上抢先误判（`RestorationService.restore_with_rollbacks` 的 `preferred_kind`）。
+
+### 11.2 后缀规则与分卷归一化的确切数量
+
+- **后缀改名规则 7 条**（`SuffixVariantBuilder` 默认规则元组，本次静态枚举确认）：`trim-sc-to-zip`、`trim-embedded-archive-suffix`、`signature-rename`、`media-to-zip`、`no-suffix-to-zip`、`jpg-exe-archive-variants`、`unknown-archive-variants`。0.3.2 基线为 5 条；本轮新增 `media-to-zip` 与 `no-suffix-to-zip`。
+- **分卷归一化 4 条**（`BetaFolderPipeline._extract_volume_set_body` 调用，各自失败即回滚）：`disguised-split-suffix`、`sfx-volume`、`numbered-tail-volume`、`middle-numbered-volume`。
+- 静态证据位置：`services/restoring.py` 的 `SuffixVariantBuilder.__init__` 与各 `RenameVariantRule.matches/plan`；`services/beta_pipeline.py` 的 `_normalize_disguised_split_suffix_volume_set`、`_normalize_sfx_volume_set`、`_normalize_numbered_tail_volume_set`、`_normalize_middle_numbered_volume_set`。
+- 这些数字只描述**代码里注册的规则条数**，不等于“所有后缀变体都能命中”；规则是试探性的，失败会回滚。
+
+### 11.3 restoreAB 原地语义
+
+- 桌面 `RestoreABRestorer(in_place=True)`（见 `application/processing.py` 的 `PackageProcessor` 装配）：单句柄 `r+b`，先只读规划与校验，再前移 + `truncate` + 回写 ZIP 偏移；**不创建派生副本**，`restore_with_rollbacks` 原地模式返回同一路径、回滚列表为空（不伪造可恢复已丢前缀）。方法标记 `restore-ab-in-place`。
+- ZIP64 或布局异常在修改前抛 `RestoreABError`，绝不误截断；`lstat` 只处理常规文件，不跟随符号链接。
+- CLI（`beta.py`）默认仍用旧派生接口 `RestoreABRestorer()`（`in_place=False`，切片到工作区新文件），桌面磁盘优先。CLI 兼容性与桌面原地语义是两条路径，不互相代表。
+
+### 11.4 结果保留与停止策略（“完成，有警告”）
+
+- 用户已确认：工具返回**非零退出码**、但本次输出目录**已有至少一个非空普通文件**时，立即停止全部密码/工具重复尝试和继续深挖，记为成功且 `partial_output=True`，状态显示“完成，有警告”（界面文案）。`extracting.py` 的 `_partial_result_for_output` 与 `tools.py` 的 `contains_nonempty_regular_file` 实现该判定。
+- **这不是文件完整性认证**：内容可能损坏或缺失，不改写字节、不做整体校验。仅有空文件、空目录或 0 字节占位不算“有结果”。
+- 取消、超时和检查失败仍按原异常处理，**永不**转成 partial：`_NEVER_PARTIAL_EXIT_CODES`（`124` 超时、`255` 用户中断）与异常上抛优先于此规则。
+- 无有效输出时的快速分类（`_failure_disposition`）：格式不匹配 → 跳过该工具下一个（`next_tool`）；缺卷/磁盘写入/权限 → 立即停止（`stop_all`）；真正的密码失败 → 尝试下一条公开密码（`retry`）；CRC/Data Error → 不当密码，只前进一个工具（`next_tool`）。退出码 `7/8/124/255` 无输出 → `stop_all`。
+- 抽取命令在运行中若命中强失败标记且输出仍为空，会经 `command_runner.py` 的 `abort_on_line` 快速结束进程树（`tools.py` 的 `_extract_abort_guard`）：只针对明确密码失败/格式不符，不对软警告或逐成员 CRC 行触发。
+
+### 11.5 原包归档：同盘移动、跨盘保留
+
+- 同盘：`FileTransaction.route_sources` 走原地独占落位（`os.link` 优先，Windows 退化为独占改名）后删源。
+- 跨盘：`PackageProcessor` 传 `copy_across_volumes=False`，`route_sources` 不改动字节、**保留原包当前位置**并把已核验的当前路径登记为结果，日志追加“已保留原包当前位置，未复制归档”。因此跨盘不再需要为“整包归档”额外复制一份原包。
+- 该行为取代第 9 节历史行与 0.3.2 的“跨盘归档必须复制校验”表述；桌面不再要求跨盘整包复制，也不要求 restoreAB 派生副本。
+
+### 11.6 工具版本与升级
+
+- 7-Zip 由 25.01 **受控固定升级到 26.04**（`scripts/desktop-sevenzip.lock.json` 固定版本与哈希，25.01 历史保留）；UnRAR 7.13.0、Bandizip 7.40.0.1 保持固定。bsdtar 3.8.8 经实测对核心格式无实质补充，**本版不捆绑**。
+- ALZ/EGG **不宣称支持**：尚无安全预检的真实 fixture，预检门槛仍在 7-Zip；不启用 `bz t`（存在挂起风险）。详见 [工具研究](desktop-tool-research.md)。
+
+### 11.7 0.3.3 未验证项
+
+- 7-Zip 26.04 冻结引擎在真实文件上的行为；Windows 上 7-Zip/UnRAR/Bandizip 的退出码、`-kb`、`-sccUTF-8` 仅经合成 fake 工具与真实 Python 子进程验证快速结束，未对随包二进制逐条复现。
+- 跨盘保留、restoreAB 原地修复在真实大盘与真实原件上的效果；本次只做合成样本与定向源路径/动作检查。
+- 六类方式的真实命中率、`partial_output` 在真实损坏包上的表现、以及 GUI 文案，均属人工验收。

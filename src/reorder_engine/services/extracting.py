@@ -5,8 +5,13 @@ from typing import Callable
 
 from reorder_engine.domain.models import ArchiveProbe, ExtractionRequest, ExtractionResult
 from reorder_engine.infrastructure.command_runner import ExternalCommandRunner
-from reorder_engine.infrastructure.tools import BandizipCli, SevenZipCli, UnrarCli
+from reorder_engine.infrastructure.tools import BandizipCli, SevenZipCli, UnrarCli, contains_nonempty_regular_file
 from reorder_engine.interfaces.extracting import ExtractorStrategy
+
+
+_PARTIAL_OUTPUT_WARNING = (
+    "解压工具返回非零退出码，但输出目录已产生非空文件；按用户接受损坏、磁盘优先的策略保留这些结果。原始错误："
+)
 
 
 class SevenZipExtractor(ExtractorStrategy):
@@ -140,14 +145,56 @@ class ExtractionService:
         "invalid password",
         "illegal password",
         "encrypted",
-        "data error",
-        "crc failed",
         "密码错误",
         "密码不正确",
         "口令错误",
         "非法密码",
         "加密",
     )
+    # Hard stops: no password/tool combination can repair these.
+    _STOP_ALL_MARKERS = (
+        "missing volume",
+        "unavailable data",
+        "no space",
+        "not enough space",
+        "disk full",
+        "disk space",
+        "write error",
+        "error writing",
+        "failed to write",
+        "cannot write",
+        "can not write",
+        "permission denied",
+        "access is denied",
+        "access denied",
+        "operation not permitted",
+        "无法写入",
+        "写入错误",
+        "磁盘空间",
+        "空间不足",
+        "拒绝访问",
+        "权限不足",
+        "没有权限",
+    )
+    # Corruption markers (for example a trailing CRC/Data Error) are not password
+    # failures: re-driving the whole password matrix for them just repeats the same
+    # corrupt read up to ~115 times. They only advance to the next tool once.
+    _CORRUPTION_MARKERS = (
+        "data error",
+        "crc error",
+        "crc failed",
+        "checksum error",
+        "corrupt",
+        "数据错误",
+        "校验错误",
+    )
+    # Exit codes no password/tool retry can salvage: 7 command line error,
+    # 8 out of memory, 255 user break, 124 runner timeout. Continuing would just
+    # re-drive the whole password matrix for a failure that can never succeed.
+    _STOP_ALL_EXIT_CODES = frozenset({7, 8, 124, 255})
+    # Exit codes that must never be reported as partial success: a timeout or a
+    # user break is an interruption, not recoverable output.
+    _NEVER_PARTIAL_EXIT_CODES = frozenset({124, 255})
     _FORMAT_MISMATCH_MARKERS = (
         "not a rar archive",
         "not rar archive",
@@ -155,6 +202,11 @@ class ExtractionService:
         "not a rar",
         "can not open the file as archive",
         "cannot open the file as archive",
+        # 7-Zip names its own format in brackets on a mismatch, e.g. the real
+        # "Cannot open the file as [zip] archive" / "... as [7z] archive". Match
+        # the bracketed form too, otherwise those lines fall through to retry and
+        # re-drive the whole password list.
+        "open the file as [",
         "is not archive",
         "not archive",
         "unsupported archive type",
@@ -189,8 +241,12 @@ class ExtractionService:
     def _looks_like_format_mismatch(self, message: str | None) -> bool:
         return self._message_contains(message, self._FORMAT_MISMATCH_MARKERS)
 
-    def _failure_disposition(self, message: str | None) -> str:
-        """Classify failures while preserving the full tool x password matrix.
+    @classmethod
+    def classify_failure(cls, message: str | None, *, exit_code: int | None = None) -> str:
+        """Classify a failure while preserving the full tool x password matrix.
+
+        Shared by the service retry loop and the pipeline, which must not run an
+        in-place rename or disguise restore after a serious no-output failure.
 
         Returns:
         - "retry"        : keep trying passwords/tools
@@ -198,19 +254,42 @@ class ExtractionService:
         - "stop_all"     : stop immediately (e.g. missing volume)
         """
 
+        # Command-line/router errors, out of memory, timeouts and user breaks can
+        # never be fixed by another password or tool.
+        if exit_code in cls._STOP_ALL_EXIT_CODES:
+            return "stop_all"
+
         if not message:
             return "retry"
 
         m = message.lower()
 
-        # Multi-volume missing parts are a hard stop: no password/tool matrix can fix them.
-        if "missing volume" in m or "unavailable data" in m:
+        # Missing volumes, disk write failures and permission errors cannot be fixed
+        # by another password or tool.
+        if any(marker in m for marker in cls._STOP_ALL_MARKERS):
             return "stop_all"
 
-        # For archive/tool mismatch and password-related failures, keep exhausting the
-        # full matrix across all configured tools and passwords. This avoids a single
-        # CLI's "not archive" style message from preventing later attempts that may work.
+        # A real password failure keeps walking the password list for this tool.
+        if any(marker in m for marker in cls._PASSWORD_FAILURE_MARKERS):
+            return "retry"
+
+        # A format/tool mismatch means more passwords on this tool are pointless;
+        # move to the next tool once. Routed through the same helper as
+        # ``_looks_like_format_mismatch`` so both entries never diverge.
+        if cls._message_contains(message, cls._FORMAT_MISMATCH_MARKERS):
+            return "next_tool"
+
+        # Trailing CRC/Data Error on a correctly read archive is not a password
+        # problem; advance once instead of repeating the read for every password.
+        if any(marker in m for marker in cls._CORRUPTION_MARKERS):
+            return "next_tool"
+
         return "retry"
+
+    def _failure_disposition(self, message: str | None, *, exit_code: int | None = None) -> str:
+        """Classify failures; see classify_failure for the disposition."""
+
+        return self.classify_failure(message, exit_code=exit_code)
 
     def extract_one(
         self,
@@ -246,7 +325,7 @@ class ExtractionService:
                     return last
                 if self._looks_like_password_failure(last.message):
                     password_failure = last
-                disp = self._failure_disposition(last.message)
+                disp = self._failure_disposition(last.message, exit_code=last.exit_code)
                 if disp == "stop_all":
                     return last
                 if disp == "next_tool":
@@ -290,5 +369,47 @@ class ExtractionService:
             self._attempt_sink(extractor.name(), request, password)
         fn = getattr(extractor, "extract_with_password", None)
         if callable(fn):
-            return fn(request, password, dry_run=dry_run)
-        return extractor.extract(request, dry_run=dry_run)
+            result = fn(request, password, dry_run=dry_run)
+        else:
+            result = extractor.extract(request, dry_run=dry_run)
+        if not dry_run:
+            partial = self._partial_result_for_output(result, request, extractor.name(), password)
+            if partial is not None:
+                return partial
+        return result
+
+    def _partial_result_for_output(
+        self,
+        result: ExtractionResult,
+        request: ExtractionRequest,
+        tool: str,
+        password: str | None,
+    ) -> ExtractionResult | None:
+        """Keep a non-zero attempt that still wrote non-empty output.
+
+        The user accepts corrupted output and prefers the bytes on disk over a
+        clean retry, so such an attempt is reported as a partial success and the
+        caller stops the whole tool/password matrix. This covers a tool that still
+        reports ``ok`` for a warning code (7-Zip exit 1) as long as the exit code is
+        non-zero. Timeouts and user breaks are never converted; cancellation and
+        guard errors already raise before reaching here.
+        """
+
+        # A genuine success (exit 0 / no exit code) is returned untouched.
+        if result.ok and result.exit_code in (0, None):
+            return None
+        if result.exit_code in self._NEVER_PARTIAL_EXIT_CODES:
+            return None
+        if not contains_nonempty_regular_file(request.output_dir):
+            return None
+        original = (result.message or "").strip() or "解压工具返回非零退出码。"
+        return ExtractionResult(
+            volume_set=request.volume_set,
+            ok=True,
+            tool=tool,
+            exit_code=result.exit_code,
+            password=password,
+            source_volume_set=result.source_volume_set,
+            partial_output=True,
+            message=f"{_PARTIAL_OUTPUT_WARNING}{original}",
+        )

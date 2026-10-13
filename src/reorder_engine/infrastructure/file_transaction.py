@@ -338,14 +338,17 @@ class FileTransaction:
             results.append(self.publish(child, destination / child.name))
         return results
 
-    def route_sources(self, package: PlannedPackage, destination: Path) -> list[str]:
-        """Route every verified original into its destination, then remove the source.
+    def route_sources(self, package: PlannedPackage, destination: Path, *,
+                      copy_across_volumes: bool = True) -> list[str]:
+        """Route verified originals, or retain the entire set across volumes.
 
         Every member identity is checked before any original is touched. When the
         originals already sit on the output volume they are hard-linked into place
         first and only then have their original names removed, so no bytes or hashes
         are recomputed. Members on another volume are copied and verified first, then
-        the original is removed. Both paths stage every target before any source
+        the original is removed. With ``copy_across_volumes=False``, the entire
+        cross-volume set stays at its current paths and is registered there.
+        Both moving paths stage every target before any source
         removal so a volume set is never left half-archived. A member that already
         sits at its intended destination (for example a retry whose failed original
         was routed there earlier) is registered in place and never shuffled into
@@ -354,10 +357,21 @@ class FileTransaction:
         for snapshot in package.members:
             validate_source(snapshot)
         # Validate the destination ancestry (links/containment) before creating it.
-        destination = self._safe_directory(destination)
-        output_device = _device_of(destination)
+        destination = self._check_inside_output(destination)
+        output_device = _device_of(self._safe_directory(self.output_root))
         same_volume = (output_device is not None
                        and all(snapshot.device == output_device for snapshot in package.members))
+        if not same_volume and not copy_across_volumes:
+            # Preserve the entire selected group together. Register the verified
+            # current paths so results can show/open them without copying bytes.
+            retained = []
+            for snapshot in package.members:
+                source = Path(snapshot.path)
+                action = self._record(source, source, kind="retain_source", snapshot=snapshot)
+                self.repository.action_phase(action, "committed")
+                retained.append(str(source))
+            return retained
+        destination = self._safe_directory(destination)
         if same_volume:
             return self._route_sources_in_place(package, destination)
         return self._route_sources_copied(package, destination)

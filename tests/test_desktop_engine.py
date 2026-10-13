@@ -56,7 +56,7 @@ def wait_job(engine, job_id):
 @pytest.mark.parametrize("state,destination", [
     ("succeeded", "success/archives"), ("partial", "success/archives"), ("failed", "error_files/password_error"),
 ])
-def test_work_copy_lifecycle_routes_real_original(engine, tmp_path, monkeypatch, state, destination):
+def test_direct_lifecycle_routes_current_original(engine, tmp_path, monkeypatch, state, destination):
     class SyntheticExtractor:
         def __init__(self, *args, **kwargs): pass
         def name(self): return "synthetic"
@@ -71,7 +71,8 @@ def test_work_copy_lifecycle_routes_real_original(engine, tmp_path, monkeypatch,
     monkeypatch.setattr("reorder_engine.application.processing.SevenZipExtractor", SyntheticExtractor)
     source = tmp_path / "cover.pdf"
     data = archive(source)
-    # Real restoreAB copying, not just a renamed ordinary ZIP.
+    # Directly readable results keep the cover; failed reads escalate to
+    # real in-place restoreAB, so the routed original is then the repaired ZIP.
     original = b"%PDF-1.7\ncover\n%%EOF\n" + data
     source.write_bytes(original)
     output = tmp_path / "results"
@@ -80,7 +81,7 @@ def test_work_copy_lifecycle_routes_real_original(engine, tmp_path, monkeypatch,
     final = wait_job(engine, job["job_id"])
     assert final.packages[0].state == state
     assert not source.exists()
-    assert (output / destination / "cover.pdf").read_bytes() == original
+    assert (output / destination / "cover.pdf").read_bytes() == (data if state == "failed" else original)
     if state != "failed":
         payload = list(output.rglob("payload.txt"))
         assert len(payload) == 1

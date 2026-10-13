@@ -6,15 +6,23 @@
 
 ## 0. 交付范围与验收边界
 
-本指南对应 Windows x64 桌面版 **0.3.2 原地处理便携预发布**。已发布：[v0.3.2 Release](https://github.com/WOO-woo-Waf/reorder/releases/tag/v0.3.2) · [便携 ZIP](https://github.com/WOO-woo-Waf/reorder/releases/download/v0.3.2/Hoshiribbon-0.3.2-windows-x64.zip) · [SHA-256](https://github.com/WOO-woo-Waf/reorder/releases/download/v0.3.2/SHA256SUMS.txt)。旧的 [0.3.1 Release](https://github.com/WOO-woo-Waf/reorder/releases/tag/v0.3.1) 保留。当前构建是否成功、Git 提交和检查记录统一见 [desktop-status.md](desktop-status.md)；本指南介绍运行方法。真实文件、操作体验与干净机器安装仍由用户按第 12 节人工验收。
+本指南对应 Windows x64 桌面版 **0.3.3 磁盘读写优先便携预发布**。下载入口（随发布生效）：[v0.3.3 Release](https://github.com/WOO-woo-Waf/reorder/releases/tag/v0.3.3) · [便携 ZIP](https://github.com/WOO-woo-Waf/reorder/releases/download/v0.3.3/Hoshiribbon-0.3.3-windows-x64.zip) · [SHA-256](https://github.com/WOO-woo-Waf/reorder/releases/download/v0.3.3/SHA256SUMS.txt)。是否已发布以 Release 页面为准；[0.3.2 Release](https://github.com/WOO-woo-Waf/reorder/releases/tag/v0.3.2) 和更早版本保留。本版行为差异见第 0.1 节，操作与人工验收见第 12、17 节；构建、Git 和检查记录见 [desktop-status.md](desktop-status.md)。真实文件、操作体验与干净机器启动仍由用户人工验收。
+
+### 0.1 0.3.3 与 0.3.2 的行为差异
+
+- **跨盘原包不再整包复制**：同盘归档用独占移动；输入与工作文件夹不在同一盘时，**原包保留在当前位置**并把位置登记进结果，只在工作文件夹里产生成品与临时数据。原包的具体位置以结果与日志为准。
+- **原地 restoreAB**：合并文件的 restoreAB 还原改为**原地修复同一路径**，不生成恢复整包副本；CLI 仍保留旧的派生接口。
+- **保留结果并停止（“完成，有警告”）**：工具报错但只要本次已解出至少一个非空普通文件，软件会保留这些文件、停止继续尝试密码/工具与深挖，状态显示“完成，有警告”。这些文件**可能损坏或缺失**；这不是完整性认证。取消、超时与安全检查失败仍按原样报错。
+- **六类核心处理方式**：直接解压、后缀改名、Apate 还原、嵌入封面剥离、restoreAB、强制 Apate 兜底。对照表见 [格式指南](desktop-format-support.md) 第 11 节。
+- **7-Zip 升级到 26.04**：随包 7-Zip 由 25.01 受控升级到 26.04（25.01 作为历史保留），UnRAR 7.13.0 与 Bandizip 7.40.0.1 不变；理由是安全修复，来源见 [工具研究](desktop-tool-research.md)。
 
 | 项目 | 交付入口 | 说明 |
 | --- | --- | --- |
 | 桌面源码 | `apps/desktop`、`src/reorder_engine` | 已批准技术栈；保留 CLI |
 | Python 冻结引擎 | `engine/reorder-engine.exe` | 必须保留完整 `_internal` 与工具目录 |
 | 桌面 EXE | `Hoshiribbon.exe` | 使用系统 WebView2 |
-| NSIS 安装包 | 本版不提供 | 0.3.0 历史安装器仍有效；不要把旧安装器当成 0.3.2 |
-| 便携 ZIP | `Hoshiribbon-0.3.2-windows-x64.zip` | 解压整个目录；完整性看 `SHA256SUMS.txt` |
+| NSIS 安装包 | 本版不提供 | 0.3.0 历史安装器仍有效；不要把旧安装器当成 0.3.3 |
+| 便携 ZIP | 0.3.3 待发布（`Hoshiribbon-0.3.3-windows-x64.zip`） | 发布前可下载附件仍是 0.3.2 的 `Hoshiribbon-0.3.2-windows-x64.zip`；解压整个目录，完整性看 `SHA256SUMS.txt` |
 | 真实窗口、文件、安装卸载 | 用户人工验收 | 合成引擎检查和源码检查不能替代这一项 |
 
 已发布的 **0.3.0** 文件名（历史记录，下载链接仍有效）：`Hoshiribbon_0.3.0_x64-setup.exe`、`Hoshiribbon-0.3.0-windows-x64.zip`。
@@ -25,8 +33,8 @@
 
 - Windows 10 或 Windows 11，**x64**。当前只配置了 x64 目标。
 - **WebView2 Runtime**（界面渲染依赖它，见下）。
-- 足够磁盘空间：普通原包直接读取，不预留两份整包空间。同盘主要需要解压内容、恢复派生产物及工具临时数据的空间；跨盘归档额外需要原包大小。多层解压仍可能同时保留多层内容，具体峰值取决于文件。
-- 你**不需要**自己安装 Python、Node.js、Rust、7-Zip 或 WinRAR。界面、Python 引擎、7-Zip 25.01、UnRAR 7.13 和 Bandizip CLI 7.40.0.1 都随包提供。Bandizip 已按所有者的书面分发许可声明纳入固定依赖。
+- 足够磁盘空间：普通原包直接读取，不预留两份整包空间。工作文件夹主要需要解压内容、工具临时数据与必要派生产物的空间；跨盘时原包留在原处、不整包复制（0.3.3），同盘用独占移动。多层解压仍可能同时保留多层内容，具体峰值取决于文件。
+- 你**不需要**自己安装 Python、Node.js、Rust、7-Zip 或 WinRAR。界面、Python 引擎、7-Zip、UnRAR 和 Bandizip CLI 都随包提供：0.3.2 的 7-Zip 为 25.01，0.3.3 起受控升级到 26.04；UnRAR 7.13、Bandizip CLI 7.40.0.1 保持不变。Bandizip 已按所有者的书面分发许可声明纳入固定依赖。
 
 ### 关于 WebView2
 
@@ -40,11 +48,11 @@
 
 ## 2. 你会拿到什么（产物形态与文件树）
 
-0.3.2 发布便携 ZIP；安装器说明仅供历史版本与制作方参考。拿到后按下列结构核对完整目录。
+0.3.3 发布便携 ZIP；安装器说明仅供历史版本与制作方参考。拿到后按下列结构核对完整目录。
 
 ### 2.1 便携包（ZIP 解压即用）
 
-解压后目录（由 `scripts\build_desktop_windows.ps1` 生成到 `artifacts\desktop\Hoshiribbon-portable\`，再压成 `Hoshiribbon-0.3.2-windows-x64.zip`）：
+解压后目录（由 `scripts\build_desktop_windows.ps1` 生成到 `artifacts\desktop\Hoshiribbon-portable\`，再压成 `Hoshiribbon-0.3.3-windows-x64.zip`）：
 
 ```text
 Hoshiribbon-portable\
@@ -72,12 +80,12 @@ Hoshiribbon-portable\
 - 双击 `Hoshiribbon.exe` 使用默认用户数据目录；双击 `Start-Portable.cmd`（等价于 `Hoshiribbon.exe --portable`）使用 EXE 旁的 `data\`，该目录必须可写，公开密码文件也持久保存在那里的 `data\passwords.txt`。两者都需要系统 WebView2。
 - 包内指南和图表可直接阅读；制作方指南中的源码链接需要在完整 Git 仓库内打开。
 
-### 2.2 安装包（NSIS；0.3.2 未提供）
+### 2.2 安装包（NSIS；0.3.3 未提供）
 
-制作方可由 `npm run tauri build` 生成，预期位置如下；这不是 0.3.2 的可下载附件：
+制作方可由 `npm run tauri build` 生成，预期位置如下；这不是 0.3.3 的可下载附件：
 
 ```text
-apps\desktop\src-tauri\target\release\bundle\nsis\Hoshiribbon_0.3.2_x64-setup.exe
+apps\desktop\src-tauri\target\release\bundle\nsis\Hoshiribbon_0.3.3_x64-setup.exe
 ```
 
 - 安装模式为 `currentUser`（当前用户安装，不需要管理员）。
@@ -95,7 +103,7 @@ apps\desktop\src-tauri\target\release\bundle\nsis\Hoshiribbon_0.3.2_x64-setup.ex
 3. **01 添加文件**：拖放区、添加按钮、工作文件夹。
 4. **02 确认并处理 / 处理结果**：扫描/开始/取消/重试按钮、进度条、文件组状态表、处理记录。
 5. 最近任务：本机保存的历史列表。
-6. 底部状态栏：平台与版本（如 `Windows · v0.3.2`）、7-Zip 是否就绪、当前密码条数。
+6. 底部状态栏：平台与版本（如 `Windows · v0.3.3`）、7-Zip 是否就绪、当前密码条数。
 
 > 界面所有处理都在本机完成，不联网处理你的文件。唯一可能的联网动作，是安装包在缺少 WebView2 时下载运行时组件。
 
@@ -140,7 +148,7 @@ apps\desktop\src-tauri\target\release\bundle\nsis\Hoshiribbon_0.3.2_x64-setup.ex
 
 确认分组后点“开始处理”。过程分几个阶段，界面状态会依次显示：准备解压 → 恢复 / 解压 → 发布成品 → 归档原包。
 
-每个包的底层顺序是：复核原件 → 直接读选中原包，必要时原地还原/改名 → 解压到工作文件夹 → 同盘移动成品 → 将实际处理后的原包归档。没有通用整包备份。普通包字节保持不变；Apate/嵌入还原可能改变内容，成功的后缀归一化可能保留新名称。旧管线的失败尝试仍有回滚，但中断或强杀后不承诺自动恢复字节；已发生改动且未完成归档时标记“需要人工核对”，不会盲目重试。restoreAB 所需派生归档写到工作文件夹，跨盘归档仍先校验复制后删源。
+每个包的底层顺序是：复核原件 → 直接读选中原包，必要时原地还原/改名 → 解压到工作文件夹 → 同盘移动成品 → 整理实际处理后的原包。没有通用整包备份。普通包字节保持不变；Apate/嵌入还原可能改变内容，成功的后缀归一化可能保留新名称。旧管线的失败尝试仍有回滚，但中断或强杀后不承诺自动恢复字节；已发生改动且未完成归档时标记“需要人工核对”，不会盲目重试。桌面 restoreAB 改为原地修复同一路径（不生成恢复整包副本）；跨盘时原包保留当前位置并登记结果，不再整包复制归档（0.3.3；CLI 仍用旧派生接口）。
 
 ### 4.4 取消与关闭窗口
 
@@ -175,7 +183,7 @@ apps\desktop\src-tauri\target\release\bundle\nsis\Hoshiribbon_0.3.2_x64-setup.ex
 | 状态 | 界面文字 | 含义 |
 | --- | --- | --- |
 | `succeeded` | 完成 | 全部成功 |
-| `partial` | 部分完成 | 有成品，但存在缺卷等未完成部分 |
+| `partial` | 完成，有警告 | 有成品，但存在缺卷或解压报错残留等未完成部分；解压报错但已保留非空文件时也归此状态 |
 | `failed` | 失败 | 该组处理失败 |
 | `deferred` | 等待补卷 | 缺分卷，暂缓，原件放到 `deferred_volumes` |
 | `cancelled` | 已取消 | 因取消未处理，原件保留 |
@@ -183,6 +191,8 @@ apps\desktop\src-tauri\target\release\bundle\nsis\Hoshiribbon_0.3.2_x64-setup.ex
 | `needs_review` | 需要检查 | 发布或归档无法确定是否完成，需要人工核对，**不会自动重跑** |
 
 结果表里“说明”列会给出错误码或简短说明。0.3.1 起公开密码按公开数据处理，**日志不再掩码密码**；私人密码请勿写入密码文件。
+
+0.3.3 起，当某组解压工具返回非零退出码、但本次输出目录里已经出现**至少一个非空普通文件**时，软件会**保留这些文件并停止继续尝试密码/工具与深挖**，状态显示“完成，有警告”。这样得到的内容**可能损坏或缺失**，需要你人工核对；它不是文件完整性认证。没有非空结果时仍按下面第 5 节的分类处理；取消、超时与安全检查失败不会变成这个状态。
 
 ## 6. 打开工作文件夹
 
@@ -248,7 +258,7 @@ apps\desktop\src-tauri\target\release\bundle\nsis\Hoshiribbon_0.3.2_x64-setup.ex
 - 单条最多 4096 字符、最多 10000 条、文件不超过 512 KiB；超限会报错且不替换原文件。
 - 文件必须是无链接的普通文件，保存用原子替换，失败时原文件不变。
 
-这些归档密码是公开数据：文件以明文保存，不使用系统凭据后端，日志与错误也保留原文。
+这些归档密码是公开数据：文件以明文保存，不使用系统凭据后端，日志与错误也保留原文。0.3.3 起界面的密码多行框**不再用黑点遮罩**（原为 `-webkit-text-security: disc`，现为 `none`），直接显示明文，方便核对。
 
 若外部编辑导致编码错误或文件超限，应用保留原文件并显示提示，设置仍可打开。先把文件修复为 UTF-8，或在编辑框填好内容后主动保存替换；此时空白编辑框不表示原文件已经清空。运行中误删整个文件也可通过保存密码列表重建；清空词库应保存空列表，不要删除文件。
 
@@ -403,3 +413,20 @@ Windows 上用户数据根目录是：
 - 对照“保留内容原名”开/关，确认成品顶层名的两种命名方式符合预期，且深层包装目录被合理压缩。
 - 使用副本核对 ZIP/AES ZIP、7z、RAR、完整分卷、缺卷、错密码和嵌套；对照 [格式矩阵](desktop-format-support.md)，不以某工具支持格式推断项目整体支持。
 - ESC、遮罩、保存、关闭后重新打开设置，未提交的密码文本应按“重新载入”行为回到文件内容；结束边界的取消提示应准确。
+
+## 17. 0.3.3 行为的人工验收（进行中）
+
+0.3.3 尚在实施与收敛，以下为发布后需要真实验收的项；请先只用副本样本。
+
+| # | 操作 | 预期结果 | 记录 |
+| --- | --- | --- | --- |
+| 1 | 输入放在一个盘、工作文件夹选在另一个盘，处理普通 ZIP | 原包**留在原位置**、不被复制走；成品与临时数据在工作文件夹；结果里能看到原包当前位置 | |
+| 2 | 同上但输入与工作文件夹同一盘 | 原包被移动归档（独占改名），不出现整包副本 | |
+| 3 | 处理一个尾部损坏、但能解出部分文件的副本 | 保留已解出的非空文件，停止继续尝试，状态“完成，有警告”；提示内容可能损坏需人工核对 | |
+| 4 | 处理一个只有 0 字节输出或纯格式不符的副本 | 不显示“完成，有警告”，按失败/未知类型分类处理 | |
+| 5 | 中途取消、或触发超时 | 不产生“完成，有警告”，按取消/超时原样报错 | |
+| 6 | 处理合并文件（前缀图片 + 尾部归档，非 Apate）| restoreAB 原地修复**同一路径**，未生成 `*_restoreAB` 派生整包副本 | |
+| 7 | 查看底部状态栏与设置里的工具 | 7-Zip 显示 26.04 且“已就绪”；UnRAR 7.13、Bandizip 7.40.0.1 可用 | |
+| 8 | 打开设置看密码多行框 | 密码以明文显示，不再用圆点遮罩；日志里的密码也是原文 | |
+
+记录方式与第 12 节一致；这些差异不改变“合成检查不能替代真实文件与 GUI 验收”的边界。

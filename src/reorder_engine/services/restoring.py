@@ -645,7 +645,9 @@ class _SignatureRenameRule(RenameVariantRule):
 
 
 class _MediaZipRule(RenameVariantRule):
-    _suffixes = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm"}
+    # .jpg/.jpeg remain with the dedicated jpg/exe rule (RAR-first, a known-good
+    # disguise); other UNKNOWN media try ZIP before 7z/RAR.
+    _suffixes = {".png", ".gif", ".bmp", ".webp", ".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm"}
 
     def name(self) -> str:
         return "media-to-zip"
@@ -1023,6 +1025,8 @@ class SuffixVariantBuilder(RestorerStrategy):
                 _TrimScToZipRule(),
                 _TrimEmbeddedArchiveSuffixRule(),
                 _SignatureRenameRule(),
+                _MediaZipRule(),
+                _NoSuffixZipRule(),
                 _JpgExeArchiveRule(),
                 _UnknownArchiveVariantsRule(),
             ]
@@ -1069,12 +1073,26 @@ class RestorationService:
         self._restorers = restorers
         self._post_rules = tuple(post_rules or [_TrailingScZipRule(), _NestedArchivePostRule()])
         self._inspector = inspector or ArchiveSignatureInspector()
+        self._last_restorer_name: str | None = None
+        self._last_method: str | None = None
+
+    def last_restorer_name(self) -> str | None:
+        """Name of the restorer that last claimed a path (for method labeling)."""
+
+        return self._last_restorer_name
+
+    def last_method(self) -> str | None:
+        """Method marker the last active restorer reported, when it exposes one."""
+
+        return self._last_method
 
     def restore(self, path: Path, *, workspace: Path | None = None, dry_run: bool = False) -> list[Path]:
         for restorer in self._restorers:
             if not restorer.can_handle(path):
                 continue
+            self._last_restorer_name = type(restorer).__name__
             restored = restorer.restore(path, workspace=workspace, dry_run=dry_run)
+            self._last_method = getattr(restorer, "last_method", None)
             if not restored:
                 return [path]
             out: list[Path] = []
@@ -1106,12 +1124,14 @@ class RestorationService:
         for restorer in restorers:
             if not restorer.can_handle(path):
                 continue
+            self._last_restorer_name = type(restorer).__name__
             fn = getattr(restorer, "restore_with_rollbacks", None)
             if callable(fn):
                 restored, rollbacks = fn(path, workspace=workspace, dry_run=dry_run)
             else:
                 restored = restorer.restore(path, workspace=workspace, dry_run=dry_run)
                 rollbacks = []
+            self._last_method = getattr(restorer, "last_method", None)
             if not restored:
                 return [path], rollbacks
             out: list[Path] = []

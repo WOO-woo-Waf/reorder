@@ -60,7 +60,7 @@ classDiagram
   class FileTransaction {
     +publish(source, target) str
     +publish_children(source, destination) list
-    +route_sources(package, destination) list
+    +route_sources(package, destination, copy_across_volumes) list
   }
   class JobRepository {
     +save_plan(plan)
@@ -86,10 +86,19 @@ classDiagram
     +mode str
   }
   class ExternalCommandRunner {
-    +run(args, timeout_sec, output_sink) CommandResult
+    +run(args, timeout_sec, output_sink, abort_on_line) CommandResult
   }
   class BetaFolderPipeline {
     +run(dry_run) BetaRunResult
+  }
+  class RestoreABRestorer {
+    +in_place bool
+    +restore_with_rollbacks(path) tuple
+  }
+  class ExtractionResult {
+    +ok bool
+    +partial_output bool
+    +message string
   }
   class DirectSourceSession {
     +volume_set() VolumeSet
@@ -125,10 +134,12 @@ classDiagram
   PackageProcessor --> SourceRestoration
   PackageProcessor --> SourceRenamer
   SourceRestoration --> DirectSourceSession
+  SourceRestoration --> RestoreABRestorer : 必要时原地前移
   SourceRenamer --> DirectSourceSession
   DirectSourceSession --> JobRepository : 原地动作
   PackageProcessor --> PasswordFile
   FileTransaction --> JobRepository : records
   BetaFolderPipeline --> ExternalCommandRunner : through extractors
+  BetaFolderPipeline --> ExtractionResult : 有结果停止重试
   note for EngineBridge "Rust 独立进程；监管 Python 引擎"
   note for EngineFacade "跨进程只传序列化 DTO，不共享对象指针"

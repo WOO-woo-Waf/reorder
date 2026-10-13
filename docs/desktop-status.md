@@ -1,10 +1,51 @@
 # 桌面软件实施状态与新聊天交接
 
-更新时间：2026-10-12（Asia/Shanghai）。Windows x64 手动桌面首版已具备 EXE、便携 ZIP、OO 图与制作方指南；0.3.2 原地处理修复已生成并发布 Windows x64 便携预发布。0.3.0 的历史安装器保留。其他真实样本、干净机器启动、真实跨盘与大盘性能仍未验证。
+更新时间：2026-10-13（Asia/Shanghai）。Windows 桌面 0.3.3 磁盘读写优先切片已完成源码、工程检查与便携包；Git 和 Release 正在收尾。0.3.2 及更早 Release 保留；真实文件、GUI、干净机器、真实跨盘和大盘性能由用户验收。
 
 方案：[product_plan.md](product_plan.md)。正式设计：[desktop-design.md](desktop-design.md)。
 
-## 0.0.0 星绫解封 0.3.2：原地处理（当前切片）
+## 星绫解封 0.3.3：磁盘读写优先（当前切片）
+
+本节优先于下方历史副本和跨盘复制策略。用户已授权持续实现、定向自检、commit/push、生成产物后发布新版；并确认跨盘原包留在当前位置、工具报错但存在至少一个非空普通文件时保留结果并停止重试。已复用批准的 Tauri 2 / Svelte 5 / TypeScript / Rust 宿主 / Python 引擎 / SQLite 方案。
+
+### 实现与约定
+
+- 对照旧 tag `portable-20260623-163109`：旧版 5 类核心处理方式，本版 6 类（直接、后缀、Apate、嵌入封面、restoreAB、强制 Apate）。后缀规则 7 条，分卷归一化 4 类；格式、嵌套和工具数量不混入模式数。原名、包装目录、嵌套阈值与停止策略保留，详情见 [格式指南](desktop-format-support.md)。
+- 先直接读取选中原包，再原地后缀尝试，失败且没有可用输出才执行对应伪装还原。候选准备不生成恢复副本，不把普通直接读取误标为 restoreAB。
+- 桌面 restoreAB 使用单句柄原地前移、截断及 ZIP32 偏移修复，不生成整包副本；ZIP64、不一致布局和超限中央目录写入前拒绝并显示包级具体原因。无整包备份时原地编辑可能不可逆，用户已接受选中原包风险；未选原件、已有工作目录内容仍须保护。
+- 所有解压、大文件中间数据及工具 TEMP/TMP/TMPDIR/cwd 在所选工作文件夹。成品发布和同盘原包归档使用独占移动；跨盘整组保留原包当前位置并登记真实路径，不复制整包。已有目录复用、冲突不覆盖。
+- 工具非零退出且产生至少一个非空普通文件时，保留成品、标为“完成，有警告”，停止密码/工具重试与深挖；零字节占位不算结果。无输出的强密码/格式错误尽早终止当前进程，密码错误继续下一条，格式不匹配切工具；权限、缺卷、写盘/空间与严重退出码停止后续原地变换。取消、超时与安全检查错误仍明确终止，不能变成部分成功。
+- 密码纯文本展示、编辑和保存，修复 CSS 黑点遮罩；初始 115 条，用户可自由增删、清空，不自动补回。配置记忆、关键词默认关闭和自定义背景继续保留。
+- 7-Zip 固定升级为 26.04，官方来源及四文件字节由 `desktop-sevenzip.lock.json` 锁定；UnRAR 7.13 / Bandizip CLI 7.40.0.1 保持随包。已比较两版 7-Zip、Bandizip 和系统 bsdtar 的小合成样本，未证明 bsdtar 带来补充，不捆绑；无可安全预检的 ALZ/EGG fixture，未宣称支持。见 [工具研究](desktop-tool-research.md)。
+
+### 工程检查与交付
+
+证据根：ignored `artifacts/desktop/hoshiribbon-0.3.3/`。本轮新 Luna/high 任务正文准确收到 `CHAIN-HOSHI-033-MODES:71` 并返回 final，运行时 compatible=true；没有恢复旧子线程。历史派发故障不代表本轮结果。
+
+已完成少量按风险选取的检查范围（存在交集，不累加为全库总数）：
+
+| 范围 | 方式 / 结果 | 证据 |
+| --- | --- | --- |
+| 处理顺序、原地工作区与旧管线 | 管线定向 pytest 132 passed / 30 subtests，exit 0；随后强制 Apate 收尾定向 19 passed / 17 subtests；严重错误与 ZIP64 分支已修 | `priority-review-fix/tests.log`、`repro.log` |
+| 结果保留、密码与固定工具回退 | 最终提取相关定向 pytest 39 passed / 4 subtests，exit 0；补用户原样 `[zip]` 格式报错，密码错误仍优先 | `bracket-format/pytest-plus-cli.log`、`stop/stop-policy-tests.log` |
+| 原地 restoreAB | 最终原地与旧派生接口定向 pytest 26 passed，exit 0，含 4 例 ZIP 注释 EOCD 回归 | `restore/`、`restore-review-fix/` |
+| 跨盘保留与任务整合 | 跨盘 3 例 + 引擎整合 21 passed，exit 0（重叠） | `cross-volume-tests.log`、`engine-integration-tests.log` |
+| 固定 7-Zip 与打包输入 | 定向 pytest 126 passed，exit 0；工具 identity 无本机路径、拒绝混版和额外文件 | `tool-pin/pytest.txt` |
+| 前端与图 | Svelte 0 errors/0 warnings，Vite 0.3.3 build exit 0；类图/时序图重渲染 exit 0，PNG 已目视核对 | `frontend-build.log`、`diagrams.log` |
+| 独立审查 | 已完成；严重失败仍还原、规划错误误报、合法 ZIP 注释 EOCD 三项已修复；最后强制 Apate 分支定向 19 passed / 17 subtests，exit 0 | `review/HOSHI-033-REVIEW-findings.md` |
+
+Windows 新引擎冻结已成功（`freeze.log`，exit 0），实际新 EXE 通过既有 5 组和本轮追加的单卷 Apate、媒体后缀直接读取、CRC 部分结果、错误密码失败/继续成功等合成任务（`native/native-engine.json`，exit 0）。同时通过恶意路径拒绝、已有目录哨兵、无整包暂存、原包字节/修复字节归档、明文词库与设置重启检查；7-Zip 实际版本为 26.04。Windows 0.3.3 宿主 release 构建 exit 0（`windows-build.log`，约 2 分钟），已嵌入本轮前端。便携封包、Git 与 Release 尚在收尾；包内本文为封包时快照，发布完成后以仓库与 Release 页面为准。最终方括号格式分类修复后已重新冻结并复跑实际 EXE 合成检查，exit 0（`freeze.log`、`native/native-engine.json`）。`Cannot open the file as [zip] archive` 不再重走密码表；混合 Wrong password 仍继续密码尝试。宿主未变，复用同状态 release 构建证据。
+
+最终便携组装与封包检查 exit 0（`package.json`、`package-validation.json`）：775 个清单文件逐个大小/hash/CRC匹配，宿主与最终引擎身份一致，实际包内 EXE 版本 0.3.3，首开 115 条明文库，7-Zip 四文件匹配 26.04 官方锁，UnRAR/Bandizip 与许可齐备，不包含用户状态和私人配置。
+
+- ZIP：`D:\buff\reorder\artifacts\desktop\Hoshiribbon-0.3.3-windows-x64.zip`（28,098,621 bytes）。
+- SHA-256：`3ebf78148ef25596717492d86c1e1ebbdaada1d67def99c44c670e0b2a387109`。
+- 解压整个 ZIP 到新目录，运行 `Start-Portable.cmd`。只发布便携 ZIP 与 `SHA256SUMS.txt`，不生成新版安装器；旧便携目录与 data 保留。
+- Git 与 [v0.3.3 Release](https://github.com/WOO-woo-Waf/reorder/releases/tag/v0.3.3) 待本轮上传后补收据；本段为封包后记录，包内文档是封包时快照，不因此重建 ZIP。
+
+未处理真实 BG57 原件，未运行 GUI/浏览器、干净机器、真实跨盘或大盘性能。实测合成证据只证明相应样本，不替代用户真实效果验收。
+
+## 0.0.0 星绫解封 0.3.2：原地处理（已发布历史）
 
 本节优先于下方 0.3.1 历史副本策略。用户要求“直接原地解压，参考旧 BAT，最大化节省磁盘”，已授权持续修复、自检、commit/push；2026-10-12 又明确授权生成完成后发布新版 Release。保留 main 未提交修改与旧 Release。当前产物/发布状态由本节最终证据和 [v0.3.2](https://github.com/WOO-woo-Waf/reorder/releases/tag/v0.3.2) 核实。
 

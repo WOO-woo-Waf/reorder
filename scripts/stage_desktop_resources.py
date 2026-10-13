@@ -41,6 +41,7 @@ DOC_NAMES = (
     "desktop-status.md",
     "desktop-third-party.md",
     "desktop-format-support.md",
+    "desktop-tool-research.md",
     "desktop-artwork.md",
     "product_plan.md",
     "portable_user_guide.md",

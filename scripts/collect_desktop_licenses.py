@@ -536,8 +536,8 @@ def collect_python(
 def collect_seven_zip(repo: Path, evidence_root: Path, override: Path | None) -> dict:
     directory = override
     if directory is None:
-        candidate = repo / "tools/7zip/Files/7-Zip"
-        directory = candidate if candidate.is_dir() else None
+        from stage_desktop_engine import find_seven_zip
+        directory = find_seven_zip(repo, None).parent
     entry = {
         "ecosystem": "7zip",
         "name": "7-Zip",
