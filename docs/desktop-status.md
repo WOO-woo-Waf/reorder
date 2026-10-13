@@ -1,6 +1,6 @@
 # 桌面软件实施状态与新聊天交接
 
-更新时间：2026-10-13（Asia/Shanghai）。Windows 桌面 0.3.3 磁盘读写优先切片已完成源码、工程检查与便携包；Git 和 Release 正在收尾。0.3.2 及更早 Release 保留；真实文件、GUI、干净机器、真实跨盘和大盘性能由用户验收。
+更新时间：2026-10-13（Asia/Shanghai）。Windows 桌面 0.3.3 磁盘读写优先切片已完成源码、工程检查与便携包，已提交并推送 main，Windows x64 便携预发布已发布。0.3.2 及更早 Release 保留；真实文件、GUI、干净机器、真实跨盘和大盘性能由用户验收。
 
 方案：[product_plan.md](product_plan.md)。正式设计：[desktop-design.md](desktop-design.md)。
 
@@ -34,14 +34,15 @@
 | 前端与图 | Svelte 0 errors/0 warnings，Vite 0.3.3 build exit 0；类图/时序图重渲染 exit 0，PNG 已目视核对 | `frontend-build.log`、`diagrams.log` |
 | 独立审查 | 已完成；严重失败仍还原、规划错误误报、合法 ZIP 注释 EOCD 三项已修复；最后强制 Apate 分支定向 19 passed / 17 subtests，exit 0 | `review/HOSHI-033-REVIEW-findings.md` |
 
-Windows 新引擎冻结已成功（`freeze.log`，exit 0），实际新 EXE 通过既有 5 组和本轮追加的单卷 Apate、媒体后缀直接读取、CRC 部分结果、错误密码失败/继续成功等合成任务（`native/native-engine.json`，exit 0）。同时通过恶意路径拒绝、已有目录哨兵、无整包暂存、原包字节/修复字节归档、明文词库与设置重启检查；7-Zip 实际版本为 26.04。Windows 0.3.3 宿主 release 构建 exit 0（`windows-build.log`，约 2 分钟），已嵌入本轮前端。便携封包、Git 与 Release 尚在收尾；包内本文为封包时快照，发布完成后以仓库与 Release 页面为准。最终方括号格式分类修复后已重新冻结并复跑实际 EXE 合成检查，exit 0（`freeze.log`、`native/native-engine.json`）。`Cannot open the file as [zip] archive` 不再重走密码表；混合 Wrong password 仍继续密码尝试。宿主未变，复用同状态 release 构建证据。
+Windows 新引擎冻结已成功（`freeze.log`，exit 0），实际新 EXE 通过既有 5 组和本轮追加的单卷 Apate、媒体后缀直接读取、CRC 部分结果、错误密码失败/继续成功等合成任务（`native/native-engine.json`，exit 0）。同时通过恶意路径拒绝、已有目录哨兵、无整包暂存、原包字节/修复字节归档、明文词库与设置重启检查；7-Zip 实际版本为 26.04。Windows 0.3.3 宿主 release 构建 exit 0（`windows-build.log`，约 2 分钟），已嵌入本轮前端。便携封包、Git 与 Release 已完成；包内本文为封包时快照，发布状态以仓库与 Release 页面为准。最终方括号格式分类修复后已重新冻结并复跑实际 EXE 合成检查，exit 0（`freeze.log`、`native/native-engine.json`）。`Cannot open the file as [zip] archive` 不再重走密码表；混合 Wrong password 仍继续密码尝试。宿主未变，复用同状态 release 构建证据。
 
 最终便携组装与封包检查 exit 0（`package.json`、`package-validation.json`）：775 个清单文件逐个大小/hash/CRC匹配，宿主与最终引擎身份一致，实际包内 EXE 版本 0.3.3，首开 115 条明文库，7-Zip 四文件匹配 26.04 官方锁，UnRAR/Bandizip 与许可齐备，不包含用户状态和私人配置。
 
 - ZIP：`D:\buff\reorder\artifacts\desktop\Hoshiribbon-0.3.3-windows-x64.zip`（28,098,621 bytes）。
 - SHA-256：`3ebf78148ef25596717492d86c1e1ebbdaada1d67def99c44c670e0b2a387109`。
 - 解压整个 ZIP 到新目录，运行 `Start-Portable.cmd`。只发布便携 ZIP 与 `SHA256SUMS.txt`，不生成新版安装器；旧便携目录与 data 保留。
-- Git 与 [v0.3.3 Release](https://github.com/WOO-woo-Waf/reorder/releases/tag/v0.3.3) 待本轮上传后补收据；本段为封包后记录，包内文档是封包时快照，不因此重建 ZIP。
+- 实现提交 `3608315` 已推送 main，tag `v0.3.3` 指向该实现提交并已推送。[v0.3.3 Release](https://github.com/WOO-woo-Waf/reorder/releases/tag/v0.3.3) 已发布，非 draft 的预发布；旧 Release 保留。
+- 两项附件均 state=uploaded，GitHub 服务器 SHA-256 与本地逐一匹配（`release-receipt.json`、`final-result.json`，exit 0）。发布时刻：2026-10-13 12:19:24（Asia/Shanghai）。包内文档是封包时快照，发布后仅补仓库记录，不因此重建 ZIP。
 
 未处理真实 BG57 原件，未运行 GUI/浏览器、干净机器、真实跨盘或大盘性能。实测合成证据只证明相应样本，不替代用户真实效果验收。
 

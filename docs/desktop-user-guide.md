@@ -6,7 +6,7 @@
 
 ## 0. 交付范围与验收边界
 
-本指南对应 Windows x64 桌面版 **0.3.3 磁盘读写优先便携预发布**。下载入口（随发布生效）：[v0.3.3 Release](https://github.com/WOO-woo-Waf/reorder/releases/tag/v0.3.3) · [便携 ZIP](https://github.com/WOO-woo-Waf/reorder/releases/download/v0.3.3/Hoshiribbon-0.3.3-windows-x64.zip) · [SHA-256](https://github.com/WOO-woo-Waf/reorder/releases/download/v0.3.3/SHA256SUMS.txt)。是否已发布以 Release 页面为准；[0.3.2 Release](https://github.com/WOO-woo-Waf/reorder/releases/tag/v0.3.2) 和更早版本保留。本版行为差异见第 0.1 节，操作与人工验收见第 12、17 节；构建、Git 和检查记录见 [desktop-status.md](desktop-status.md)。真实文件、操作体验与干净机器启动仍由用户人工验收。
+本指南对应 Windows x64 桌面版 **0.3.3 磁盘读写优先便携预发布**。已发布：[v0.3.3 Release](https://github.com/WOO-woo-Waf/reorder/releases/tag/v0.3.3) · [便携 ZIP](https://github.com/WOO-woo-Waf/reorder/releases/download/v0.3.3/Hoshiribbon-0.3.3-windows-x64.zip) · [SHA-256](https://github.com/WOO-woo-Waf/reorder/releases/download/v0.3.3/SHA256SUMS.txt)。[0.3.2 Release](https://github.com/WOO-woo-Waf/reorder/releases/tag/v0.3.2) 和更早版本保留。本版行为差异见第 0.1 节，操作与人工验收见第 12、17 节；构建、Git 和检查记录见 [desktop-status.md](desktop-status.md)。真实文件、操作体验与干净机器启动仍由用户人工验收。
 
 ### 0.1 0.3.3 与 0.3.2 的行为差异
 
@@ -22,7 +22,7 @@
 | Python 冻结引擎 | `engine/reorder-engine.exe` | 必须保留完整 `_internal` 与工具目录 |
 | 桌面 EXE | `Hoshiribbon.exe` | 使用系统 WebView2 |
 | NSIS 安装包 | 本版不提供 | 0.3.0 历史安装器仍有效；不要把旧安装器当成 0.3.3 |
-| 便携 ZIP | 0.3.3 待发布（`Hoshiribbon-0.3.3-windows-x64.zip`） | 发布前可下载附件仍是 0.3.2 的 `Hoshiribbon-0.3.2-windows-x64.zip`；解压整个目录，完整性看 `SHA256SUMS.txt` |
+| 便携 ZIP | `Hoshiribbon-0.3.3-windows-x64.zip` | 解压整个目录，完整性看 `SHA256SUMS.txt`；旧 Release 保留 |
 | 真实窗口、文件、安装卸载 | 用户人工验收 | 合成引擎检查和源码检查不能替代这一项 |
 
 已发布的 **0.3.0** 文件名（历史记录，下载链接仍有效）：`Hoshiribbon_0.3.0_x64-setup.exe`、`Hoshiribbon-0.3.0-windows-x64.zip`。
@@ -414,7 +414,7 @@ Windows 上用户数据根目录是：
 - 使用副本核对 ZIP/AES ZIP、7z、RAR、完整分卷、缺卷、错密码和嵌套；对照 [格式矩阵](desktop-format-support.md)，不以某工具支持格式推断项目整体支持。
 - ESC、遮罩、保存、关闭后重新打开设置，未提交的密码文本应按“重新载入”行为回到文件内容；结束边界的取消提示应准确。
 
-## 17. 0.3.3 行为的人工验收（进行中）
+## 17. 0.3.3 行为的人工验收（待用户执行）
 
 0.3.3 尚在实施与收敛，以下为发布后需要真实验收的项；请先只用副本样本。
 
