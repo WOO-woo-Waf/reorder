@@ -10,6 +10,8 @@
 
 当前 0.3.3 直接读取选中原包；优先原地后缀调整，失败且无可用结果才做原地 Apate / 嵌入封面 / restoreAB 还原，普通包不改写字节。解压与工具临时数据在所选工作文件夹内，restoreAB 桌面路径不生成恢复整包副本。成品发布后整理原包：同盘独占移动，跨盘保留原包当前位置并登记结果。归档不完整不报告成功。原地变化中断标记 needs_review，不能承诺无备份自动还原字节。
 
+2026-10-14 的旧 BAT 兼容切片继续复用 `BetaFolderPipeline` / `ExtractionService`，CLI restoreAB 同样改为原地接口。BAT 的 `--workdir` 是程序与配置仓库，`--folder` 是输入及结果的工作文件夹；工具临时目录属于后者。公共 Windows 启动器负责定位仓库和 Python，固定工具准备复用既有锁验证与 staging；不进入 Tauri / Rust / 前端调用链。CLI 展平和 basic/smart 预设保留，桌面选中范围和默认界面不变。证据及部署入口见 [实施状态](desktop-status.md)。
+
 ## 2. 依赖方向与对象职责
 
 ```mermaid

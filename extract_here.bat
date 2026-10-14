@@ -1,55 +1,10 @@
 @echo off
-setlocal
-
-chcp 65001 >nul
-set PYTHONUTF8=1
-set PYTHONIOENCODING=utf-8
-
-set "SCRIPT_DIR=%~dp0"
-if "%SCRIPT_DIR:~-1%"=="\" set "SCRIPT_DIR=%SCRIPT_DIR:~0,-1%"
-
-set "WORK_DIR=%REORDER_WORK_DIR%"
-if "%WORK_DIR%"=="" set "WORK_DIR=%SCRIPT_DIR%"
-if not exist "%WORK_DIR%\pyproject.toml" (
-  if exist "%SCRIPT_DIR%\pyproject.toml" set "WORK_DIR=%SCRIPT_DIR%"
-)
-if not exist "%WORK_DIR%\pyproject.toml" (
-  echo [ERROR] Invalid WORK_DIR: "%WORK_DIR%"
-  echo Set REORDER_WORK_DIR to the repository path, for example:
-  echo   set REORDER_WORK_DIR=D:\buff\reorder
-  exit /b 10
-)
-
-if "%WORK_DIR:~-1%"=="\" set "WORK_DIR=%WORK_DIR:~0,-1%"
-set "PYTHONPATH=%WORK_DIR%\src;%PYTHONPATH%"
-
-set "TARGET_DIR=%~1"
-if "%TARGET_DIR%"=="" set "TARGET_DIR=%SCRIPT_DIR%"
-if "%TARGET_DIR:~-1%"=="\" set "TARGET_DIR=%TARGET_DIR:~0,-1%"
-
-if "%CONDA_ENV%"=="" set "CONDA_ENV=reorder"
-if "%NO_PAUSE%"=="" set "NO_PAUSE=0"
-
-set "MAIN_LOG=%TARGET_DIR%\reorder_engine.extract.log"
-set "TOOL_LOG=%TARGET_DIR%\reorder_engine.extract.tools.log"
-
-echo [EXTRACT] folder=%TARGET_DIR%
-echo [EXTRACT] workdir=%WORK_DIR%
-echo [EXTRACT] progress: current flow / file / tool / password
-echo [EXTRACT] main log: %MAIN_LOG%
-echo [EXTRACT] tool log: %TOOL_LOG%
-echo.
-pushd "%WORK_DIR%"
-conda run -n %CONDA_ENV% --no-capture-output python -m reorder_engine.beta ^
-  --workdir "%WORK_DIR%" ^
-  --folder "%TARGET_DIR%" ^
-  --deep-extract ^
-  --preserve-payload-names ^
-  --log "%MAIN_LOG%" ^
-  --tool-log "%TOOL_LOG%"
-set "RC=%errorlevel%"
-popd
-
-echo Done. rc=%RC%
-if not "%NO_PAUSE%"=="1" pause
-exit /b %RC%
+setlocal DisableDelayedExpansion
+set "LAUNCHER_DIR=%REORDER_WORK_DIR%"
+if not defined LAUNCHER_DIR set "LAUNCHER_DIR=%~dp0"
+if not exist "%LAUNCHER_DIR%\scripts\windows\launcher.bat" goto invalid_workdir
+"%LAUNCHER_DIR%\scripts\windows\launcher.bat" extract "%~f0" %*
+exit /b %ERRORLEVEL%
+:invalid_workdir
+echo [ERROR] Invalid REORDER_WORK_DIR or launcher not found: "%LAUNCHER_DIR%"
+exit /b 10

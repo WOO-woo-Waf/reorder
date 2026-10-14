@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import argparse
 import logging
+import uuid
 from pathlib import Path
+from dataclasses import replace
 
 from reorder_engine.infrastructure.command_runner import ExternalCommandRunner
+from reorder_engine.application.errors import EngineError
 from reorder_engine.services.beta_pipeline import BetaFolderPipeline
 from reorder_engine.services.config import ConfigManager
 from reorder_engine.services.decrypting import DecryptionService, PassthroughDecryptor
@@ -44,13 +47,40 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--deep-final-single-mb", type=int, default=None, help="Override large file fallback threshold in MB.")
     parser.add_argument("--disable-bandizip", action="store_true", help="Do not use Bandizip even if configured.")
     parser.add_argument("--preserve-payload-names", action="store_true", help="Keep final payload names unchanged.")
-    parser.add_argument("--archive-mode", default="wide", help="Compatibility flag for existing BAT launchers.")
+    parser.add_argument("--archive-mode", choices=("wide",), default="wide", help="Archive discovery policy supported by this CLI.")
     parser.add_argument("--archive-min-mb", type=int, default=100, help="Minimum size in MB for generic archive candidates.")
-    parser.add_argument("--deep-mode", default="smart", help="Compatibility flag for existing BAT launchers.")
-    parser.add_argument("--deep-max-candidates", type=int, default=5, help="Compatibility flag for existing BAT launchers.")
-    parser.add_argument("--cleanup-dynamic-libs", action="store_true", help="Compatibility flag for existing BAT launchers.")
-    parser.add_argument("--dynamic-lib-patterns", default="", help="Compatibility flag for existing BAT launchers.")
+    parser.add_argument("--deep-mode", choices=("basic", "smart"), default=None, help="Nested archive candidate policy.")
+    parser.add_argument("--deep-max-candidates", type=_positive_int, default=None, help="Maximum nested candidates to try per layer in smart mode.")
+    parser.add_argument("--cleanup-dynamic-libs", action="store_true", help="Remove matching DLLs produced during this run before publishing a complete payload.")
+    parser.add_argument(
+        "--dynamic-lib-patterns",
+        default="*dynamic*config*.dll;*dyn*config*.dll;*动态*配置*.dll",
+        help="Semicolon-separated filename globs used only with --cleanup-dynamic-libs.",
+    )
     return parser
+
+
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return parsed
+
+
+def _tool_runtime_paths(folder: Path) -> tuple[Path, dict[str, str]]:
+    tool_tmp_dir = folder / "intermediate" / "tool_tmp" / f"run_{uuid.uuid4().hex}"
+    if not tool_tmp_dir.resolve().is_relative_to(folder.resolve()):
+        raise EngineError("UNSAFE_WORKSPACE", "中间目录指向工作文件夹外部，请调整目录后重试。")
+    return tool_tmp_dir, {
+        "TEMP": str(tool_tmp_dir),
+        "TMP": str(tool_tmp_dir),
+        "TMPDIR": str(tool_tmp_dir),
+    }
+
+
+def _ensure_tool_runtime_dir(tool_tmp_dir: Path, *, dry_run: bool) -> None:
+    if not dry_run:
+        tool_tmp_dir.mkdir(parents=True, exist_ok=False)
 
 
 class _ConsoleProgressFilter(logging.Filter):
@@ -167,15 +197,27 @@ def _should_abort_tool_line(line: str) -> bool:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
-    folder = Path(args.folder) if args.folder else Path.cwd()
-    workdir = Path(args.workdir) if args.workdir else Path.cwd()
-    config_path = Path(args.config) if args.config else (workdir / "config.json")
+    invocation_dir = Path.cwd()
+    folder = (Path(args.folder) if args.folder else invocation_dir).resolve()
+    workdir = (Path(args.workdir) if args.workdir else invocation_dir).resolve()
+    if args.config:
+        config_arg = Path(args.config)
+        config_path = (config_arg if config_arg.is_absolute() else workdir / config_arg).resolve()
+    else:
+        config_path = (workdir / "config.json").resolve()
 
     cfg_mgr = ConfigManager(config_path, root_dir=workdir)
     cfg_mgr.load_or_create_default()
     cfg = cfg_mgr.to_app_config()
 
-    runner = ExternalCommandRunner(stream=not bool(args.dry_run), line_sink=None, abort_on_line=_should_abort_tool_line)
+    tool_tmp_dir, tool_env = _tool_runtime_paths(folder)
+    runner = ExternalCommandRunner(
+        stream=not bool(args.dry_run),
+        line_sink=None,
+        abort_on_line=_should_abort_tool_line,
+        cwd=tool_tmp_dir,
+        env=tool_env,
+    )
     if args.prepare_tools:
         summary = ExtractToolBootstrapper().ensure_all(cfg, cfg_mgr)
         cfg = cfg_mgr.to_app_config()
@@ -183,13 +225,16 @@ def main(argv: list[str] | None = None) -> int:
             status = "OK" if result.ok else ("REQUIRED-MISSING" if result.required else "OPTIONAL-MISSING")
             exe_text = str(result.exe) if result.exe else "<none>"
             print(f"PREPARE-TOOLS[{status}] {result.name}: {exe_text} ({result.message})")
-        if args.self_check:
+        if args.self_check and summary.required_ok:
+            _ensure_tool_runtime_dir(tool_tmp_dir, dry_run=bool(args.dry_run))
             seven = summary.get("7z")
             _self_check(folder, cfg, runner=runner, seven_zip_exe=seven.exe if seven else None)
         return 0 if summary.required_ok else 3
 
-    log_path = Path(args.log) if args.log else (folder / "reorder_engine.log")
-    tool_log_path = Path(args.tool_log) if args.tool_log else (folder / "reorder_engine.tools.log")
+    _ensure_tool_runtime_dir(tool_tmp_dir, dry_run=bool(args.dry_run))
+
+    log_path = (Path(args.log) if args.log else (folder / "reorder_engine.log")).resolve()
+    tool_log_path = (Path(args.tool_log) if args.tool_log else (folder / "reorder_engine.tools.log")).resolve()
     logger, tool_logger = _setup_logging(folder, log_path, tool_log_path)
 
     logger.info("START: folder=%s workdir=%s config=%s dry_run=%s", folder, workdir, config_path, bool(args.dry_run))
@@ -205,12 +250,49 @@ def main(argv: list[str] | None = None) -> int:
             max_depth=args.deep_max_depth if args.deep_max_depth is not None else deep_cfg.max_depth,
             min_archive_mb=args.deep_min_archive_mb if args.deep_min_archive_mb is not None else deep_cfg.min_archive_mb,
             final_single_mb=args.deep_final_single_mb if args.deep_final_single_mb is not None else deep_cfg.final_single_mb,
+            mode=args.deep_mode if args.deep_mode is not None else deep_cfg.mode,
+            max_candidates=args.deep_max_candidates if args.deep_max_candidates is not None else deep_cfg.max_candidates,
+        )
+    elif args.deep_mode is not None or args.deep_max_candidates is not None:
+        deep_cfg = replace(
+            deep_cfg,
+            mode=args.deep_mode if args.deep_mode is not None else deep_cfg.mode,
+            max_candidates=args.deep_max_candidates if args.deep_max_candidates is not None else deep_cfg.max_candidates,
         )
 
     def sink(line: str) -> None:
         tool_logger.info("TOOL: %s", line)
 
-    runner = ExternalCommandRunner(stream=not bool(args.dry_run), line_sink=sink, abort_on_line=_should_abort_tool_line)
+    runner = ExternalCommandRunner(
+        stream=not bool(args.dry_run),
+        line_sink=sink,
+        abort_on_line=_should_abort_tool_line,
+        cwd=tool_tmp_dir,
+        env=tool_env,
+    )
+
+    tool_summary = ExtractToolBootstrapper().ensure_all(cfg, cfg_mgr)
+    cfg = cfg_mgr.to_app_config()
+    if not tool_summary.required_ok:
+        failures = [result for result in tool_summary.results if result.required and not result.ok]
+        if not failures:
+            message = "Required extraction tools are unavailable."
+            print(f"REQUIRED-TOOL-MISSING: {message}")
+            logger.error("%s", message)
+        for failure in failures:
+            message = f"REQUIRED-TOOL-MISSING[{failure.name}]: {failure.message}"
+            print(message)
+            logger.error("%s", message)
+        return 3
+    ensure = tool_summary.get("7z")
+    if args.self_check:
+        if ensure and not ensure.ok:
+            logger.warning("%s", ensure.message)
+        _self_check(folder, cfg, runner=runner, seven_zip_exe=ensure.exe if ensure else None)
+
+    if not ensure or not ensure.ok:
+        logger.error("%s", ensure.message if ensure else "7z not checked")
+        return 3
 
     if cfg.beta.flatten.enabled and not args.no_flatten:
         allow_inside = bool(cfg.beta.flatten.allow_inside_project_repo) or bool(args.allow_flatten_in_project)
@@ -225,22 +307,10 @@ def main(argv: list[str] | None = None) -> int:
             moves = FolderFlattener().flatten(folder, dry_run=bool(args.dry_run), exclude_dirs=set(cfg.beta.flatten.exclude_dirs))
             logger.info("FLATTEN: moved=%s", len(moves))
 
-    tool_summary = ExtractToolBootstrapper().ensure_all(cfg, cfg_mgr)
-    cfg = cfg_mgr.to_app_config()
-    ensure = tool_summary.get("7z")
-    if args.self_check:
-        if ensure and not ensure.ok:
-            logger.warning("%s", ensure.message)
-        _self_check(folder, cfg, runner=runner, seven_zip_exe=ensure.exe if ensure else None)
-
-    if not ensure or not ensure.ok:
-        logger.error("%s", ensure.message if ensure else "7z not checked")
-        return 3
-
     inspector = ArchiveSignatureInspector()
     restore_service = RestorationService(
         [
-            RestoreABRestorer(),
+            RestoreABRestorer(in_place=True),
             ApateRestorer(inspector, rounds=cfg.beta.rules.max_restore_rounds),
             EmbeddedArchiveRestorer(inspector),
             SuffixVariantBuilder(inspector),
@@ -278,6 +348,8 @@ def main(argv: list[str] | None = None) -> int:
         preserve_payload_names=bool(args.preserve_payload_names or cfg.beta.preserve_payload_names),
         path_compress=cfg.beta.path_compress,
         archive_min_mb=max(1, int(args.archive_min_mb)),
+        cleanup_dynamic_libs=bool(args.cleanup_dynamic_libs),
+        dynamic_lib_patterns=tuple(pattern.strip() for pattern in args.dynamic_lib_patterns.split(";") if pattern.strip()),
     )
 
     result = pipeline.run(dry_run=bool(args.dry_run))

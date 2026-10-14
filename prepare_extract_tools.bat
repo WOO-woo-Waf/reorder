@@ -1,18 +1,10 @@
 @echo off
-setlocal
-
-chcp 65001 >nul
-set PYTHONUTF8=1
-set PYTHONIOENCODING=utf-8
-
-set "ROOT=%~dp0"
-if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
-set "PYTHONPATH=%ROOT%\src;%PYTHONPATH%"
-
-pushd "%ROOT%" >nul
-
-python -m reorder_engine.beta --workdir "%ROOT%" --folder "%ROOT%" --prepare-tools --self-check
-set "RC=%ERRORLEVEL%"
-
-popd >nul
-exit /b %RC%
+setlocal DisableDelayedExpansion
+set "LAUNCHER_DIR=%REORDER_WORK_DIR%"
+if not defined LAUNCHER_DIR set "LAUNCHER_DIR=%~dp0"
+if not exist "%LAUNCHER_DIR%\scripts\windows\launcher.bat" goto invalid_workdir
+"%LAUNCHER_DIR%\scripts\windows\launcher.bat" prepare "%~f0"
+exit /b %ERRORLEVEL%
+:invalid_workdir
+echo [ERROR] Invalid REORDER_WORK_DIR or launcher not found: "%LAUNCHER_DIR%"
+exit /b 10

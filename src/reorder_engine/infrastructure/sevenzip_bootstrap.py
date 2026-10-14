@@ -6,6 +6,7 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
+from reorder_engine.infrastructure.repo_tooling import find_locked_seven_zip, locked_seven_zip_path
 from reorder_engine.services.config import AppConfig, ConfigManager
 
 
@@ -20,18 +21,46 @@ class SevenZipBootstrapper:
     """确保 7-Zip 可用：优先使用配置/本地 tools/，否则联网下载并本地解包。"""
 
     def ensure(self, cfg: AppConfig, cfg_mgr: ConfigManager) -> SevenZipEnsureResult:
-        # 1) config 指定
-        if cfg.tools.seven_zip.exe and cfg.tools.seven_zip.exe.exists():
-            return SevenZipEnsureResult(True, cfg.tools.seven_zip.exe, "7z found from config")
+        # Git 固定路径会每次重新校验；用户明确配置的其他有效 exe 仍优先。
+        lock_path = cfg.root_dir / "scripts" / "desktop-sevenzip.lock.json"
+        configured = cfg.tools.seven_zip.exe
+        managed_config = False
+        if lock_path.is_file():
+            if configured and configured.is_file():
+                try:
+                    managed_paths = {
+                        locked_seven_zip_path(cfg.root_dir).resolve(),
+                        (cfg.root_dir / "tools/7zip/7z.exe").resolve(),
+                        (cfg.root_dir / "tools/7zip/Files/7-Zip/7z.exe").resolve(),
+                    }
+                    managed_config = configured.resolve() in managed_paths
+                except Exception as exc:  # an unreadable lock cannot turn managed files into an override
+                    if configured.resolve().is_relative_to((cfg.root_dir / "tools" / "7zip").resolve()):
+                        return SevenZipEnsureResult(False, None, f"locked 7-Zip bundle is invalid: {exc}")
+                    managed_config = False
+                if not managed_config:
+                    return SevenZipEnsureResult(True, configured, "7z found from config")
+            try:
+                exe = find_locked_seven_zip(cfg.root_dir)
+            except Exception as exc:  # noqa: BLE001 - expose staging validation details to CLI
+                return SevenZipEnsureResult(False, None, f"locked 7-Zip bundle is invalid: {exc}")
+            cfg_mgr.set_seven_zip_exe(exe)
+            cfg_mgr.save()
+            message = "7z locked Git bundle verified" if managed_config else "7z found from Git-pinned bundle"
+            return SevenZipEnsureResult(True, exe, message)
 
-        # 2) tools/ 默认位置
+        # Legacy config remains usable when this checkout has no tracked bundle lock.
+        if configured and configured.is_file():
+            return SevenZipEnsureResult(True, configured, "7z found from config")
+
+        # 3) Legacy checkout compatibility (no tracked bundle lock).
         tools_guess = self._find_local_7z(cfg)
         if tools_guess:
             cfg_mgr.set_seven_zip_exe(tools_guess)
             cfg_mgr.save()
             return SevenZipEnsureResult(True, tools_guess, "7z found from tools/7zip")
 
-        # 3) PATH
+        # 4) PATH
         import shutil
 
         found = shutil.which("7z") or shutil.which("7z.exe")
@@ -39,7 +68,7 @@ class SevenZipBootstrapper:
             exe = Path(found)
             return SevenZipEnsureResult(True, exe, "7z found from PATH")
 
-        # 4) download
+        # 5) download
         if not cfg.tools.seven_zip.auto_download:
             return SevenZipEnsureResult(False, None, "7z not found and auto_download disabled")
 
@@ -64,11 +93,14 @@ class SevenZipBootstrapper:
             cfg.root_dir / "tools" / "7zip" / "Files" / "7-Zip" / "7z.exe",
         ]
         for candidate in direct_candidates:
-            if candidate.exists():
+            if candidate.is_file():
                 return candidate
 
         if install_dir.exists():
-            candidates = sorted(install_dir.rglob("7z.exe"), key=lambda p: (len(str(p)), str(p).lower()))
+            candidates = sorted(
+                (path for path in install_dir.rglob("7z.exe") if path.is_file()),
+                key=lambda p: (len(str(p)), str(p).lower()),
+            )
             if candidates:
                 return candidates[0]
         return None

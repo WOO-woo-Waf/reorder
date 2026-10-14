@@ -38,7 +38,50 @@
 
 ## 保留的 ReOrder Engine / CLI
 
-内部包名 `reorder_engine` 与应用 identifier `io.reorder.desktop` 保留，已有设置和历史的归属不变。以下是原 CLI/Beta 的使用资料，与桌面版的默认库和文件生命周期分开。
+内部包名 `reorder_engine` 与应用 identifier `io.reorder.desktop` 保留。**旧 BAT 仍是正式入口**，与桌面复用解压、分卷、后缀、还原和结果保留策略。2026-10-14 的源码更新补齐异机路径与原地 restoreAB；已发布的桌面 0.3.3 ZIP 不随 Git 更新。
+
+### 在另一台 Windows 机器运行旧 BAT
+
+完整拉取或解压仓库，保留 `src/`、`scripts/`、`resources/`、`tools/`。安装 Python **3.10 或更新版本**后，在仓库目录执行一次：
+
+```bat
+setup_windows.bat
+prepare_extract_tools.bat
+```
+
+`setup_windows.bat` 创建仓库自己的 `.venv` 并安装 Python 核心依赖；运行 BAT 不需要 Node、Rust 或桌面构建。工具准备使用 Git 中固定的 **7-Zip 26.04 / UnRAR 7.13 / Bandizip CLI 7.40.0.1**，不用在新机器另装它们。初次安装 Python 依赖需要网络，准备固定工具可离线进行。
+
+如果 `D:\Downloaded Link\unzip-buff` 就是完整仓库，可以直接运行：
+
+```bat
+"D:\Downloaded Link\unzip-buff\extract_here.bat"
+```
+
+也可以指定待处理目录：
+
+```bat
+extract_here.bat "D:\Downloaded Link\待处理"
+```
+
+如果该目录只想放一个 BAT，而程序仓库在别处，在**程序仓库**中执行：
+
+```bat
+deploy_extract_here.bat "D:\Downloaded Link\unzip-buff"
+```
+
+这会生成绑定当前仓库的外部入口；双击外部 `extract_here.bat` 默认处理它所在目录。换机器或移动程序仓库后重新部署一次。已有入口不应被静默覆盖。也可将根入口复制过去，并先设置 `REORDER_WORK_DIR` 为完整仓库路径。
+
+| 入口 | 实际行为 |
+| --- | --- |
+| `extract_here.bat` | 默认处理 BAT 所在目录；深解压、保留内容原名 |
+| `beta_here.bat` / `run_in_this_folder.bat` | 原 Beta 入口，先探测工具；嵌套选项读取配置 |
+| `beta_basic_2000mb.bat` | basic；通用候选与内层阈值 2000 MB，深度 4，每层最多 1 个候选 |
+| `beta_smart_identify.bat` | smart；默认阈值 128 / 128 / 512 MB，深度 6，每层最多 3 个候选；保留原环境变量覆盖 |
+| `prepare_extract_tools.bat` | 仅准备和探测工具，不处理目录里的压缩包 |
+
+basic/smart 的大小阈值用于通用未知文件和嵌套候选筛选，**不表示已识别的小压缩包一律跳过**。候选上限约束每层选择，不改变单个包的必要后缀、工具与密码尝试顺序。`--archive-mode` 当前只支持 `wide`；动态库清理默认关闭，开启时只作用于本次完整解出的 DLL，部分结果保留时不清理。
+
+路径含空格、中文时给参数加双引号。程序默认取入口自己的仓库，`REORDER_WORK_DIR` 可显式指定仓库，失效时明确报错；不会自动改用 `D:\buff\reorder` 的旧代码。Python 可通过 `REORDER_PYTHON` 指定；兼容 `REORDER_CONDA_ENV` / `CONDA_ENV`，默认优先复用仓库 `.venv`。自动调用时设 `NO_PAUSE=1`；BAT 保留引擎真实退出码。
 
 ## 目标（先实现阶段 1 + 2）
 - 阶段 1：文件名清洗/重命名（可插拔策略；关键字库来自 `resources/keywords.txt`）
@@ -52,7 +95,6 @@
 - 示例：扫描目录、清洗并重命名、按策略尝试解压
 
 ```powershell
-cd reorder_engine
 pip install -e .
 python -m reorder_engine --input D:\Downloads\data --output D:\Downloads\out --tool auto --passwords .\resources\passwords.txt
 ```
@@ -77,81 +119,51 @@ package_reorder_skill.bat
 输出为 `dist/reorder-engine-skill.zip`。它包含 repo-local skill、项目源码、测试、资源文件和工具准备脚本；`dist/` 是生成物目录，不建议直接提交 ZIP。
 
 ## Beta：把当前目录“尽量解出来”并分流
-当你把 [beta_here.bat](beta_here.bat) 放到某个下载目录并双击运行时：
-- 默认先展平：把子文件夹里的文件移动到当前目录（不递归保留结构）
-- 使用 bat 所在目录作为输入目录
-- 就地解压到该目录
-- 将处理过的文件按结果移动到 `success/` 与 `failed/`
-- 若目录下没有 `7z.exe` 且未配置，会自动联网下载 7-Zip 并写入该目录的 `config.json`
 
-失败处理：
-- 若某个文件/分卷解压失败，会尽量把该批次文件名回滚成原样，再移动到 `failed/`
+`--folder` 是输入和结果的工作文件夹，`--workdir` 是程序、配置和词库的仓库目录。两个参数可以不同，BAT 会正确传递它们。
 
-排除列表（可配置）：
-- Beta 会把“几乎所有文件”当作可解压候选；但会按 `config.json` 的 `beta.exclude.names/exts` 排除控制文件
+- 先按配置决定是否展平输入：旧 CLI 保留该能力，桌面不预展平。源码仓库默认有展平保护；关闭展平用 `--no-flatten`。
+- 对原包直接读取；没有可用结果才尝试原地后缀、必要的 Apate / 嵌入封面 / restoreAB 还原。
+- 解压到目标内 `intermediate\`，成品通过同盘移动发布到 `final\`；原包归 `success\archives\`，失败归 `error_files\<分类>\`，缺卷归 `deferred_volumes\`。
+- 工具的 TEMP/TMP/TMPDIR 和当前目录在目标内专用临时目录，不预复制整包。已有目录复用，已有文件冲突不覆盖。
+- 非零退出但至少有一个非空普通文件：保留结果、报告警告，停止密码/工具重试和继续深挖。空文件不算结果；取消、超时和严重写盘错误不能冒充成功。
+- 原包可能因必要还原被改写；失败时尽力回滚改名和可逆变换，无备份时无法承诺原始字节可恢复。
 
-命令行等价：
+直接调用引擎的例子：
 
 ```powershell
-python -m reorder_engine.beta --folder D:\Downloads\data
+$env:PYTHONPATH = "$PWD\src"
+python -m reorder_engine.beta --workdir "$PWD" --folder "D:\Downloads\data" --no-flatten --deep-extract
 ```
 
-关闭展平（不移动子目录文件）：
-
-```powershell
-python -m reorder_engine.beta --folder D:\Downloads\data --no-flatten
-```
+控制文件按 `config.json` 中 `beta.exclude.names/exts` 排除。CLI 成品、原件和工具日志留在输入工作文件夹，不使用桌面任务数据库。
 
 ### restoreAB 合并文件
 
-项目同时支持 `resources/restoreAB.exe` 处理的合并文件格式：文件前面是 PDF、图片或媒体内容，文件尾部嵌入 ZIP、RAR 或 7z。批处理管线会在解压前自动恢复归档副本，ZIP 的 AES 加密交给 `pyzipper` 识别，实际密码仍由 `resources/passwords.txt` 按顺序轮询。restoreAB 派生恢复不改写原包；Apate、嵌入格式与后缀归一化按旧版直接修改或改名，成功归档的是处理后的原包。
+项目保留合并文件的 Python 恢复策略：文件前面可能是 PDF、图片或媒体内容，后面嵌入 ZIP、RAR 或 7z。先尝试直接读取和后缀，再按识别结果选择对应还原；2026-10-14 起 BAT/Beta 也使用原地 restoreAB，不生成整包恢复副本。ZIP32 偏移会修复；ZIP64、不一致或超限布局拒绝写入。AES ZIP 识别使用 `pyzipper`，密码来自当前可编辑词库。
 
-该格式优先通过无界面 Python 策略处理；`restoreAB.exe` 保留为需要手动拖放和查看结果时的 Windows GUI 工具。
+`resources/restoreAB.exe` 仅保留为历史手工 GUI 工具；自动管线使用 Python 实现，不启动该 GUI。
 
 ## 外部依赖
-- Windows 环境（优先）
-- 7-Zip（推荐）；归序可在首次运行时自动下载并配置（需要联网）
-- `pyzipper`：识别 restoreAB 合并文件中的 WinZip AES ZIP
-- 归序会把“调用外部工具”封装成类；你可以在配置里指定可执行文件路径。
+
+- Windows 优先，Python ≥3.10，核心依赖 `pyzipper`；见上方 `setup_windows.bat`。
+- 默认固定工具来自 Git：7-Zip 26.04、UnRAR 7.13、Bandizip CLI 7.40.0.1。许可、版本和哈希见 [第三方说明](docs/desktop-third-party.md) 与两份 `scripts/desktop-*.lock.json` 工具锁。
+- 显式且有效的外部工具路径仍优先；未配置时验证并准备固定依赖。历史自动写回的标准 `tools/7zip/7z.exe` 或 `tools/7zip/Files/7-Zip/7z.exe` 会迁移到锁定的 26.04；固定路径每次重验。存在正式工具锁但依赖损坏时明确报错，不启动损坏依赖、不先展平输入，也不偷偷用宿主旧版本。
+- 不含工具锁的旧部署仍兼容 `tools/`、`tools/_packages/`、宿主安装与 PATH 回退；7-Zip 自动下载由配置控制。
 
 ### Windows 解压工具准备
-已有机制：7z 会按 `config.json -> tools/7zip/ -> PATH -> 联网下载 7-Zip MSI` 的顺序准备。MSI 会被解包到 `tools/7zip/`，实际路径会写回 `config.json` 的 `tools.seven_zip.exe`。
-
-一键准备/探测：
 
 ```bat
 prepare_extract_tools.bat
 ```
 
-等价命令：
+该命令仅准备工具并显示版本。7-Zip 使用锁定目录；UnRAR / Bandizip 的已锁 ZIP 离线展开到 `runtime\cli-tools\tools\`，包含运行 DLL 与许可。工具路径按仓库相对路径写回配置，换机器不依赖开发机安装目录；原有显式路径无效时重新发现。
 
-```powershell
-python -m reorder_engine.beta --workdir D:\buff\reorder --folder D:\buff\reorder --prepare-tools --self-check
-```
-
-该命令会：
-- 递归查找 `tools/7zip/` 下的 `7z.exe`，兼容 MSI 解包后的 `tools/7zip/Files/7-Zip/7z.exe`
-- 查找 `tools/rar/`、`tools/bandizip/`，也会读取 `tools/_packages/winrar-cli.zip`、`tools/_packages/bandizip-cli.zip` 并解包到对应目录
-- 兜底探测常见安装目录：`D:\RAR`、`D:\bandzip`、`C:\Program Files\WinRAR`、`C:\Program Files\Bandizip`
-- 找到后把 `tools.unrar.exe`、`tools.bandizip.exe` 写回 `config.json`
-
-版本兼容性：7-Zip 的 `7z x -y -o<dir> [-pPASSWORD] <archive>` 比较稳定；RAR/UnRAR 的 `x -y -p...` 也相对稳定；Bandizip 的 `bz x -y -o:<dir> -p:<password>` 更依赖具体版本。升级工具后建议跑一次 `prepare_extract_tools.bat` 看 self-check 输出，真实解压失败时看 `reorder_engine.tools.log`。
-
-RAR/Bandizip 打包到 Git 的建议：先确认许可证允许随项目分发；不要提交个人授权文件，例如 `rarreg.key`。如果只是私有仓库自用，可把必要 CLI 文件压成 ZIP 放到 `tools/_packages/`：
-
-```powershell
-New-Item -ItemType Directory -Force tools\_packages
-Compress-Archive -Force -Path D:\RAR\Rar.exe,D:\RAR\UnRAR.exe,D:\RAR\7zxa.dll,D:\RAR\License.txt,D:\RAR\Rar.txt -DestinationPath tools\_packages\winrar-cli.zip
-Compress-Archive -Force -Path D:\bandzip\bz.exe,D:\bandzip\Bandizip.exe,D:\bandzip\ark.x64.dll,D:\bandzip\ark.x64.lgpl.dll,D:\bandzip\data,D:\bandzip\langs -DestinationPath tools\_packages\bandizip-cli.zip
-```
-
-后续新机器克隆后运行 `prepare_extract_tools.bat`，会自动解包这些 ZIP 并写入配置。
-
-### 随项目携带工具（可选）
-把 `7z.exe`、`Rar.exe`/`UnRAR.exe`、`bz.exe` 放到 [tools/README.md](tools/README.md) 所说的 `tools/` 目录，代码会优先使用这些二进制文件。
+默认工具顺序是 `7z → unrar → bandizip`；格式识别可以让 RAR 优先 UnRAR、某些后缀优先 Bandizip，`beta.extractor_order` 继续可配置。工具选择和恢复模式是两套顺序，换工具不会先复制整个原包。实际失败查看目标目录下对应主日志与 `.tools.log`。
 
 ### 配置文件
-默认使用项目根目录的 `config.json`。首次运行若找不到 `7z.exe`，会尝试联网从 7-zip.org 下载 MSI 并解包到 `tools/7zip/`，然后把路径写回 `config.json`。
+
+CLI 默认使用仓库 `config.json`，相对路径相对 `--workdir` 解析。默认词库为 `resources/passwords.txt` 和 `resources/keywords.txt`，可以直接修改或清空，不自动补回。已有个人配置保留；异机的自定义外部词库路径需要同步文件或改为新机器上的路径。工具发现可能写回配置；运行后 `git status` 中的配置变化不应覆盖你自己的设置。
 
 ### 关键字库与密码库格式（txt）
 - 一行一个条目

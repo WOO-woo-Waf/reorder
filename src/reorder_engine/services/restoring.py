@@ -841,7 +841,7 @@ class _NestedArchivePostRule(PostExtractRule):
 
         archive_like.sort(key=size_of, reverse=True)
         if archive_like:
-            return archive_like[:5]
+            return archive_like
 
         big_files = [p for p in files if size_of(p) >= final_single_bytes and not inspector.is_valid_final_media(p)]
         big_files.sort(key=size_of, reverse=True)

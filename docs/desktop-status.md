@@ -1,10 +1,40 @@
 # 桌面软件实施状态与新聊天交接
 
-更新时间：2026-10-13（Asia/Shanghai）。Windows 桌面 0.3.3 磁盘读写优先切片已完成源码、工程检查与便携包，已提交并推送 main，Windows x64 便携预发布已发布。0.3.2 及更早 Release 保留；真实文件、GUI、干净机器、真实跨盘和大盘性能由用户验收。
+更新时间：2026-10-14（Asia/Shanghai）。本轮补齐 Windows 旧 BAT / Beta CLI 的异机入口和磁盘优先策略，检查与提交状态见下一节。桌面 0.3.3 便携预发布已发布，现有 Release 产物不随本轮 Git 源码更新。真实文件、GUI、干净机器、真实跨盘和大盘性能由用户验收。
 
 方案：[product_plan.md](product_plan.md)。正式设计：[desktop-design.md](desktop-design.md)。
 
-## 星绫解封 0.3.3：磁盘读写优先（当前切片）
+## 2026-10-14：旧 BAT 与异机 Git 拉取兼容
+
+用户要求 `D:\Downloaded Link\unzip-buff\extract_here.bat` 等旧入口继续可用，并将在另一台 Windows 机器拉取源码验收。本轮保留根 BAT 名字与 preset，使用公共启动器；完整仓库默认定位自身，显式 `REORDER_WORK_DIR` 继续支持，不再默认跳转开发机旧路径。仓库外可部署只含入口的 BAT，默认目标是入口所在目录。当前宿主未找到用户举例的外部文件，本轮交付仓库入口与部署方式，未对该真实目录进行操作。
+
+### 已实现的契约
+
+- `setup_windows.bat` 为源码运行准备 Python 核心环境；`deploy_extract_here.bat` 生成外部入口。使用与异机步骤见 [README](../README.md#在另一台-windows-机器运行旧-bat)。入口支持空格/中文目录，实际退出码保留；`NO_PAUSE=1` 支持自动调用。
+- `extract_here` 开启深解压和原名保留；`beta_here` / `run_in_this_folder` 保留工具探测；basic 保留 2000 MB / 深度 4 / 候选 1；smart 保留 128 / 128 / 512 MB、深度 6、候选 3 与环境变量覆盖。basic/smart 的层级候选限制实际接入。此前模式与动态库清理只解析参数，本轮才接入有效行为。
+- CLI restoreAB 改为 `in_place=True`，与桌面共享“直接读 → 原地后缀 → 必要还原”的处理策略及非空部分结果停止策略。不是所有非零退出都成功；取消、超时、缺卷、权限与严重写盘错误仍按其具体分类处理。
+- 工具 cwd / TEMP / TMP / TMPDIR 在输入工作文件夹的 `intermediate/tool_tmp/` 下，每次使用独占子目录。所有用户压缩包与解压数据在该工作文件夹内，不预复制整包。程序固定依赖与 Python 环境属于仓库自身，不属于大文件处理区。
+- 默认工具取 Git 锁定的 7-Zip 26.04 / UnRAR 7.13 / Bandizip CLI 7.40.0.1；历史标准 7-Zip 路径迁移到 26.04，有效显式外部配置继续可用。固定路径每次重验，正式锁损坏或缺包返回 3，先于工具自检与输入展平。可编辑公开词库仍来自配置指定文件，默认 `resources/`，不重置个人配置或词库。
+- 动态 DLL 清理默认关闭，仅对本次完整解出的匹配普通 DLL 生效；已有内容、链接外部内容和部分结果不清理。CLI 的旧展平功能继续按配置与保护范围控制，桌面不新增展平和相关控件。
+
+### 验证与交付
+
+本轮新建 Luna/high 子任务，未恢复旧子线程。一个工具子任务初始返回 `TASK_INPUT_MISSING`，只读运行时检查 `compatible=true` 后用当前 `followup_task` 接续；收到正文标记 `CHAIN-TOOLS-14` 与本轮 final。BAT 和 CLI 子任务分别准确回 `BAT-COMPAT-14` / `CLI-POLICY-14`。不据此推断所有任务或长期运行稳定性。
+
+证据目录：ignored `artifacts/desktop/bat-compat-20261014/`。源码与约定的定向工程检查已完成：
+
+| 范围 | 命令 / 方式与结果 | 证据 |
+| --- | --- | --- |
+| CLI 路径、工作区保护、固定工具、共享优先级与 partial | `PYTHONPATH=src /usr/local/bin/python -m pytest tests/test_tool_bootstrap.py tests/test_beta_legacy_options.py tests/test_beta_lifecycle.py tests/test_windows_bat_launchers.py tests/test_desktop_candidate_priority.py tests/test_desktop_extraction_stop.py -q`，74 passed / 33 subtests，exit 0 | `targeted-final.log` |
+| 收尾工具迁移与损坏依赖门槛 | 工具与 CLI 参数三文件定向 pytest，27 passed，exit 0；与上一行有重叠，不累加 | `cli-tools-final.log` |
+| Windows BAT 实际调用 | Windows Python 执行 `tests/windows_bat_smoke.py`，exit 0；6 入口真实返回 37、盘根参数、Conda BAT 返回、本地 venv；实际固定工具准备与旧路径迁移、坏包返回 3、部署及重复部署拒绝、普通/误后缀 ZIP、嵌套 ZIP、已有文件与空目录哨兵、仓库外复制入口、无效仓库返回 10 | `native-smoke-final.log`、`native/run-20261014-105129-33936/result.json`、`evidence.txt`、`mock-launchers.json` |
+| 状态与文档 | 本次实际复制的核心源码、启动器及外部部署脚本逐一 SHA-256 与最终工作树一致；文档本地链接与 `git diff --check` exit 0 | `native-source-identity.json`、`doc-links.json` |
+
+一轮 Windows harness 的命令引用和盘根参数检查失败后已定点修复；最终 exit 0 记录对应当前源码。子任务在收尾时因接口额度保留限制返回 502，未更换模型；主线程接手完成代码修复与实际 diff 审查。独立 Luna 审查未完成，不写为通过；主线程审查记录在 `review/main-review.md`。
+
+源码与运行指南随 main 提交；Git 交付记录在收尾提交补记。真实包、用户指定外部 BAT、干净机器、GUI、大盘性能尚未验证；本轮合成样本不替代人工验收，不重新打包已发布桌面 ZIP。CLI `--dry-run` 不创建本次工具临时目录、不处理原包，但首次配置/工具准备仍可能写仓库配置与程序依赖，不能作为完整只读扫描承诺。
+
+## 星绫解封 0.3.3：磁盘读写优先（已发布）
 
 本节优先于下方历史副本和跨盘复制策略。用户已授权持续实现、定向自检、commit/push、生成产物后发布新版；并确认跨盘原包留在当前位置、工具报错但存在至少一个非空普通文件时保留结果并停止重试。已复用批准的 Tauri 2 / Svelte 5 / TypeScript / Rust 宿主 / Python 引擎 / SQLite 方案。
 

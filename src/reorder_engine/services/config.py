@@ -61,6 +61,8 @@ class BetaDeepExtractConfig:
     max_depth: int
     min_archive_mb: int
     final_single_mb: int
+    mode: str = "smart"
+    max_candidates: int = 5
 
 
 @dataclass(frozen=True)
@@ -174,16 +176,20 @@ class ConfigManager:
         # 注意：仍然允许用户在 config.json 里覆盖。
         self._data = default
 
-        bz = Path(r"D:\\bandzip\\bz.exe")
-        if bz.exists():
-            self.set_bandizip_exe(bz)
+        # A repository with fixed tool inputs must not pick up unrelated host
+        # binaries during first-run config seeding.
+        fixed_tool_lock = self._root_dir / "scripts" / "desktop-tools.lock.json"
+        if not fixed_tool_lock.is_file():
+            bz = Path(r"D:\\bandzip\\bz.exe")
+            if bz.exists():
+                self.set_bandizip_exe(bz)
 
-        rar_dir = Path(r"D:\\RAR")
-        for candidate in ("Rar.exe", "UnRAR.exe"):
-            p = rar_dir / candidate
-            if p.exists():
-                self.set_unrar_exe(p)
-                break
+            rar_dir = Path(r"D:\\RAR")
+            for candidate in ("Rar.exe", "UnRAR.exe"):
+                p = rar_dir / candidate
+                if p.exists():
+                    self.set_unrar_exe(p)
+                    break
         self.save()
         return self._data
 
@@ -249,6 +255,8 @@ class ConfigManager:
             max_depth=int(deep.get("max_depth", 4)),
             min_archive_mb=int(deep.get("min_archive_mb", 100)),
             final_single_mb=int(deep.get("final_single_mb", 200)),
+            mode=str(deep.get("mode", "smart")).lower(),
+            max_candidates=max(1, int(deep.get("max_candidates", 5))),
         )
         allowed_raw = flatten.get("allowed_roots", [])
         allowed_roots = tuple(str(x) for x in allowed_raw) if isinstance(allowed_raw, list) else ()

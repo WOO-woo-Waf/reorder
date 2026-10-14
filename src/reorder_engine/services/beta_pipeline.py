@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import shutil
 import re
+import fnmatch
+import uuid
 from dataclasses import dataclass
 from dataclasses import replace
 from pathlib import Path
@@ -85,6 +87,8 @@ class BetaFolderPipeline:
         preserve_payload_names: bool = True,
         path_compress: bool = True,
         archive_min_mb: int = 100,
+        cleanup_dynamic_libs: bool = False,
+        dynamic_lib_patterns: tuple[str, ...] = (),
         volume_sets: tuple[VolumeSet, ...] | None = None,
         manage_originals: bool = True,
         renamer: SafeRenamer | None = None,
@@ -104,6 +108,9 @@ class BetaFolderPipeline:
         self._preserve_payload_names = bool(preserve_payload_names)
         self._path_compress = bool(path_compress)
         self._archive_min_mb = max(1, int(archive_min_mb))
+        self._cleanup_dynamic_libs = bool(cleanup_dynamic_libs)
+        self._dynamic_lib_patterns = tuple(pattern for pattern in dynamic_lib_patterns if pattern)
+        self._produced_files: set[Path] = set()
         self._renamer = renamer or SafeRenamer()
         self._volume_sets = volume_sets
         self._manage_originals = manage_originals
@@ -115,6 +122,10 @@ class BetaFolderPipeline:
         final_root = self._folder / "final"
         error_dir = self._folder / "error_files"
         deferred_volume_dir = self._folder / "deferred_volumes"
+        result_dirs = (success_dir, archives_dir, intermediate_dir, final_root, error_dir, deferred_volume_dir)
+        if any(not path.resolve().is_relative_to(self._folder.resolve()) for path in result_dirs):
+            raise EngineError("UNSAFE_WORKSPACE", "结果目录指向工作文件夹外部，请调整目录后重试。")
+        created_result_dirs = [path for path in result_dirs if not path.exists()]
         if not dry_run:
             archives_dir.mkdir(parents=True, exist_ok=True)
             intermediate_dir.mkdir(parents=True, exist_ok=True)
@@ -136,12 +147,15 @@ class BetaFolderPipeline:
         ok = 0
         fail = 0
         outcomes: list[BetaPackageResult] = []
+        owned_package_roots: list[Path] = []
         for volume_set in volume_sets:
             if self._is_in_result_dirs(volume_set, {success_dir, intermediate_dir, final_root, error_dir, deferred_volume_dir}):
                 continue
 
             package_name = self._package_name(volume_set.entry.name)
-            package_root = intermediate_dir / package_name
+            package_root = self._allocate_package_workspace(intermediate_dir, package_name, dry_run=dry_run)
+            if not dry_run:
+                owned_package_roots.append(package_root)
             candidates = self._entry_candidates(volume_set, package_root / "variants" / "L1", dry_run=dry_run)
             result, layer1_dir = self._extract_first_success(
                 volume_set,
@@ -223,12 +237,31 @@ class BetaFolderPipeline:
                 self._emit(f"ERROR-FILE[{fail_category}]: {self._summarize_message(result.message)}")
 
         if not dry_run:
-            self._remove_empty_dirs(intermediate_dir)
-            self._remove_empty_dirs(final_root)
-            self._remove_empty_dirs(error_dir)
-            self._remove_empty_dirs(success_dir)
-            self._remove_empty_dirs(deferred_volume_dir)
+            for package_root in owned_package_roots:
+                self._remove_empty_dirs(package_root)
+            # Reuse existing result roots without cleaning any of their contents,
+            # including empty user directories. Only remove roots created by us.
+            for path in reversed(created_result_dirs):
+                try:
+                    path.rmdir()
+                except OSError:
+                    pass
         return BetaRunResult(ok_count=ok, fail_count=fail, total=ok + fail, packages=tuple(outcomes))
+
+    def _allocate_package_workspace(self, intermediate_dir: Path, package_name: str, *, dry_run: bool) -> Path:
+        """Reserve a fresh per-package workspace without reusing prior attempts."""
+        candidate = intermediate_dir / package_name
+        while True:
+            if dry_run:
+                if not candidate.exists() and not candidate.is_symlink():
+                    return candidate
+            else:
+                try:
+                    candidate.mkdir()
+                    return candidate
+                except FileExistsError:
+                    pass
+            candidate = intermediate_dir / f"{package_name}__run_{uuid.uuid4().hex}"
 
     def _entry_candidates(self, vs: VolumeSet, workspace: Path, *, dry_run: bool) -> list[CandidateAttempt]:
         if len(vs.members) > 1:
@@ -522,7 +555,10 @@ class BetaFolderPipeline:
         preferred_password: str | None = None,
     ) -> tuple[bool, Path | None, str | None]:
         if not self._deep.enabled:
-            final_dir = self._promote_final_dir(start_dir, final_root, package_name=package_name, dry_run=dry_run)
+            final_dir = self._promote_final_dir(
+                start_dir, final_root, package_name=package_name, dry_run=dry_run,
+                cleanup_dynamic_libs=True,
+            )
             return True, final_dir, "depth=1"
 
         max_depth = max(1, int(self._deep.max_depth))
@@ -533,7 +569,10 @@ class BetaFolderPipeline:
         for depth in range(1, max_depth + 1):
             reason = self._is_final_output(current_dir)
             if reason is not None:
-                final_dir = self._promote_final_dir(current_dir, final_root, package_name=package_name, dry_run=dry_run)
+                final_dir = self._promote_final_dir(
+                    current_dir, final_root, package_name=package_name, dry_run=dry_run,
+                    cleanup_dynamic_libs=True,
+                )
                 return True, final_dir, f"depth={depth} reason={reason}"
 
             candidates = self._nested_candidates(
@@ -545,7 +584,10 @@ class BetaFolderPipeline:
             )
             if not candidates:
                 if self._has_nonempty_file(current_dir):
-                    final_dir = self._promote_final_dir(current_dir, final_root, package_name=package_name, dry_run=dry_run)
+                    final_dir = self._promote_final_dir(
+                        current_dir, final_root, package_name=package_name, dry_run=dry_run,
+                        cleanup_dynamic_libs=True,
+                    )
                     return True, final_dir, f"depth={depth} reason=no-candidates"
                 return False, None, f"depth={depth} no candidates"
 
@@ -589,7 +631,10 @@ class BetaFolderPipeline:
                     self._remove_empty_dirs(current_dir)
                     return True, None, f"depth={depth} reason=deferred-volume-fragments"
                 if self._has_nonempty_file(current_dir):
-                    final_dir = self._promote_final_dir(current_dir, final_root, package_name=package_name, dry_run=dry_run)
+                    final_dir = self._promote_final_dir(
+                        current_dir, final_root, package_name=package_name, dry_run=dry_run,
+                        cleanup_dynamic_libs=True,
+                    )
                     return True, final_dir, f"depth={depth} reason=candidates-failed"
                 return False, None, f"depth={depth} all candidates failed"
 
@@ -611,6 +656,13 @@ class BetaFolderPipeline:
             final_single_bytes=final_single_bytes,
             dry_run=dry_run,
         )
+        limit = max(1, int(getattr(self._deep, "max_candidates", 5)))
+        mode = str(getattr(self._deep, "mode", "smart")).lower()
+        if mode == "basic":
+            base_candidates.sort(key=lambda candidate: self._safe_file_size(candidate), reverse=True)
+            base_candidates = base_candidates[:1]
+        else:
+            base_candidates = base_candidates[:limit]
         out: list[CandidateAttempt] = []
         seen: set[Path] = set()
         for candidate in base_candidates:
@@ -626,6 +678,13 @@ class BetaFolderPipeline:
                 )
                 out.append(attempt)
         return out
+
+    @staticmethod
+    def _safe_file_size(path: Path) -> int:
+        try:
+            return path.stat().st_size
+        except OSError:
+            return 0
 
     def _extract_with_variant_attempts(
         self,
@@ -816,6 +875,10 @@ class BetaFolderPipeline:
             preferred_password=preferred_password,
             method=method,
         )
+        track_produced_files = self._cleanup_dynamic_libs and bool(self._dynamic_lib_patterns) and not dry_run
+        existing_files: set[Path] = set()
+        if track_produced_files and output_dir.is_dir():
+            existing_files = {path.absolute() for path in output_dir.rglob("*") if path.is_file() and not path.is_symlink()}
         try:
             result = self._extractor.extract_one(req, preference="auto", probe=probe, dry_run=dry_run)
         except (EngineError, ProcessingCancelled):
@@ -830,6 +893,12 @@ class BetaFolderPipeline:
                 f"error={type(exc).__name__}: {exc}"
             )
             return ExtractionResult(volume_set=volume_set, ok=False, tool="error", message=str(exc)), None
+        if track_produced_files and output_dir.is_dir():
+            self._produced_files.update(
+                path.absolute()
+                for path in output_dir.rglob("*")
+                if path.is_file() and not path.is_symlink() and path.absolute() not in existing_files
+            )
         self._emit_extract_result(prefix, volume_set.entry.name, result, output_dir=output_dir, method=method)
         if result.ok or self._result_partial(result) or self._has_nonempty_file(output_dir):
             return result, output_dir
@@ -1237,31 +1306,69 @@ class BetaFolderPipeline:
                 moved.append(target)
         return moved
 
-    def _promote_final_dir(self, current_dir: Path, final_root: Path, *, package_name: str, dry_run: bool) -> Path:
+    def _promote_final_dir(
+        self,
+        current_dir: Path,
+        final_root: Path,
+        *,
+        package_name: str,
+        dry_run: bool,
+        cleanup_dynamic_libs: bool = False,
+    ) -> Path:
         leaf = deepest_wrapper_dir(current_dir) if self._path_compress else current_dir
         target_name = leaf.name if self._preserve_payload_names and leaf != current_dir else package_name
         target = final_root / target_name
-        if target.exists():
+        if target.exists() or target.is_symlink():
             target = self._duplicate_target(final_root, target_name=target_name, package_name=package_name)
         if dry_run:
             return target
+        if cleanup_dynamic_libs and self._cleanup_dynamic_libs and self._dynamic_lib_patterns:
+            self._cleanup_dynamic_libraries(leaf)
         target.parent.mkdir(parents=True, exist_ok=True)
         source = leaf if leaf.exists() else current_dir
         shutil.move(str(source), str(target))
         self._remove_empty_dirs(current_dir)
         return target
 
+    def _cleanup_dynamic_libraries(self, root: Path) -> None:
+        """Remove only matching regular DLLs created by this pipeline run."""
+        if not root.exists() or not root.is_dir() or root.is_symlink():
+            return
+        try:
+            folder_root = self._folder.resolve()
+            owned_root = (self._folder / "intermediate").resolve()
+            owned_root.relative_to(folder_root)
+            resolved_root = root.resolve()
+            resolved_root.relative_to(owned_root)
+        except (OSError, ValueError):
+            return
+        for path in root.rglob("*"):
+            if path.is_symlink() or not path.is_file() or path.suffix.lower() != ".dll":
+                continue
+            if path.absolute() not in self._produced_files:
+                continue
+            if not any(fnmatch.fnmatchcase(path.name.casefold(), pattern.casefold()) for pattern in self._dynamic_lib_patterns):
+                continue
+            try:
+                resolved_path = path.resolve(strict=True)
+                resolved_path.relative_to(owned_root)
+                path.unlink()
+                self._produced_files.discard(path.absolute())
+                self._emit(f"CLEANUP-DYNAMIC-LIB: {path.name}")
+            except (OSError, ValueError) as exc:
+                self._emit(f"CLEANUP-DYNAMIC-LIB-SKIP: {path.name} error={type(exc).__name__}")
+
     def _duplicate_target(self, root: Path, *, target_name: str, package_name: str) -> Path:
         duplicate_root = root / self._duplicates_dir_name / package_name
         dst = duplicate_root / target_name
-        if not dst.exists():
+        if not dst.exists() and not dst.is_symlink():
             return dst
         for index in range(1, 1000):
             candidate_root = duplicate_root / f"copy_{index}"
             dst = candidate_root / target_name
-            if not dst.exists():
+            if not dst.exists() and not dst.is_symlink():
                 return dst
-        return duplicate_root / target_name
+        raise EngineError("OUTPUT_CONFLICT", "重复成品目录已占满，请整理重复项后重试。")
 
     def _move_original_members(self, vs: VolumeSet, dest_dir: Path, *, package_name: str, dry_run: bool) -> None:
         if not self._manage_originals:
@@ -1270,7 +1377,7 @@ class BetaFolderPipeline:
             if not member.exists():
                 continue
             dst = dest_dir / member.name
-            if dst.exists():
+            if dst.exists() or dst.is_symlink():
                 dst = self._duplicate_target(dest_dir, target_name=member.name, package_name=package_name)
             if dry_run:
                 self._emit(f"MOVE(dry): {member} -> {dst}")
