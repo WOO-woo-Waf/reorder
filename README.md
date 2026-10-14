@@ -69,7 +69,7 @@ extract_here.bat "D:\Downloaded Link\待处理"
 deploy_extract_here.bat "D:\Downloaded Link\unzip-buff"
 ```
 
-这会生成绑定当前仓库的外部入口；双击外部 `extract_here.bat` 默认处理它所在目录。换机器或移动程序仓库后重新部署一次。已有入口不应被静默覆盖。也可将根入口复制过去，并先设置 `REORDER_WORK_DIR` 为完整仓库路径。
+这会生成绑定当前仓库的外部入口；双击外部 `extract_here.bat` 默认处理它所在目录。换机器或移动程序仓库后重新部署一次。已有入口会拒绝覆盖，请先备份或移开旧 BAT 后再部署。也可将根入口复制过去，并先设置 `REORDER_WORK_DIR` 为完整仓库路径。
 
 | 入口 | 实际行为 |
 | --- | --- |
