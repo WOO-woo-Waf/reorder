@@ -1,14 +1,14 @@
 # 桌面首版工程设计与实施契约
 
-日期：2026-10-07；2026-10-08 增补 0.3.1；2026-10-12 增补 0.3.2 原地处理；2026-10-13 增补 0.3.3 磁盘读写优先。产品依据：[产品方案](product_plan.md)。
-状态：设计已确定，用户已授权依此实施；用户已于 2026-10-10 确认当前修复并授权发布 0.3.1 便携预发布；0.3.3 源码与工程自检已完成，Windows 产物及发布状态见实施状态。实现、验证、人工验收分别记录在 [实施状态](desktop-status.md)。
+日期：2026-10-07；2026-10-08 增补 0.3.1；2026-10-12 增补 0.3.2；2026-10-13 增补 0.3.3；2026-10-18 增补 partial 输出隔离契约。产品依据：[产品方案](product_plan.md)。
+状态：设计与各版本历史实施记录见下文；2026-10-18 规则更新仅适用于当前源码，未更新 0.3.3 ZIP。实现、机器检查与人工验收状态由 [实施状态](desktop-status.md) 记录。
 
 ## 1. 首版验收范围
 
 跨平台桌面架构，Windows x64 首交付。保留 CLI；桌面提供目录/文件拖放、只读计划、单队列执行、取消、错误重试、最近任务、密码与工具设置、结果打开。
 不在首版加入浏览器服务器、目录监听、托盘自动处理、云服务或 Agent。
 
-当前 0.3.3 直接读取选中原包；优先原地后缀调整，失败且无可用结果才做原地 Apate / 嵌入封面 / restoreAB 还原，普通包不改写字节。解压与工具临时数据在所选工作文件夹内，restoreAB 桌面路径不生成恢复整包副本。成品发布后整理原包：同盘独占移动，跨盘保留原包当前位置并登记结果。归档不完整不报告成功。原地变化中断标记 needs_review，不能承诺无备份自动还原字节。
+当前源码直接读取选中原包，按适用的密码、工具与恢复路径尝试，只有完整成功才报告完成。错误密码、非零退出或 CRC/Data Error 即使有非空输出也不算成功；全部适用尝试失败后，partial 状态显示“未完成，待检查”，输出进入 `incomplete/outputs/<包名>/`，原包全卷按原 basename 进入 `incomplete/archives/` 根目录，同名冲突沿用既有去重；不额外创建包级 archives 目录。partial 只保留一份候选/最新非空输出，不承诺选择“最好”的结果。跨盘原包保留在原位置并登记；不使用整包备份/恢复副本。该 2026-10-18 契约未回写 0.3.3 ZIP。
 
 2026-10-14 的旧 BAT 兼容切片继续复用 `BetaFolderPipeline` / `ExtractionService`，CLI restoreAB 同样改为原地接口。BAT 的 `--workdir` 是程序与配置仓库，`--folder` 是输入及结果的工作文件夹；工具临时目录属于后者。公共 Windows 启动器负责定位仓库和 Python，固定工具准备复用既有锁验证与 staging；不进入 Tauri / Rust / 前端调用链。CLI 展平和 basic/smart 预设保留，桌面选中范围和默认界面不变。证据及部署入口见 [实施状态](desktop-status.md)。
 
@@ -249,7 +249,7 @@ Rust 的 EngineBridge 与 Python 的 EngineFacade 属于不同进程，不是互
 ### JobSnapshot / PackageOutcome
 
 - job_id、state、created_at、updated_at、counts、packages、last_seq。
-- 包状态区分 succeeded、partial、failed、deferred、cancelled、interrupted、needs_review。
+- 包状态区分 succeeded、partial、failed、deferred、cancelled、interrupted、needs_review；当前源码的 `partial` 表示“未完成，待检查”，不代表成品完成。
 - results 保存已登记成品、原件归档与错误位置。
 - 任务库不存密码；公开密码只在数据目录的 `passwords.txt` 里，日志与错误不再掩码（见第 12 节）。
 - 一个源文件同一时间只能属于一个活跃执行任务。
@@ -417,7 +417,7 @@ stateDiagram-v2
 | 结果 | 输出 | 原件 |
 |---|---|---|
 | 完全成功 | final | success/archives |
-| 有部分输出 | error_files/分类 | success/archives |
+| 全部适用尝试失败但保留非空输出 | incomplete/outputs/<包名> | incomplete/archives/（原 basename；冲突去重）；跨盘则留原处并登记 |
 | 完全失败 | 错误说明 | error_files/分类 |
 | 缺卷 | deferred 结果 | deferred_volumes/组 |
 | 取消 | 无变化可取消重试；原地改动后 needs_review | 按实际名称/内容与动作记录核对 |
@@ -550,11 +550,18 @@ PackageProcessor 为每包创建 DirectSourceSession，SourceRestoration/SourceR
 
 `RestoreABRestorer(in_place=True)`：单 `r+b` 句柄，先规划校验再前移 + `truncate` + 回写 ZIP 偏移，`restore_with_rollbacks` 原地返回同路径、空回滚；`_build_zip_plan` 对 ZIP64/布局异常在写前抛 `RestoreABError`。`in_place=False` 的旧派生语义保留给 CLI（`beta.py`）。`SourceRestoration` 仍把 workspace 限制在本次工作区。
 
-### 14.3 结果保留与快速停止契约
+### 14.3 结果保留与尝试停止契约
 
-- `ExtractionResult` 新增 `partial_output: bool`。`Extracting._partial_result_for_output`：非零退出码 + 本次输出目录存在非空常规文件 → `ok=True, partial_output=True`，管线据此停止密码/工具矩阵与深挖，包状态 `partial`（界面“完成，有警告”），不认证完整性。
-- `ExtractionService._failure_disposition` 的处置：格式不匹配 → `next_tool`；缺卷/写盘/权限 → `stop_all`；密码失败 → `retry`；CRC/Data Error → `next_tool`；退出码 7/8/124/255 → `stop_all`。取消/超时/guard 异常照常上抛，永不 `partial`。
-- `ExternalCommandRunner.run` 新增每调用 `abort_on_line` 覆盖；`tools.py` 的 `_extract_abort_guard` 只在输出仍为空时按强失败标记终止进程树。抽取命令：7-Zip 钉 `-sccUTF-8` 与字面 `-p-`（密码为 `-`，仅完全无 `-p` 才可能交互），UnRAR 加 `-kb`。
+0.3.3 的“非零退出但已有非空文件就停止并显示完成有警告”是历史策略，已被 2026-10-18 当前源码契约替代：
+
+- 错误密码、非零退出或 CRC/Data Error 均表示当前尝试失败，即使已有非空文件也不能报告成功。每次尝试的输出隔离，失败文件不能污染后续成功；完整成功后才可提前结束。
+- 遍历配置密码、可用工具与适用的直接解压 → 原地后缀调整 → 必要伪装还原路径。真实格式不匹配时可切换工具并跳过该工具的密码轮询。缺卷、权限、空间不足、取消、超时与安全失败硬停止，不盲目重试。
+- 尝试失败且无完整成功时，不为每次尝试永久留副本；只保留一份候选/最新非空 partial，不承诺“最好”的结果。全部适用尝试完成后若仍有非空文件，状态 `partial`，界面显示“未完成，待检查”，输出进入 `incomplete/outputs/<包名>/`，完整分卷原包按原 basename 进入 `incomplete/archives/` 根目录，同名冲突去重，不额外创建包级 archives 目录；不进入 final/success。跨盘原件留在原位置并登记。无文件失败仍进 `error_files/`，缺卷留在 `deferred_volumes/`。
+- 内层解压的 partial 仍是未完成状态；不能把外层任务标记为完整成功。未知普通文件沿用旧停止策略。
+- 不使用整包备份或恢复副本，结果仅在同一工作区内移动。
+- 真实用户 `393.7z.001/.002` 尚未执行人工验收。
+
+`ExternalCommandRunner.run` 的每调用 `abort_on_line`、`tools.py` 的 `_extract_abort_guard` 与命令行选项仍按具体工具实现；以上状态规则不将非空输出本身视为成功条件。
 
 ### 14.4 原包归档
 
@@ -566,4 +573,4 @@ PackageProcessor 为每包创建 DirectSourceSession，SourceRestoration/SourceR
 
 ### 14.6 未验证
 
-真实大盘 I/O、真实原件上的跨盘保留与原地 restoreAB、7-Zip 26.04 冻结引擎行为、`partial_output` 在真实损坏包上的表现，均不在本文机器验收范围，留用户人工验收。
+真实大盘 I/O、真实原件上的跨盘保留与原地 restoreAB、7-Zip 26.04 冻结引擎行为，以及 393.7z 分卷的完整成功/partial 结果，均未完成真实用户样本人工验收；状态见实施状态。

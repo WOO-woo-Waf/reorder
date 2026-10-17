@@ -1,8 +1,32 @@
 # 桌面软件实施状态与新聊天交接
 
-更新时间：2026-10-14（Asia/Shanghai）。本轮补齐 Windows 旧 BAT / Beta CLI 的异机入口和磁盘优先策略，检查与提交状态见下一节。桌面 0.3.3 便携预发布已发布，现有 Release 产物不随本轮 Git 源码更新。真实文件、GUI、干净机器、真实跨盘和大盘性能由用户验收。
+更新时间：2026-10-18（Asia/Shanghai）。当前修复错误密码输出被误判为成功的问题，最新规则见下一节。桌面 0.3.3 便携预发布已发布，现有 Release 产物不随本轮 Git 源码更新。真实文件、GUI、干净机器、真实跨盘和大盘性能由用户验收。
 
 方案：[product_plan.md](product_plan.md)。正式设计：[desktop-design.md](desktop-design.md)。
+
+## 2026-10-18：错误密码重试与未完成分流
+
+用户反馈 `393.7z.001/.002` 在密码轮询期间留下文件后，被记为 `EXTRACT[OK]`、原卷进入 `success/archives`。本节取代下方 0.3.3 及 2026-10-14 记录中的“产生非空文件即停止全部重试并视为完成”规则；历史 Release 的行为不回写为新版本行为。
+
+- 完整成功才提前结束。错误密码、CRC 或警告退出留下文件时仍为未完成，继续配置密码、可用工具和适用的直接读取、原地后缀、必要还原方式。真正格式不匹配可直接换工具；缺卷、空间、权限、取消、超时和安全失败仍按具体错误停止当前包。
+- 密码尝试的输出隔离在工作文件夹，成功结果不混入之前的失败文件。仅保留本次需要的候选输出，发布采用同盘移动；不复制原包，保留原名、目录、分卷和嵌套策略。
+- 全部适用尝试仍未完整成功但有非空普通文件，状态为 `partial`，界面显示“未完成，待检查”。内容留在 `incomplete/outputs/<包名>/`，原包全卷留在 `incomplete/archives/`，不计入成功、不发布到 `final`。跨盘原包仍保留当前位置并登记，无输出失败与缺卷等待维持原分类。
+- 桌面和 BAT 复用新管线；桌面递归扫描及 BAT 前置展平均跳过历史 `incomplete/`，旧自定义展平排除配置也不能取消这项保护。已有结果内容不覆盖；显式选择其中原包仍可手动重试。此次为源码修复，已发布桌面 0.3.3 ZIP 尚未重新构建。
+
+### 定向检查与人工验收
+
+证据根：ignored `artifacts/desktop/partial-retry-20261017/`（任务于 17 日启动，最终检查于 18 日完成）。
+
+| 范围 | 结果 / 方式 | 证据 |
+| --- | --- | --- |
+| 密码、输出隔离、桌面分流、跨盘与展平保护 | `PYTHONPATH=src /usr/local/bin/python -m pytest tests/test_desktop_extraction_stop.py tests/test_desktop_engine.py tests/test_desktop_cross_volume_retention.py tests/test_flattening.py -k 'not NativeSevenZipAesTests' -q`：54 passed、1 条旧文案断言失败；修正文案后该节点单独复验 1 passed，exit 0。产品源码未再改变，其余 54 项复用；4 subtests passed | `native/integration-pytest.log`、`native/integration-final-pytest.log`、`native/integration-manifest.json` |
+| 模式、还原、分卷与硬错误路由 | 8 个指定 pytest 节点，8 passed / 6 subtests，exit 0；包含 partial 后续成功清理、内层还原 partial、旧无标记输出、分卷原名与硬错误保留。完整命令与最终源码 SHA-256 在日志 | `pipeline/validation.log` |
+| Windows 实际 7-Zip 26.04 加密分卷 | Windows Python 执行 `tests/windows_partial_retry_smoke.py`，exit 0；错误密码基线 exit 2 仍写出 49,152 字节；`none → wrongA → wrongB → correct` 后完整成功且字节一致，全部密码错误进入 incomplete。四卷均仅保留一份，已有哨兵保持 | `native/integration-final-run3.log`、`native/run-20261018-002557-12800/receipt.json` |
+| 独立审查与静态交付 | Luna/high 只读审查已确认此前发现修复；主线程核对输出提升的空目录、链接和冲突保护。文档本地目标 60 个无缺失，`git diff --check` exit 0 | `review/route-review.md`、`extraction/promotion-safety-tests.log`、`doc-links.json`、`final-source-identity.json` |
+
+一轮 native harness 的目录准备与源码路径/记录问题已定点修正，最终通过记录对应当前源码；不把这些 harness 失败当作真实压缩包结果。WSL 调用原生 7-Zip 的 AES 合成用例另有通过证据 `extraction/native-aes-final.log`；后续输出提升保护由最终定向检查和 Windows 原生检查覆盖。以上为范围有限的工程检查，不是全库或真实资源验收。
+
+真实 `393` 原件、GUI、干净机器、真实 RAR/专有格式、真实跨盘及大盘性能未运行，继续由用户验收。POSIX 无硬链接的文件系统仍沿用独占移动接口的安全复制回退，本轮未覆盖；Windows 同盘回退为独占改名。旧版已生成的成品不会自动删除或改写；若 `393` 原卷已在 `success/archives/`，人工将同组全部分卷移回待处理目录后再测，并区分旧成品与本次结果。实现与上述定向工程检查已完成，Git 交付随本次源码提交。
 
 ## 2026-10-14：旧 BAT 与异机 Git 拉取兼容
 

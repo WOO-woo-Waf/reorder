@@ -4,6 +4,7 @@ import pytest
 
 from reorder_engine.infrastructure import file_transaction as ft
 from reorder_engine.infrastructure.source_session import DirectSourceSession
+from reorder_engine.domain.models import ExtractionResult
 from test_desktop_work_folder import engine, archive, wait_job, single_package_plan, SyntheticExtractor
 
 
@@ -57,6 +58,34 @@ def test_cross_volume_transformed_group_stays_together_without_copy(engine, tmp_
     session.complete()
     assert paths == [str(first), str(second)]
     assert first.read_bytes() == b"repaired" and second.read_bytes() == b"second"
+    assert not engine.repository.incomplete_actions()
+
+
+def test_cross_volume_incomplete_result_retains_original_without_success(engine, tmp_path, monkeypatch):
+    class IncompleteExtractor(SyntheticExtractor):
+        def extract_with_password(self, request, password, *, dry_run=False):
+            request.output_dir.mkdir(parents=True, exist_ok=True)
+            (request.output_dir / "partial.bin").write_bytes(b"unverified bytes")
+            return ExtractionResult(request.volume_set, ok=False, tool="synthetic", exit_code=2,
+                                    message="Wrong password", password=password)
+
+    source = tmp_path / "incomplete.zip"
+    expected = archive(source)
+    output = tmp_path / "work"
+    monkeypatch.setattr(ft, "_device_of", lambda path: source.stat().st_dev + 1)
+    monkeypatch.setattr(ft, "copy_verified", no_copy)
+    monkeypatch.setattr("reorder_engine.application.processing.SevenZipExtractor", IncompleteExtractor)
+    preview = engine.dispatch("plans.create", {"input_paths": [str(source)], "output_root": str(output)})
+    job = engine.dispatch("jobs.start", {"plan_id": preview["plan_id"], "idempotency_key": "cross-incomplete"})
+    finished = wait_job(engine, job["job_id"])
+    assert finished.packages[0].state == "partial", finished.packages[0].message
+    assert source.read_bytes() == expected
+    assert not (output / "success").exists()
+    assert not (output / "final").exists()
+    assert any(p.name == "partial.bin" for p in (output / "incomplete" / "outputs").rglob("*"))
+    results = engine.dispatch("results.get", {"job_id": job["job_id"]})
+    assert str(source) in results["paths"]
+    assert "跨盘" in finished.packages[0].message
     assert not engine.repository.incomplete_actions()
 
 

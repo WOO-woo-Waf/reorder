@@ -37,7 +37,7 @@
   const done = $derived(view.job?.packages.filter(p => terminalPackages.has(p.state)).length ?? 0);
   const total = $derived(view.job?.packages.length ?? view.plan?.packages.length ?? 0);
   const retryCount = $derived(view.job?.packages.filter(p => retryable.has(p.state)).length ?? 0);
-  const names: Record<string, string> = { queued: '等待', running: '处理中', preparing: '准备解压', extracting: '恢复 / 解压', publishing: '发布成品', archiving: '整理原包', cancelling: '正在取消', succeeded: '完成', partial: '完成，有警告', failed: '失败', deferred: '等待补卷', cancelled: '已取消', interrupted: '已中断', needs_review: '需要检查' };
+  const names: Record<string, string> = { queued: '等待', running: '处理中', preparing: '准备解压', extracting: '恢复 / 解压', publishing: '发布成品', archiving: '整理原包', cancelling: '正在取消', succeeded: '完成', partial: '未完成，待检查', failed: '失败', deferred: '等待补卷', cancelled: '已取消', interrupted: '已中断', needs_review: '需要检查' };
   const size = (bytes: number) => bytes >= 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(1)} GB` : `${(bytes / 1024 ** 2).toFixed(1)} MB`;
   const formatBytes = (bytes: number) => bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(2)} MiB` : `${Math.max(1, Math.round(bytes / 1024))} KiB`;
   const MB_LIMIT = MAX_IMAGE_BYTES / 1024 / 1024;
@@ -236,7 +236,7 @@
       {#if view.job}<details><summary onclick={() => controller.showLogs()}>查看处理记录</summary><pre>{view.logs.join('\n') || '暂无记录。'}</pre></details>{/if}
     </section>
     <section class="history"><div class="section-heading"><h2 class="icon-label"><History size={15} />最近任务</h2><button class="text-button" onclick={() => controller.loadHistory()} disabled={view.busy}>刷新</button></div><div class="history-list">{#each view.history as job}<button class="history-item" onclick={() => controller.selectHistoryJob(job)} disabled={running}><span>{new Date(job.created_at).toLocaleString()}</span><span>{job.package_count ?? job.packages.length} 组 · {names[job.state]}</span></button>{:else}<p class="muted">处理记录保存在本机。</p>{/each}</div></section>
-    <section class="support"><details><summary class="icon-label"><Info size={14} />支持方式说明</summary><p>支持 ZIP、7z、RAR 及常见分卷。先直接解压、原地改名，再按需要还原 Apate、嵌入封面和合并文件；省磁盘读写优先，还原会改变选中的原包。</p><p>解压报错时，只要已有非空文件，就保留结果并停止重试，标为“完成，有警告”。这些文件可能损坏或缺失，请人工核对。</p><p class="muted">完整处理方式、原名与嵌套规则见用户指南。</p></details></section>
+    <section class="support"><details><summary class="icon-label"><Info size={14} />支持方式说明</summary><p>支持 ZIP、7z、RAR 及常见分卷。先直接解压、原地改名，再按需要还原 Apate、嵌入封面和合并文件；还原会改变选中的原包。</p><p>错误密码或损坏报错留下文件时会继续尝试。适用的密码、工具和处理方式全部未完整成功，才标为“未完成，待检查”，部分内容放入 incomplete。同盘原包移入该目录，跨盘原包留在原位置并登记。缺卷、空间不足、权限与取消等错误会停止当前包。</p><p class="muted">完整处理方式、原名与嵌套规则见用户指南。</p></details></section>
   </main>
   <footer><span>{view.info ? `${view.info.platform} · v${view.info.version}` : '跨平台桌面工具'}</span><span>本地处理 · 密码 {view.settings?.passwords.count ?? 0} 条</span></footer>
 </div>

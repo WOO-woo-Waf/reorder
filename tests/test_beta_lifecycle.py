@@ -47,7 +47,10 @@ class _SyntheticExtractor:
             return ExtractionResult(request.volume_set, ok=False, tool="synthetic", message="suffix rejected")
         if self.outcome == "failure":
             return ExtractionResult(request.volume_set, ok=False, tool="synthetic", message="wrong password")
-        data = b"".join(path.read_bytes() for path in sorted(request.volume_set.members, key=lambda p: p.name))
+        members = (request.volume_set.entry,) + tuple(
+            path for path in request.volume_set.members if path != request.volume_set.entry
+        )
+        data = b"".join(path.read_bytes() for path in members)
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
             archive.extractall(request.output_dir)
         return ExtractionResult(
@@ -55,7 +58,40 @@ class _SyntheticExtractor:
             ok=self.outcome == "success",
             tool="synthetic",
             message=None if self.outcome == "success" else "wrong password: simulated partial output",
+            partial_output=self.outcome == "partial",
         )
+
+
+class _SequenceExtractor:
+    def __init__(self, outcomes: tuple[str, ...]):
+        self.outcomes = outcomes
+        self.entries: list[Path] = []
+
+    def extract_one(self, request, *, preference="auto", probe=None, dry_run=False):
+        self.entries.append(request.volume_set.entry)
+        outcome = self.outcomes[min(len(self.entries) - 1, len(self.outcomes) - 1)]
+        if outcome == "failure":
+            return ExtractionResult(request.volume_set, ok=False, tool="synthetic", message="wrong password")
+        members = (request.volume_set.entry,) + tuple(
+            path for path in request.volume_set.members if path != request.volume_set.entry
+        )
+        data = b"".join(path.read_bytes() for path in members)
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            archive.extractall(request.output_dir)
+        return ExtractionResult(
+            request.volume_set,
+            ok=outcome == "success",
+            tool="synthetic",
+            message=None if outcome == "success" else "wrong password: simulated partial output",
+            partial_output=outcome == "partial",
+        )
+
+
+class _UnmarkedOutputExtractor:
+    def extract_one(self, request, *, preference="auto", probe=None, dry_run=False):
+        request.output_dir.mkdir(parents=True, exist_ok=True)
+        (request.output_dir / "partial.txt").write_bytes(b"unmarked output")
+        return ExtractionResult(request.volume_set, ok=False, tool="synthetic", message="tool exited with warning")
 
 
 class BetaLifecycleTests(unittest.TestCase):
@@ -83,9 +119,9 @@ class BetaLifecycleTests(unittest.TestCase):
         expected_sources: dict[str, bytes],
     ) -> None:
         self.assertEqual(result.total, 1)
-        self.assertEqual((result.ok_count, result.fail_count), (0, 1) if outcome == "failure" else (1, 0))
+        self.assertEqual((result.ok_count, result.fail_count), (1, 0) if outcome == "success" else (0, 1))
         self.assertEqual([p.name for p in root.iterdir() if p.is_file()], [], "originals left in input folder")
-        destination = root / ("error_files/password_error" if outcome == "failure" else "success/archives")
+        destination = root / ("error_files" if outcome == "failure" else ("success/archives" if outcome == "success" else "incomplete/archives"))
         routed = {p.name: p.read_bytes() for p in destination.rglob("*") if p.is_file()}
         self.assertEqual(routed, expected_sources, "archive routing must retain the original bytes")
         if outcome == "success":
@@ -94,10 +130,11 @@ class BetaLifecycleTests(unittest.TestCase):
             self.assertEqual(payloads[0].read_bytes(), PAYLOAD)
             self.assertFalse(any(p.is_file() for p in (root / "error_files").rglob("*")))
         elif outcome == "partial":
-            payloads = list((root / "error_files/password_error").rglob("payload.txt"))
+            payloads = list((root / "incomplete/outputs").rglob("payload.txt"))
             self.assertEqual(len(payloads), 1)
             self.assertEqual(payloads[0].read_bytes(), PAYLOAD)
             self.assertFalse(any(p.is_file() for p in (root / "final").rglob("*")))
+            self.assertFalse(any(p.is_file() for p in (root / "success/archives").rglob("*")))
         else:
             self.assertFalse(list(root.rglob("payload.txt")))
 
@@ -119,7 +156,7 @@ class BetaLifecycleTests(unittest.TestCase):
                 # 0.3.3 reads the original and in-place suffix variants first; a
                 # restoreAB copy is derived only when those leave no usable output.
                 copies = list((root / "intermediate").rglob("*_restoreAB.zip"))
-                if outcome == "failure":
+                if outcome in ("failure", "partial"):
                     self.assertTrue(
                         any(entry.parent.name == "restore_ab" for entry in extractor.entries)
                     )
@@ -140,7 +177,7 @@ class BetaLifecycleTests(unittest.TestCase):
 
                 result = self._pipeline(root, extractor).run()
 
-                routed_name = original.name if outcome == "failure" else "disguised.zip"
+                routed_name = original.name if outcome != "success" else "disguised.zip"
                 self._assert_routed(root, result, outcome=outcome, expected_sources={routed_name: data})
                 self.assertEqual([p.name for p in extractor.entries], ["disguised.bin", "disguised.zip"])
 
@@ -158,12 +195,13 @@ class BetaLifecycleTests(unittest.TestCase):
 
                 result = self._pipeline(root, extractor).run()
 
-                first_name = first.name if outcome == "failure" else "split.zip.001"
+                first_name = first.name if outcome != "success" else "split.zip.001"
                 self._assert_routed(
                     root, result, outcome=outcome,
                     expected_sources={first_name: data[:midpoint], second.name: data[midpoint:]},
                 )
-                self.assertEqual([p.name for p in extractor.entries], ["split.zip.001"])
+                expected_entries = ["split.zip.001"] if outcome == "success" else ["split.zip.001", "split.zip.jpg"]
+                self.assertEqual([p.name for p in extractor.entries], expected_entries)
 
     def test_direct_volumes_keep_partial_output_for_routing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -173,10 +211,85 @@ class BetaLifecycleTests(unittest.TestCase):
             sources = {"split.zip.001": data[:midpoint], "split.zip.002": data[midpoint:]}
             for name, content in sources.items():
                 (root / name).write_bytes(content)
+            existing = root / "incomplete" / "outputs" / "split" / "sentinel.txt"
+            existing.parent.mkdir(parents=True)
+            existing.write_bytes(b"keep-existing")
 
             result = self._pipeline(root, _SyntheticExtractor("partial")).run()
 
             self._assert_routed(root, result, outcome="partial", expected_sources=sources)
+            self.assertEqual(existing.read_bytes(), b"keep-existing")
+            self.assertEqual(len(list((root / "incomplete/outputs").glob("split__run_*"))), 1)
+
+    def test_multi_volume_partial_normalization_rolls_back_then_success(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data = _zip_bytes()
+            midpoint = len(data) // 2
+            sources = {"split.zip.jpg": data[:midpoint], "split.zip.002": data[midpoint:]}
+            for name, content in sources.items():
+                (root / name).write_bytes(content)
+            extractor = _SequenceExtractor(("partial", "success"))
+
+            result = self._pipeline(root, extractor).run()
+
+            self.assertEqual((result.ok_count, result.fail_count), (1, 0))
+            self.assertEqual([path.name for path in extractor.entries], ["split.zip.001", "split.zip.jpg"])
+            self.assertEqual({p.name: p.read_bytes() for p in (root / "success/archives").rglob("*") if p.is_file()}, sources)
+            self.assertEqual([p.read_bytes() for p in (root / "final").rglob("payload.txt")], [PAYLOAD])
+            self.assertFalse(any(p.is_file() for p in (root / "incomplete").rglob("*")))
+            self.assertFalse(
+                any(
+                    path.is_file()
+                    for holder in (root / "intermediate").rglob("_partial_candidate")
+                    for path in holder.rglob("*")
+                )
+            )
+
+    def test_nonempty_failure_without_partial_flag_is_not_success(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "payload.zip").write_bytes(_zip_bytes())
+
+            result = self._pipeline(root, _UnmarkedOutputExtractor()).run()
+
+            self.assertEqual((result.ok_count, result.fail_count), (0, 1))
+            self.assertEqual(result.packages[0].state, "partial")
+            self.assertEqual(
+                [path.read_bytes() for path in (root / "incomplete/outputs").rglob("partial.txt")],
+                [b"unmarked output"],
+            )
+            self.assertTrue((root / "incomplete/archives" / "payload.zip").exists())
+            self.assertFalse(any(path.is_file() for path in (root / "success/archives").rglob("*")))
+
+    def test_normalized_nonempty_unmarked_failure_routes_without_intermediate_holder(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data = _zip_bytes()
+            midpoint = len(data) // 2
+            sources = {"split.zip.jpg": data[:midpoint], "split.zip.002": data[midpoint:]}
+            for name, content in sources.items():
+                (root / name).write_bytes(content)
+
+            result = self._pipeline(root, _UnmarkedOutputExtractor()).run()
+
+            self.assertEqual((result.ok_count, result.fail_count), (0, 1))
+            self.assertEqual(result.packages[0].state, "partial")
+            self.assertEqual(
+                [path.read_bytes() for path in (root / "incomplete/outputs").rglob("partial.txt")],
+                [b"unmarked output"],
+            )
+            self.assertEqual(
+                {path.name: path.read_bytes() for path in (root / "incomplete/archives").rglob("*") if path.is_file()},
+                sources,
+            )
+            self.assertFalse(
+                any(
+                    path.is_file()
+                    for holder in (root / "intermediate").rglob("_partial_candidate")
+                    for path in holder.rglob("*")
+                )
+            )
 
     def test_dry_run_keeps_sources_and_creates_no_outputs(self) -> None:
         for kind in ("restore_ab", "suffix", "volumes"):

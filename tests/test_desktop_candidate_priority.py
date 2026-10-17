@@ -8,8 +8,8 @@ import zipfile
 from pathlib import Path
 
 from reorder_engine.application.errors import EngineError, ProcessingCancelled
-from reorder_engine.domain.models import ArchiveKind, ExtractionResult
-from reorder_engine.services.beta_pipeline import PARTIAL_WARNING, BetaFolderPipeline
+from reorder_engine.domain.models import ArchiveKind, ExtractionResult, RenameVariantPlan
+from reorder_engine.services.beta_pipeline import CandidateAttempt, PARTIAL_WARNING, BetaFolderPipeline
 from reorder_engine.services.cleaning import DefaultGroupingNormalizer
 from reorder_engine.services.config import BetaDeepExtractConfig
 from reorder_engine.services.decrypting import DecryptionService, PassthroughDecryptor
@@ -119,6 +119,52 @@ class _ZipExtractor:
         return ExtractionResult(request.volume_set, ok=True, tool="synthetic", partial_output=self.partial)
 
 
+class _InnerRestorePartialExtractor:
+    def extract_one(self, request, *, preference="auto", probe=None, dry_run=False):
+        entry = request.volume_set.entry
+        if entry.name == "outer.zip":
+            data = entry.read_bytes()
+            with zipfile.ZipFile(io.BytesIO(data)) as archive:
+                archive.extractall(request.output_dir)
+            return ExtractionResult(request.volume_set, ok=True, tool="synthetic")
+        if entry.parent.name == "restore_ab":
+            request.output_dir.mkdir(parents=True, exist_ok=True)
+            (request.output_dir / "recovered.txt").write_bytes(b"partial recovered file")
+            return ExtractionResult(
+                request.volume_set,
+                ok=False,
+                tool="synthetic",
+                message="wrong password with partial files",
+                partial_output=True,
+            )
+        return ExtractionResult(request.volume_set, ok=False, tool="synthetic", message="not an archive")
+
+
+class _PartialThenVariantHardStopExtractor:
+    def __init__(self):
+        self.calls = 0
+
+    def extract_one(self, request, *, preference="auto", probe=None, dry_run=False):
+        self.calls += 1
+        if self.calls == 1:
+            request.output_dir.mkdir(parents=True, exist_ok=True)
+            (request.output_dir / "partial.txt").write_bytes(b"retained partial")
+            return ExtractionResult(
+                request.volume_set,
+                ok=False,
+                tool="synthetic",
+                message="direct pass incomplete",
+                partial_output=True,
+            )
+        return ExtractionResult(
+            request.volume_set,
+            ok=False,
+            tool="synthetic",
+            message="variant permission denied",
+            exit_code=7,
+        )
+
+
 def _pipeline(root, extractor, restore=None, *, deep=None):
     return BetaFolderPipeline(
         folder=root,
@@ -139,6 +185,34 @@ def _disguised_pair():
 
 
 class CandidatePriorityTests(unittest.TestCase):
+    def test_direct_partial_then_variant_hard_error_routes_partial_and_keeps_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "pkg.zip.jpg"
+            source.write_bytes(zip_bytes())
+            restore = _RecordingRestore(make_service())
+            restore.variant_plans = lambda path: [
+                RenameVariantPlan(path, path.with_suffix(""), "synthetic-variant")
+            ]
+            extractor = _PartialThenVariantHardStopExtractor()
+
+            result = _pipeline(root, extractor, restore=restore).run()
+
+            self.assertEqual((result.ok_count, result.fail_count), (0, 1))
+            self.assertEqual(result.packages[0].state, "partial")
+            self.assertEqual(
+                result.packages[0].message,
+                "未完成：variant permission denied",
+            )
+            self.assertEqual(
+                [path.read_bytes() for path in (root / "incomplete/outputs").rglob("partial.txt")],
+                [b"retained partial"],
+            )
+            self.assertTrue((root / "incomplete/archives" / source.name).exists())
+            self.assertFalse(any(path.is_file() for path in (root / "success/archives").rglob("*")))
+            self.assertEqual(restore.restore_calls, [], "a hard variant error must not escalate to restore")
+            self.assertEqual(extractor.calls, 2)
+
     def test_entry_candidates_yield_only_the_original(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -221,7 +295,7 @@ class CandidatePriorityTests(unittest.TestCase):
                 "direct",
             )
 
-    def test_partial_output_stops_deep_dig_and_promotes_final(self):
+    def test_partial_output_exhausts_modes_and_routes_to_incomplete(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             source = root / "pkg.zip"
@@ -233,9 +307,39 @@ class CandidatePriorityTests(unittest.TestCase):
             result = pipeline.run()
 
             self.assertEqual(result.packages[0].state, "partial")
-            self.assertEqual(result.packages[0].message, PARTIAL_WARNING)
-            self.assertEqual(len(extractor.entries), 1, "partial output must stop further attempts")
-            self.assertTrue(list((root / "final").rglob("inner.zip")))
+            self.assertEqual(result.ok_count, 0)
+            self.assertEqual(result.fail_count, 1)
+            self.assertGreaterEqual(len(extractor.entries), 1, "partial output should be retained after applicable modes")
+            self.assertTrue(list((root / "incomplete/outputs").rglob("inner.zip")))
+            self.assertFalse(list((root / "final").rglob("inner.zip")))
+
+    def test_inner_restore_partial_is_routed_to_incomplete(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            inner_zip = zip_bytes(("payload.txt", b"nested"))
+            inner_pdf = b"%PDF-1.7\ncover\n%%EOF\n" + inner_zip
+            source = root / "outer.zip"
+            source.write_bytes(zip_bytes(("merged.pdf", inner_pdf)))
+            deep = BetaDeepExtractConfig(enabled=True, max_depth=3, min_archive_mb=1, final_single_mb=1)
+            pipeline = _pipeline(root, _InnerRestorePartialExtractor(), deep=deep)
+
+            def nested_candidate(folder, workspace, **kwargs):
+                candidate = folder / "merged.pdf"
+                return [CandidateAttempt(candidate, method="direct", source=candidate)]
+
+            pipeline._nested_candidates = nested_candidate
+            result = pipeline.run()
+
+            self.assertEqual((result.ok_count, result.fail_count), (0, 1))
+            self.assertEqual(result.packages[0].state, "partial")
+            self.assertEqual(
+                [path.read_bytes() for path in (root / "incomplete/outputs").rglob("recovered.txt")],
+                [b"partial recovered file"],
+            )
+            self.assertEqual(
+                [path.name for path in (root / "incomplete/archives").iterdir() if path.is_file()],
+                ["outer.zip"],
+            )
 
     def test_zero_byte_output_is_not_a_usable_result(self):
         with tempfile.TemporaryDirectory() as tmp:

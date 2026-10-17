@@ -37,6 +37,17 @@ _EXTRACT_ABORT_MARKERS = (
     "口令错误",
     "非法密码",
 )
+_PASSWORD_ABORT_MARKERS = (
+    "wrong password",
+    "password is incorrect",
+    "incorrect password",
+    "invalid password",
+    "illegal password",
+    "密码错误",
+    "密码不正确",
+    "口令错误",
+    "非法密码",
+)
 
 
 def contains_nonempty_regular_file(root: Path) -> bool:
@@ -79,6 +90,10 @@ def _extract_abort_guard(output_dir: Path) -> Callable[[str], bool]:
         lowered = line.lower()
         if not any(marker in lowered for marker in _EXTRACT_ABORT_MARKERS):
             return False
+        # A clear password rejection is final for this process even if it has
+        # already emitted damaged bytes. Those bytes stay isolated to this try.
+        if any(marker in lowered for marker in _PASSWORD_ABORT_MARKERS):
+            return True
         return not contains_nonempty_regular_file(output_dir)
 
     return _abort

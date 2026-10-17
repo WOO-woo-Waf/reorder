@@ -599,7 +599,7 @@ class BetaPipelineTests(unittest.TestCase):
 
             self.assertFalse(result.ok)
             self.assertIsNone(out_dir)
-            self.assertEqual(extractor.seen_entries, ["小初.zip.001"])
+            self.assertEqual(extractor.seen_entries, ["小初.zip.001", "小初.zip.jpg"])
             self.assertFalse((root / "小初.zip.001").exists())
             self.assertTrue(first.exists())
             self.assertEqual(first.read_bytes(), first_bytes)

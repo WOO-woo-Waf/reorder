@@ -15,6 +15,7 @@ _MANDATORY_EXCLUDE_DIR_PARTS: frozenset[str] = frozenset(
         ".cursor",
         ".idea",
         "node_modules",
+        "incomplete",
         CollisionPolicy.DUPLICATES_DIR.value,
     }
 )

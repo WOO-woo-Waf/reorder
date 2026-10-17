@@ -11,7 +11,7 @@ import pytest
 
 from reorder_engine.application.errors import EngineError, ProcessingCancelled
 from reorder_engine.application.facade import EngineFacade
-from reorder_engine.application.models import PlanRequest
+from reorder_engine.application.models import PlanRequest, ProcessingOptions
 from reorder_engine.application.processing import PackageProcessor
 from reorder_engine.domain.models import ExtractionResult
 from reorder_engine.infrastructure.archive_safety import validate_member, ArchiveSafetyInspector
@@ -54,7 +54,7 @@ def wait_job(engine, job_id):
 
 
 @pytest.mark.parametrize("state,destination", [
-    ("succeeded", "success/archives"), ("partial", "success/archives"), ("failed", "error_files/password_error"),
+    ("succeeded", "success/archives"), ("partial", "incomplete/archives"), ("failed", "error_files/password_error"),
 ])
 def test_direct_lifecycle_routes_current_original(engine, tmp_path, monkeypatch, state, destination):
     class SyntheticExtractor:
@@ -81,11 +81,15 @@ def test_direct_lifecycle_routes_current_original(engine, tmp_path, monkeypatch,
     final = wait_job(engine, job["job_id"])
     assert final.packages[0].state == state
     assert not source.exists()
-    assert (output / destination / "cover.pdf").read_bytes() == (data if state == "failed" else original)
+    assert (output / destination / "cover.pdf").read_bytes() == (original if state == "succeeded" else data)
     if state != "failed":
         payload = list(output.rglob("payload.txt"))
         assert len(payload) == 1
         assert payload[0].read_bytes() == b"known payload bytes"
+        if state == "partial":
+            assert payload[0].is_relative_to(output / "incomplete")
+            assert not (output / "final").exists()
+            assert not (output / "success").exists()
     assert not engine.repository.incomplete_actions()
     duplicate = engine.dispatch("jobs.start", {"plan_id": preview["plan_id"], "idempotency_key": "start-1"})
     assert duplicate["job_id"] == final.job_id
@@ -100,6 +104,54 @@ def test_planner_keeps_disguised_txt_selected_scope_and_input_identity(engine, t
     source.write_bytes(b"changed after scan")
     with pytest.raises(EngineError, match="变化"):
         engine.planner.validate_sources(plan)
+
+
+def test_recursive_planner_skips_existing_incomplete_results(engine, tmp_path):
+    source = tmp_path / "selected.zip"
+    archive(source)
+    incomplete = tmp_path / "incomplete" / "outputs" / "old"
+    incomplete.mkdir(parents=True)
+    archive(incomplete / "old.zip")
+    plan = engine.planner.create(PlanRequest(
+        input_paths=[str(tmp_path)], output_root=str(tmp_path / "work"),
+        options=ProcessingOptions(recursive=True)))
+    assert [member.path for package in plan.packages for member in package.members] == [str(source)]
+
+
+def test_partial_route_preserves_existing_incomplete_content(engine, tmp_path, monkeypatch):
+    class IncompleteExtractor:
+        def __init__(self, *args, **kwargs): pass
+        def name(self): return "synthetic"
+        def is_available(self): return True
+        def extract_with_password(self, request, password, *, dry_run=False):
+            request.output_dir.mkdir(parents=True, exist_ok=True)
+            (request.output_dir / "payload.txt").write_bytes(b"unverified partial bytes")
+            return ExtractionResult(request.volume_set, ok=False, tool="synthetic",
+                exit_code=2, message="Wrong password", password=password)
+
+    monkeypatch.setattr("reorder_engine.application.processing.SevenZipExtractor", IncompleteExtractor)
+    monkeypatch.setattr(engine.processor, "runtime_passwords", lambda options: ("bad-first", "bad-last"))
+    source = tmp_path / "one.zip"
+    original = archive(source)
+    output = tmp_path / "work"
+    previous_output = output / "incomplete" / "outputs" / "one" / "payload.txt"
+    previous_output.parent.mkdir(parents=True)
+    previous_output.write_bytes(b"previous output")
+    previous_archive = output / "incomplete" / "archives" / "one.zip"
+    previous_archive.parent.mkdir(parents=True)
+    previous_archive.write_bytes(b"previous archive")
+    preview = engine.dispatch("plans.create", {"input_paths": [str(source)], "output_root": str(output)})
+    job = engine.dispatch("jobs.start", {"plan_id": preview["plan_id"], "idempotency_key": "partial-preserve"})
+    final = wait_job(engine, job["job_id"])
+    assert final.packages[0].state == "partial", final.packages[0].message
+    assert previous_output.read_bytes() == b"previous output"
+    assert previous_archive.read_bytes() == b"previous archive"
+    assert not source.exists()
+    assert any(p.read_bytes() == original for p in (output / "incomplete" / "archives").rglob("*") if p.is_file())
+    assert any(p.read_bytes() == b"unverified partial bytes" for p in (output / "incomplete" / "outputs").rglob("*") if p.is_file())
+    assert not (output / "success").exists()
+    assert not (output / "final").exists()
+    assert not engine.repository.incomplete_actions()
 
 
 def test_cancel_before_work_preserves_sources(engine, tmp_path):

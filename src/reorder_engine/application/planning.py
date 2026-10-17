@@ -12,7 +12,7 @@ from reorder_engine.infrastructure.settings_repository import SettingsRepository
 from reorder_engine.services.cleaning import DefaultGroupingNormalizer
 from reorder_engine.services.grouping import DefaultVolumeGroupingStrategy
 
-RESULT_DIRS = frozenset({"success", "final", "failed", "error_files", "deferred_volumes", "intermediate", "_duplicates"})
+RESULT_DIRS = frozenset({"success", "final", "failed", "error_files", "deferred_volumes", "intermediate", "incomplete", "_duplicates"})
 EXCLUDED_EXTENSIONS = frozenset({".bat", ".cmd", ".ps1", ".py", ".json", ".md", ".log", ".dll"})
 EXCLUDED_NAMES = frozenset({"passwords.txt", "keywords.txt", "target_folder.txt"})
 
@@ -103,7 +103,7 @@ class PlanService:
         if request.options.recursive:
             warnings.append("已扫描子目录；原件按文件组归档，不会预先展平输入。")
         warnings.append("直接读取原包，优先原地改名；必要还原会改变选中原包，不生成整包备份或恢复副本。同盘原包移动归档，跨盘原包保留当前位置，解压内容与临时数据都在工作文件夹。")
-        warnings.append("解压报错但已有至少一个非空文件时保留结果并停止重试，显示完成有警告；内容可能损坏或缺失，请人工核对。")
+        warnings.append("错误密码或损坏报错产生文件仍会继续尝试适用的密码、工具和还原方式；全部未完整成功才归入 incomplete，原包与部分内容不进入成功目录。缺卷、空间不足、权限与取消等错误会停止当前包。")
         return ProcessingPlan(
             plan_id=str(uuid4()), created_at=utc_now(), output_root=str(output),
             options=request.options, settings_revision=self.settings.revision(),

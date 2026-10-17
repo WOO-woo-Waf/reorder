@@ -65,7 +65,7 @@ class _VolumeRevealSession:
         return True
 
 
-PARTIAL_WARNING = "完成，有损坏或缺失警告：已保留可用文件，跳过继续解压"
+PARTIAL_WARNING = "未完成，已保留部分内容，请检查工具错误。"
 
 
 class BetaFolderPipeline:
@@ -122,7 +122,10 @@ class BetaFolderPipeline:
         final_root = self._folder / "final"
         error_dir = self._folder / "error_files"
         deferred_volume_dir = self._folder / "deferred_volumes"
-        result_dirs = (success_dir, archives_dir, intermediate_dir, final_root, error_dir, deferred_volume_dir)
+        incomplete_dir = self._folder / "incomplete"
+        incomplete_outputs_dir = incomplete_dir / "outputs"
+        incomplete_archives_dir = incomplete_dir / "archives"
+        result_dirs = (success_dir, archives_dir, intermediate_dir, final_root, error_dir, deferred_volume_dir, incomplete_dir, incomplete_outputs_dir, incomplete_archives_dir)
         if any(not path.resolve().is_relative_to(self._folder.resolve()) for path in result_dirs):
             raise EngineError("UNSAFE_WORKSPACE", "结果目录指向工作文件夹外部，请调整目录后重试。")
         created_result_dirs = [path for path in result_dirs if not path.exists()]
@@ -132,6 +135,8 @@ class BetaFolderPipeline:
             final_root.mkdir(parents=True, exist_ok=True)
             error_dir.mkdir(parents=True, exist_ok=True)
             deferred_volume_dir.mkdir(parents=True, exist_ok=True)
+            incomplete_outputs_dir.mkdir(parents=True, exist_ok=True)
+            incomplete_archives_dir.mkdir(parents=True, exist_ok=True)
 
         if self._volume_sets is None:
             all_files = [p for p in self._folder.glob("*") if p.is_file()]
@@ -149,7 +154,7 @@ class BetaFolderPipeline:
         outcomes: list[BetaPackageResult] = []
         owned_package_roots: list[Path] = []
         for volume_set in volume_sets:
-            if self._is_in_result_dirs(volume_set, {success_dir, intermediate_dir, final_root, error_dir, deferred_volume_dir}):
+            if self._is_in_result_dirs(volume_set, {success_dir, intermediate_dir, final_root, error_dir, deferred_volume_dir, incomplete_dir}):
                 continue
 
             package_name = self._package_name(volume_set.entry.name)
@@ -167,19 +172,26 @@ class BetaFolderPipeline:
             source_volume_set = result.source_volume_set or result.volume_set
 
             if self._result_partial(result) and layer1_dir is not None and self._has_nonempty_file(layer1_dir):
-                # Extraction kept usable plain files under a damage/missing
-                # warning. Stop every further extraction and deep dig and publish
-                # what is available.
-                ok += 1
-                message = PARTIAL_WARNING
-                final_dir = self._promote_final_dir(layer1_dir, final_root, package_name=package_name, dry_run=dry_run)
-                outcomes.append(BetaPackageResult(volume_set.entry, "partial", None, message))
-                self._move_original_members(source_volume_set, archives_dir, package_name=package_name, dry_run=dry_run)
-                self._emit(f"FINAL: {message}")
-                self._emit(f"FINAL-DIR: {final_dir}")
+                moved = self._move_partial_outputs_to_incomplete(
+                    layer1_dir, incomplete_outputs_dir, package_name=package_name, dry_run=dry_run
+                )
+                self._move_original_members(source_volume_set, incomplete_archives_dir, package_name=package_name, dry_run=dry_run)
+                fail += 1
+                outcomes.append(
+                    BetaPackageResult(
+                        volume_set.entry,
+                        "partial",
+                        None,
+                        self._partial_result_message(result.message),
+                    )
+                )
+                if result.message:
+                    self._emit(f"EXTRACT[PARTIAL]: entry={volume_set.entry.name} {self._summarize_message(result.message)}")
+                if moved is not None:
+                    self._emit(f"INCOMPLETE-DIR: {moved}")
                 continue
 
-            if result.ok and layer1_dir is not None:
+            if self._result_complete(result) and layer1_dir is not None:
                 deep_ok, final_dir, message = self._continue_after_extract(
                     package_name=package_name,
                     package_root=package_root,
@@ -189,10 +201,26 @@ class BetaFolderPipeline:
                     preferred_password=result.password,
                 )
                 if deep_ok:
-                    ok += 1
-                    state = "partial" if "deferred-volume" in (message or "") else "succeeded"
-                    outcomes.append(BetaPackageResult(volume_set.entry, state, message=message or ""))
-                    self._move_original_members(source_volume_set, archives_dir, package_name=package_name, dry_run=dry_run)
+                    inner_partial = bool(message and message.startswith(PARTIAL_WARNING)) and final_dir is not None
+                    deferred_only = "deferred-volume" in (message or "")
+                    if inner_partial:
+                        moved = self._move_partial_outputs_to_incomplete(
+                            final_dir, incomplete_outputs_dir, package_name=package_name, dry_run=dry_run
+                        )
+                        fail += 1
+                        outcomes.append(BetaPackageResult(volume_set.entry, "partial", None, message or ""))
+                        self._move_original_members(source_volume_set, incomplete_archives_dir, package_name=package_name, dry_run=dry_run)
+                        self._emit(f"EXTRACT[PARTIAL]: entry={volume_set.entry.name} {message}")
+                        if moved is not None:
+                            self._emit(f"INCOMPLETE-DIR: {moved}")
+                    elif deferred_only:
+                        fail += 1
+                        outcomes.append(BetaPackageResult(volume_set.entry, "partial", "deferred_volume", message or ""))
+                        self._move_original_members(source_volume_set, incomplete_archives_dir, package_name=package_name, dry_run=dry_run)
+                    else:
+                        ok += 1
+                        outcomes.append(BetaPackageResult(volume_set.entry, "succeeded", message=message or ""))
+                        self._move_original_members(source_volume_set, archives_dir, package_name=package_name, dry_run=dry_run)
                     if message:
                         self._emit(f"FINAL: {message}")
                     if final_dir is not None:
@@ -200,20 +228,23 @@ class BetaFolderPipeline:
                     continue
 
             if not result.ok and layer1_dir is not None and self._has_nonempty_file(layer1_dir):
-                fail_category = self._failure_category(result, layer1_dir)
-                moved_dir = self._move_partial_outputs_to_error(
-                    layer1_dir,
-                    error_dir / fail_category,
-                    package_name=package_name,
-                    dry_run=dry_run,
+                moved_dir = self._move_partial_outputs_to_incomplete(
+                    layer1_dir, incomplete_outputs_dir, package_name=package_name, dry_run=dry_run
                 )
-                self._move_original_members(source_volume_set, archives_dir, package_name=package_name, dry_run=dry_run)
+                self._move_original_members(source_volume_set, incomplete_archives_dir, package_name=package_name, dry_run=dry_run)
                 if result.message:
-                    self._emit(f"ERROR-PARTIAL[{fail_category}]: {self._summarize_message(result.message)}")
+                    self._emit(f"EXTRACT[PARTIAL]: entry={volume_set.entry.name} {self._summarize_message(result.message)}")
                 if moved_dir is not None:
-                    self._emit(f"ERROR-PARTIAL-DIR: {moved_dir}")
-                ok += 1
-                outcomes.append(BetaPackageResult(volume_set.entry, "partial", fail_category, result.message or ""))
+                    self._emit(f"INCOMPLETE-DIR: {moved_dir}")
+                fail += 1
+                outcomes.append(
+                    BetaPackageResult(
+                        volume_set.entry,
+                        "partial",
+                        None,
+                        self._partial_result_message(result.message),
+                    )
+                )
                 continue
 
             if self._is_missing_volume(result.message):
@@ -302,6 +333,8 @@ class BetaFolderPipeline:
             return replace(result, source_volume_set=source_vs), out_dir
 
         last = ExtractionResult(volume_set=vs, ok=False, tool="none", message="No candidate executed")
+        partial_holder = layer_root / "_partial_candidate"
+        best_partial: ExtractionResult | None = None
         for index, attempt in enumerate(candidates, start=1):
             candidate = attempt.path
             request_vs = VolumeSet(entry=candidate, members=(candidate,), group_key=vs.group_key)
@@ -317,7 +350,16 @@ class BetaFolderPipeline:
             source_vs = vs if candidate != vs.entry else res.volume_set
             res = replace(res, source_volume_set=source_vs)
             last = res
-            if res.ok or self._result_partial(res) or (out_dir is not None and self._has_nonempty_file(out_dir)):
+            if self._result_complete(res):
+                self._discard_partial_output(partial_holder)
+                return res, out_dir
+            if self._result_partial(res) and out_dir is not None and self._has_nonempty_file(out_dir):
+                best_partial = res
+                self._retain_partial_output(out_dir, partial_holder)
+            elif self._result_partial(res) and self._has_nonempty_file(partial_holder):
+                best_partial = res
+            elif out_dir is not None and self._has_nonempty_file(out_dir):
+                self._discard_partial_output(partial_holder)
                 return res, out_dir
             self._rollback_attempt(attempt, dry_run=dry_run)
             if self._result_stop_all(res):
@@ -326,6 +368,8 @@ class BetaFolderPipeline:
                 # exit 7/8/124/255) cannot be fixed by a forced Apate
                 # rewrite or a later candidate; escalating would edit the
                 # selected original for nothing.
+                if best_partial is not None:
+                    return replace(best_partial, source_volume_set=source_vs), partial_holder
                 return res, None
 
         force_attempt = self._force_apate_attempt_if_useful(vs.entry, dry_run=dry_run)
@@ -341,9 +385,18 @@ class BetaFolderPipeline:
             source_vs = vs if force_attempt.path != vs.entry else res.volume_set
             res = replace(res, source_volume_set=source_vs)
             last = res
-            if res.ok or self._result_partial(res) or (out_dir is not None and self._has_nonempty_file(out_dir)):
+            if self._result_complete(res):
+                self._discard_partial_output(partial_holder)
+                return res, out_dir
+            if self._result_partial(res) and out_dir is not None and self._has_nonempty_file(out_dir):
+                best_partial = res
+                self._retain_partial_output(out_dir, partial_holder)
+            elif out_dir is not None and self._has_nonempty_file(out_dir):
+                self._discard_partial_output(partial_holder)
                 return res, out_dir
             self._rollback_attempt(force_attempt, dry_run=dry_run)
+        if best_partial is not None:
+            return replace(best_partial, source_volume_set=vs), partial_holder
         return replace(last, source_volume_set=vs), None
 
     def _extract_volume_set_first_success(
@@ -362,13 +415,17 @@ class BetaFolderPipeline:
             dry_run=dry_run,
             preferred_password=preferred_password,
         )
-        if result.ok or self._result_partial(result) or (out_dir is not None and self._has_nonempty_file(out_dir)):
+        if self._result_complete(result):
+            return result, out_dir
+        if out_dir is not None and self._has_nonempty_file(out_dir) and not self._result_partial(result):
             return result, out_dir
         if self._result_stop_all(result):
-            return result, None
+            return result, out_dir if out_dir is not None and self._has_nonempty_file(out_dir) else None
 
         reveal = self._reveal_disguised_volume_members(vs, dry_run=dry_run)
         if reveal is None:
+            if self._result_partial(result):
+                return result, out_dir
             return result, None
         reveal_result, reveal_out_dir = self._extract_volume_set_body(
             vs,
@@ -376,12 +433,20 @@ class BetaFolderPipeline:
             dry_run=dry_run,
             preferred_password=preferred_password,
         )
-        if reveal_result.ok or self._result_partial(reveal_result) or (reveal_out_dir is not None and self._has_nonempty_file(reveal_out_dir)):
+        if self._result_complete(reveal_result):
+            self._discard_partial_output(out_dir)
             return reveal_result, reveal_out_dir
+        if self._result_partial(reveal_result) and reveal_out_dir is not None and self._has_nonempty_file(reveal_out_dir):
+            self._discard_partial_output(out_dir)
+            return reveal_result, reveal_out_dir
+        if out_dir is not None and self._has_nonempty_file(out_dir):
+            return result, out_dir
         if not reveal.rollback_best_effort(dry_run=dry_run):
             self._emit(f"VOLUME-REVEAL-ROLLBACK-FAILED: entry={vs.entry.name}")
             raise RuntimeError("分卷伪装回滚失败，未继续归档，请检查工作文件。")
         self._emit(f"VOLUME-REVEAL-ROLLBACK: entry={vs.entry.name}")
+        if self._result_partial(result):
+            return result, out_dir
         return reveal_result, None
 
     def _reveal_disguised_volume_members(
@@ -447,6 +512,8 @@ class BetaFolderPipeline:
         dry_run: bool,
         preferred_password: str | None = None,
     ) -> tuple[ExtractionResult, Path | None]:
+        partial_holder = layer_root / "_partial_candidate"
+        best_partial: ExtractionResult | None = None
         disguised_split_normalized = self._normalize_disguised_split_suffix_volume_set(vs, dry_run=dry_run)
         if disguised_split_normalized is not None:
             normalized_vs, session = disguised_split_normalized
@@ -459,14 +526,21 @@ class BetaFolderPipeline:
                 dry_run=dry_run,
                 preferred_password=preferred_password,
             )
-            if result.ok or (normalized_out_dir is not None and self._has_nonempty_file(normalized_out_dir)):
+            if self._result_complete(result):
+                self._discard_partial_output(partial_holder)
                 return result, normalized_out_dir
+            if normalized_out_dir is not None and self._has_nonempty_file(normalized_out_dir):
+                best_partial = result
+                self._retain_partial_output(normalized_out_dir, partial_holder)
 
             session.rollback_best_effort(dry_run=dry_run)
             self._emit(
                 f"VOLUME-RENAME-ROLLBACK: {normalized_vs.entry.name} -> {vs.entry.name} rule=disguised-split-suffix"
             )
-            return result, None
+            if self._result_stop_all(result):
+                if best_partial is not None:
+                    return replace(result, volume_set=vs, partial_output=True), partial_holder
+                return replace(result, volume_set=vs), None
 
         sfx_normalized = self._normalize_sfx_volume_set(vs, dry_run=dry_run)
         if sfx_normalized is not None:
@@ -480,14 +554,21 @@ class BetaFolderPipeline:
                 dry_run=dry_run,
                 preferred_password=preferred_password,
             )
-            if result.ok or (normalized_out_dir is not None and self._has_nonempty_file(normalized_out_dir)):
+            if self._result_complete(result):
+                self._discard_partial_output(partial_holder)
                 return result, normalized_out_dir
+            if normalized_out_dir is not None and self._has_nonempty_file(normalized_out_dir):
+                best_partial = result
+                self._retain_partial_output(normalized_out_dir, partial_holder)
 
             session.rollback_best_effort(dry_run=dry_run)
             self._emit(
                 f"VOLUME-RENAME-ROLLBACK: {normalized_vs.entry.name} -> {vs.entry.name} rule=sfx-volume"
             )
-            return result, None
+            if self._result_stop_all(result):
+                if best_partial is not None:
+                    return replace(result, volume_set=vs, partial_output=True), partial_holder
+                return replace(result, volume_set=vs), None
 
         numbered_tail_normalized = self._normalize_numbered_tail_volume_set(vs, dry_run=dry_run)
         if numbered_tail_normalized is not None:
@@ -501,14 +582,21 @@ class BetaFolderPipeline:
                 dry_run=dry_run,
                 preferred_password=preferred_password,
             )
-            if result.ok or (normalized_out_dir is not None and self._has_nonempty_file(normalized_out_dir)):
+            if self._result_complete(result):
+                self._discard_partial_output(partial_holder)
                 return result, normalized_out_dir
+            if normalized_out_dir is not None and self._has_nonempty_file(normalized_out_dir):
+                best_partial = result
+                self._retain_partial_output(normalized_out_dir, partial_holder)
 
             session.rollback_best_effort(dry_run=dry_run)
             self._emit(
                 f"VOLUME-RENAME-ROLLBACK: {normalized_vs.entry.name} -> {vs.entry.name} rule=numbered-tail-volume"
             )
-            return result, None
+            if self._result_stop_all(result):
+                if best_partial is not None:
+                    return replace(result, volume_set=vs, partial_output=True), partial_holder
+                return replace(result, volume_set=vs), None
 
         last, out_dir = self._extract_with_variant_attempts(
             vs,
@@ -516,13 +604,27 @@ class BetaFolderPipeline:
             dry_run=dry_run,
             preferred_password=preferred_password,
         )
-        if last.ok or self._result_partial(last) or (out_dir is not None and self._has_nonempty_file(out_dir)):
+        if self._result_complete(last):
+            self._discard_partial_output(partial_holder)
+            return last, out_dir
+        if self._result_partial(last) and out_dir is not None and self._has_nonempty_file(out_dir):
+            best_partial = last
+            self._retain_partial_output(out_dir, partial_holder)
+        elif out_dir is not None and self._has_nonempty_file(out_dir):
+            if best_partial is not None:
+                best_partial = last
+                self._retain_partial_output(out_dir, partial_holder)
+                return replace(last, volume_set=vs, partial_output=True), partial_holder
             return last, out_dir
         if self._result_stop_all(last):
+            if best_partial is not None:
+                return replace(last, volume_set=vs, partial_output=True), partial_holder
             return last, None
 
         normalized = self._normalize_middle_numbered_volume_set(vs, dry_run=dry_run)
         if normalized is None:
+            if best_partial is not None:
+                return replace(best_partial, volume_set=vs), partial_holder
             return last, None
 
         normalized_vs, session = normalized
@@ -535,14 +637,24 @@ class BetaFolderPipeline:
             dry_run=dry_run,
             preferred_password=preferred_password,
         )
-        if result.ok or (normalized_out_dir is not None and self._has_nonempty_file(normalized_out_dir)):
+        if self._result_complete(result):
+            self._discard_partial_output(partial_holder)
             return result, normalized_out_dir
+        if normalized_out_dir is not None and self._has_nonempty_file(normalized_out_dir):
+            best_partial = result
+            self._retain_partial_output(normalized_out_dir, partial_holder)
 
         session.rollback_best_effort(dry_run=dry_run)
         self._emit(
             f"VOLUME-RENAME-ROLLBACK: {normalized_vs.entry.name} -> {vs.entry.name} rule=middle-numbered-volume"
         )
-        return result, None
+        if self._result_stop_all(result):
+            if best_partial is not None:
+                return replace(result, volume_set=vs, partial_output=True), partial_holder
+            return replace(result, volume_set=vs), None
+        if best_partial is not None:
+            return replace(best_partial, volume_set=vs), partial_holder
+        return replace(result, volume_set=vs), None
 
     def _continue_after_extract(
         self,
@@ -566,6 +678,9 @@ class BetaFolderPipeline:
         final_single_bytes = max(1, int(self._deep.final_single_mb)) * 1024 * 1024
         current_dir = start_dir
         current_password = preferred_password
+        partial_holder = package_root / "_partial_candidate"
+        best_partial: ExtractionResult | None = None
+        latest_failure_message: str | None = None
         for depth in range(1, max_depth + 1):
             reason = self._is_final_output(current_dir)
             if reason is not None:
@@ -613,20 +728,37 @@ class BetaFolderPipeline:
                     preferred_password=current_password,
                     method=attempt.method,
                 )
-                if self._result_partial(res):
-                    # Usable files with a damage/missing warning: stop digging and
-                    # publish what is available instead of retrying this layer.
-                    partial_dir = target_dir if target_dir is not None else target_dir_root
-                    final_dir = self._promote_final_dir(partial_dir, final_root, package_name=package_name, dry_run=dry_run)
-                    return True, final_dir, PARTIAL_WARNING
-                if res.ok:
+                if self._result_complete(res):
+                    self._discard_partial_output(partial_holder)
+                    best_partial = None
+                    latest_failure_message = None
                     if res.password:
                         current_password = res.password
                     current_dir = target_dir if target_dir is not None else target_dir_root
                     extracted = True
                     break
+                partial_dir = target_dir if target_dir is not None else target_dir_root
+                has_output = self._has_nonempty_file(partial_dir)
+                if self._result_partial(res) or (not res.ok and has_output):
+                    if has_output:
+                        self._retain_partial_output(partial_dir, partial_holder)
+                        best_partial = res
+                    if res.message:
+                        latest_failure_message = res.message
+                    if self._result_stop_all(res):
+                        break
+                    continue
+                if res.message:
+                    latest_failure_message = res.message
                 self._rollback_attempt(attempt, dry_run=dry_run)
+                if self._result_stop_all(res):
+                    break
             if not extracted:
+                if best_partial is not None:
+                    message = PARTIAL_WARNING
+                    if latest_failure_message:
+                        message = f"{PARTIAL_WARNING} 工具错误：{latest_failure_message}"
+                    return True, partial_holder, message
                 if deferred and not self._has_nonempty_file(current_dir):
                     self._remove_empty_dirs(current_dir)
                     return True, None, f"depth={depth} reason=deferred-volume-fragments"
@@ -638,6 +770,11 @@ class BetaFolderPipeline:
                     return True, final_dir, f"depth={depth} reason=candidates-failed"
                 return False, None, f"depth={depth} all candidates failed"
 
+        if best_partial is not None:
+            message = PARTIAL_WARNING
+            if latest_failure_message:
+                message = f"{PARTIAL_WARNING} 工具错误：{latest_failure_message}"
+            return True, partial_holder, message
         return False, None, f"exceeded max_depth={max_depth}"
 
     def _nested_candidates(
@@ -696,6 +833,8 @@ class BetaFolderPipeline:
         preferred_password: str | None = None,
         method: str = "direct",
     ) -> tuple[ExtractionResult, Path | None]:
+        partial_holder = base_output_dir.parent / "_partial_candidate"
+        best_partial: ExtractionResult | None = None
         probe = self._restore.identify(volume_set.entry)
         attempt_vs = volume_set
         direct_result, direct_dir = self._run_extract_attempt(
@@ -707,19 +846,21 @@ class BetaFolderPipeline:
             preferred_password=preferred_password,
             method=method,
         )
-        if (
-            direct_result.ok
-            or len(volume_set.members) > 1
-            or self._result_partial(direct_result)
-            or (direct_dir is not None and self._has_nonempty_file(direct_dir))
-        ):
+        if self._result_complete(direct_result) or len(volume_set.members) > 1:
+            return direct_result, direct_dir
+        if self._result_partial(direct_result) and direct_dir is not None and self._has_nonempty_file(direct_dir):
+            best_partial = direct_result
+            self._retain_partial_output(direct_dir, partial_holder)
+        elif direct_dir is not None and self._has_nonempty_file(direct_dir):
+            # Preserve the established stop behavior for unclassified output
+            # from ordinary/unknown candidates.
             return direct_result, direct_dir
         if self._result_stop_all(direct_result):
             # A serious no-output failure the extraction service already classified
             # as stop_all (missing volume / permission / disk-write / space /
             # exit 7/8/124/255) cannot be fixed by a rename or a disguise restore;
             # escalating would edit the selected original for nothing.
-            return replace(direct_result, volume_set=volume_set), None
+            return replace(direct_result, volume_set=volume_set), partial_holder if best_partial is not None else None
 
         last = direct_result
         variant_plans = self._restore.variant_plans(volume_set.entry)
@@ -744,11 +885,28 @@ class BetaFolderPipeline:
                 method=f"{method}+rename:{plan.rule_name}",
             )
             last = result
-            if result.ok or self._result_partial(result) or (out_dir is not None and self._has_nonempty_file(out_dir)):
+            if self._result_complete(result):
+                self._discard_partial_output(partial_holder)
+                return result, out_dir
+            if self._result_partial(result) and out_dir is not None and self._has_nonempty_file(out_dir):
+                best_partial = result
+                self._retain_partial_output(out_dir, partial_holder)
+                session.rollback_best_effort(dry_run=dry_run)
+                self._emit(f"RENAME-ROLLBACK: {renamed_entry.name} -> {volume_set.entry.name} rule={plan.rule_name}")
+                if self._result_stop_all(result):
+                    return replace(result, volume_set=volume_set), partial_holder
+                continue
+            if out_dir is not None and self._has_nonempty_file(out_dir):
+                if best_partial is not None:
+                    session.rollback_best_effort(dry_run=dry_run)
+                    return replace(best_partial, volume_set=volume_set), partial_holder
+                self._discard_partial_output(partial_holder)
                 return result, out_dir
             session.rollback_best_effort(dry_run=dry_run)
             self._emit(f"RENAME-ROLLBACK: {renamed_entry.name} -> {volume_set.entry.name} rule={plan.rule_name}")
             if self._result_stop_all(result):
+                if best_partial is not None:
+                    return replace(result, volume_set=volume_set, partial_output=True), partial_holder
                 return replace(result, volume_set=volume_set), None
 
         # In-place suffix attempts were rolled back to the input volume set. Only
@@ -764,9 +922,27 @@ class BetaFolderPipeline:
         )
         if restored is not None:
             result, out_dir = restored
-            if result.ok or self._result_partial(result) or (out_dir is not None and self._has_nonempty_file(out_dir)):
+            if self._result_complete(result):
+                self._discard_partial_output(partial_holder)
                 return replace(result, volume_set=volume_set), out_dir
+            if self._result_stop_all(result) and best_partial is not None:
+                return replace(result, volume_set=volume_set, partial_output=True), partial_holder
+            if self._result_partial(result) and out_dir is not None and self._has_nonempty_file(out_dir):
+                best_partial = result
+                self._retain_partial_output(out_dir, partial_holder)
+                return replace(result, volume_set=volume_set), partial_holder
+            if self._result_partial(result) and self._has_nonempty_file(partial_holder):
+                return replace(result, volume_set=volume_set), partial_holder
+            elif out_dir is not None and self._has_nonempty_file(out_dir):
+                if best_partial is not None:
+                    return replace(best_partial, volume_set=volume_set), partial_holder
+                self._discard_partial_output(partial_holder)
+                return replace(result, volume_set=volume_set), out_dir
+            elif best_partial is not None:
+                return replace(best_partial, volume_set=volume_set), partial_holder
             return replace(result, volume_set=volume_set), None
+        if best_partial is not None:
+            return replace(best_partial, volume_set=volume_set), partial_holder
         return replace(last, volume_set=volume_set), None
 
     def _restore_after_failure(
@@ -827,6 +1003,8 @@ class BetaFolderPipeline:
             last_method=restored_marker,
         )
         last_result: ExtractionResult | None = None
+        retained_result: ExtractionResult | None = None
+        retained_partial: Path | None = None
         for index, restored_path in enumerate(restored_paths or [volume_set.entry], start=1):
             restore_vs = VolumeSet(entry=restored_path, members=(restored_path,), group_key=volume_set.group_key)
             restore_probe = self._restore.identify(restored_path)
@@ -840,7 +1018,15 @@ class BetaFolderPipeline:
                 method=restore_method,
             )
             last_result = result
-            if result.ok or self._result_partial(result) or (out_dir is not None and self._has_nonempty_file(out_dir)):
+            if self._result_complete(result):
+                self._discard_partial_output(retained_partial)
+                return result, out_dir
+            if self._result_partial(result) and out_dir is not None and self._has_nonempty_file(out_dir):
+                retained_partial = base_output_dir.parent / "_partial_candidate"
+                self._retain_partial_output(out_dir, retained_partial)
+                retained_result = result
+            elif out_dir is not None and self._has_nonempty_file(out_dir):
+                self._discard_partial_output(retained_partial)
                 return result, out_dir
         if rollbacks:
             self._restore.rollback_apate(list(rollbacks), dry_run=dry_run)
@@ -848,7 +1034,7 @@ class BetaFolderPipeline:
         # Report the restore attempt's error so the failure category stays
         # actionable even though the derive produced no usable output.
         if last_result is not None:
-            return last_result, None
+            return (retained_result or last_result), retained_partial
         return None
 
     def _run_extract_attempt(
@@ -1423,6 +1609,44 @@ class BetaFolderPipeline:
         self._emit(f"MOVE-PARTIAL-DIR: {source_dir} -> {target_dir}")
         return target_dir
 
+    def _move_partial_outputs_to_incomplete(
+        self,
+        source_dir: Path,
+        dest_root: Path,
+        *,
+        package_name: str,
+        dry_run: bool,
+    ) -> Path | None:
+        if not self._has_nonempty_file(source_dir):
+            return None
+        target = dest_root / package_name
+        while target.exists() or target.is_symlink():
+            target = dest_root / f"{package_name}__run_{uuid.uuid4().hex}"
+        if dry_run:
+            self._emit(f"MOVE(dry): {source_dir} -> {target}")
+            return target
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(source_dir), str(target))
+        self._emit(f"MOVE-INCOMPLETE: {source_dir} -> {target}")
+        return target
+
+    def _retain_partial_output(self, source_dir: Path, holder: Path) -> None:
+        """Keep one failed output while later extraction modes are tried."""
+        if source_dir == holder:
+            return
+        self._discard_partial_output(holder)
+        if source_dir.exists():
+            holder.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(source_dir), str(holder))
+
+    def _discard_partial_output(self, path: Path | None) -> None:
+        if path is None or not path.exists():
+            return
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+
     def _is_in_result_dirs(self, vs: VolumeSet, dirs: set[Path]) -> bool:
         for member in vs.members:
             for directory in dirs:
@@ -1493,7 +1717,7 @@ class BetaFolderPipeline:
         output_dir: Path,
         method: str,
     ) -> None:
-        status = "OK" if result.ok else "FAIL"
+        status = "PARTIAL" if self._result_partial(result) else ("OK" if self._result_complete(result) else "FAIL")
         if self._log_passwords:
             password = result.password if result.password else "<none>"
             pw = f" password={password}"
@@ -1535,6 +1759,18 @@ class BetaFolderPipeline:
         # ExtractionResult.partial_output is added by a parallel worker; tolerate
         # its absence so this module works before and after that change.
         return bool(getattr(result, "partial_output", False))
+
+    @classmethod
+    def _result_complete(cls, result: ExtractionResult) -> bool:
+        return bool(result.ok and result.exit_code in (0, None) and not cls._result_partial(result))
+
+    @staticmethod
+    def _partial_result_message(message: str | None) -> str:
+        if not message:
+            return PARTIAL_WARNING
+        if message.startswith("未完成"):
+            return message
+        return f"未完成：{message}"
 
     @staticmethod
     def _result_stop_all(result: ExtractionResult) -> bool:

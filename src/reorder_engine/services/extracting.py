@@ -1,16 +1,18 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import Callable
 
 from reorder_engine.domain.models import ArchiveProbe, ExtractionRequest, ExtractionResult
 from reorder_engine.infrastructure.command_runner import ExternalCommandRunner
+from reorder_engine.infrastructure.extraction_output import ExtractionOutputScope
 from reorder_engine.infrastructure.tools import BandizipCli, SevenZipCli, UnrarCli, contains_nonempty_regular_file
 from reorder_engine.interfaces.extracting import ExtractorStrategy
 
 
 _PARTIAL_OUTPUT_WARNING = (
-    "解压工具返回非零退出码，但输出目录已产生非空文件；按用户接受损坏、磁盘优先的策略保留这些结果。原始错误："
+    "当前解压方式未完整成功，本次非空输出已暂存。原始错误："
 )
 
 
@@ -176,18 +178,6 @@ class ExtractionService:
         "权限不足",
         "没有权限",
     )
-    # Corruption markers (for example a trailing CRC/Data Error) are not password
-    # failures: re-driving the whole password matrix for them just repeats the same
-    # corrupt read up to ~115 times. They only advance to the next tool once.
-    _CORRUPTION_MARKERS = (
-        "data error",
-        "crc error",
-        "crc failed",
-        "checksum error",
-        "corrupt",
-        "数据错误",
-        "校验错误",
-    )
     # Exit codes no password/tool retry can salvage: 7 command line error,
     # 8 out of memory, 255 user break, 124 runner timeout. Continuing would just
     # re-drive the whole password matrix for a failure that can never succeed.
@@ -279,11 +269,6 @@ class ExtractionService:
         if cls._message_contains(message, cls._FORMAT_MISMATCH_MARKERS):
             return "next_tool"
 
-        # Trailing CRC/Data Error on a correctly read archive is not a password
-        # problem; advance once instead of repeating the read for every password.
-        if any(marker in m for marker in cls._CORRUPTION_MARKERS):
-            return "next_tool"
-
         return "retry"
 
     def _failure_disposition(self, message: str | None, *, exit_code: int | None = None) -> str:
@@ -316,29 +301,94 @@ class ExtractionService:
         # preserve the full fallback matrix.
         passwords = self._password_attempt_order(request)
 
+        if dry_run:
+            last: ExtractionResult | None = None
+            for ext in ordered:
+                for pwd in passwords:
+                    last = self._try_extract(ext, request, pwd, dry_run=True)
+                    if last.ok and last.exit_code in (0, None) and not last.partial_output:
+                        return last
+                    disp = self._failure_disposition(last.message, exit_code=last.exit_code)
+                    if disp == "stop_all":
+                        return last
+                    if disp == "next_tool":
+                        break
+            return last or ExtractionResult(
+                volume_set=request.volume_set, ok=False, tool="none", message="No attempt executed"
+            )
+
         last: ExtractionResult | None = None
         password_failure: ExtractionResult | None = None
-        for ext in ordered:
-            for pwd in passwords:
-                last = self._try_extract(ext, request, pwd, dry_run=dry_run)
-                if last.ok:
-                    return last
-                if self._looks_like_password_failure(last.message):
-                    password_failure = last
-                disp = self._failure_disposition(last.message, exit_code=last.exit_code)
-                if disp == "stop_all":
-                    return last
-                if disp == "next_tool":
-                    break
+        scope = ExtractionOutputScope(request.output_dir)
+        candidate_result: ExtractionResult | None = None
+        try:
+            for ext in ordered:
+                for pwd in passwords:
+                    attempt_dir = scope.new_attempt()
+                    try:
+                        last = self._try_extract(
+                            ext, request, pwd, dry_run=dry_run, attempt_output_dir=attempt_dir
+                        )
+                    except BaseException:
+                        scope.cleanup()
+                        raise
 
-        if last is None:
-            return ExtractionResult(volume_set=request.volume_set, ok=False, tool="none", message="No attempt executed")
-        # The final tool may only be able to say "not an archive" while an earlier
-        # attempt already showed the archive needs a password. Report that earlier,
-        # more actionable failure instead of the format message.
-        if password_failure is not None and self._looks_like_format_mismatch(last.message):
-            return password_failure
-        return last
+                    complete_success = last.ok and last.exit_code in (0, None) and not last.partial_output
+                    if complete_success:
+                        scope.discard_candidate()
+                        scope.promote_attempt()
+                        return last
+
+                    # Tool adapters may call a warning exit code "ok" (for
+                    # example 7-Zip exit 1). It is never a complete result, even
+                    # when this attempt produced no retainable bytes.
+                    last = replace(last, ok=False, partial_output=False)
+
+                    if self._looks_like_password_failure(last.message):
+                        password_failure = last
+                    disp = self._failure_disposition(last.message, exit_code=last.exit_code)
+                    if disp == "stop_all":
+                        scope.cleanup()
+                        return last
+
+                    attempt_filesystem_dir = scope.attempt_filesystem_dir
+                    has_output = (
+                        attempt_filesystem_dir is not None
+                        and contains_nonempty_regular_file(attempt_filesystem_dir)
+                    )
+                    if has_output:
+                        scope.keep_as_candidate()
+                        candidate_result = replace(
+                            last,
+                            volume_set=request.volume_set,
+                            tool=ext.name(),
+                            password=pwd,
+                            ok=False,
+                            partial_output=True,
+                        )
+                    else:
+                        scope.discard_attempt()
+                    if disp == "next_tool":
+                        break
+
+            if last is None:
+                return ExtractionResult(volume_set=request.volume_set, ok=False, tool="none", message="No attempt executed")
+            if candidate_result is not None:
+                scope.promote_candidate()
+                original = (candidate_result.message or "").strip() or "解压工具未能完整解压。"
+                return replace(
+                    candidate_result,
+                    ok=False,
+                    partial_output=True,
+                    message=f"{_PARTIAL_OUTPUT_WARNING}{original}",
+                )
+            # The final tool may only say "not an archive" after an earlier
+            # password failure. Keep the earlier, more useful error.
+            if password_failure is not None and self._looks_like_format_mismatch(last.message):
+                return password_failure
+            return last
+        finally:
+            scope.cleanup()
 
     def _password_attempt_order(self, request: ExtractionRequest) -> list[str | None]:
         ordered: list[str | None] = []
@@ -364,52 +414,23 @@ class ExtractionService:
         rest = [e for e in self._extractors if e.name() != pref]
         return primary + rest
 
-    def _try_extract(self, extractor: ExtractorStrategy, request: ExtractionRequest, password: str | None, *, dry_run: bool) -> ExtractionResult:
+    def _try_extract(
+        self,
+        extractor: ExtractorStrategy,
+        request: ExtractionRequest,
+        password: str | None,
+        *,
+        dry_run: bool,
+        attempt_output_dir: Path | None = None,
+    ) -> ExtractionResult:
+        attempt_request = (
+            replace(request, output_dir=attempt_output_dir) if attempt_output_dir is not None else request
+        )
         if self._attempt_sink:
-            self._attempt_sink(extractor.name(), request, password)
+            self._attempt_sink(extractor.name(), attempt_request, password)
         fn = getattr(extractor, "extract_with_password", None)
         if callable(fn):
-            result = fn(request, password, dry_run=dry_run)
+            result = fn(attempt_request, password, dry_run=dry_run)
         else:
-            result = extractor.extract(request, dry_run=dry_run)
-        if not dry_run:
-            partial = self._partial_result_for_output(result, request, extractor.name(), password)
-            if partial is not None:
-                return partial
+            result = extractor.extract(attempt_request, dry_run=dry_run)
         return result
-
-    def _partial_result_for_output(
-        self,
-        result: ExtractionResult,
-        request: ExtractionRequest,
-        tool: str,
-        password: str | None,
-    ) -> ExtractionResult | None:
-        """Keep a non-zero attempt that still wrote non-empty output.
-
-        The user accepts corrupted output and prefers the bytes on disk over a
-        clean retry, so such an attempt is reported as a partial success and the
-        caller stops the whole tool/password matrix. This covers a tool that still
-        reports ``ok`` for a warning code (7-Zip exit 1) as long as the exit code is
-        non-zero. Timeouts and user breaks are never converted; cancellation and
-        guard errors already raise before reaching here.
-        """
-
-        # A genuine success (exit 0 / no exit code) is returned untouched.
-        if result.ok and result.exit_code in (0, None):
-            return None
-        if result.exit_code in self._NEVER_PARTIAL_EXIT_CODES:
-            return None
-        if not contains_nonempty_regular_file(request.output_dir):
-            return None
-        original = (result.message or "").strip() or "解压工具返回非零退出码。"
-        return ExtractionResult(
-            volume_set=request.volume_set,
-            ok=True,
-            tool=tool,
-            exit_code=result.exit_code,
-            password=password,
-            source_volume_set=result.source_volume_set,
-            partial_output=True,
-            message=f"{_PARTIAL_OUTPUT_WARNING}{original}",
-        )

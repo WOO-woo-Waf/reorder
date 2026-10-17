@@ -34,6 +34,29 @@ class FlatteningTests(unittest.TestCase):
 
             self.assertEqual(deepest_wrapper_dir(root / "A"), leaf)
 
+    def test_incomplete_is_protected_with_older_custom_exclusions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            archive = root / "incomplete" / "archives" / "group.7z.001"
+            partial = root / "incomplete" / "outputs" / "group" / "partial.bin"
+            empty = partial.parent / "empty"
+            archive.parent.mkdir(parents=True)
+            partial.parent.mkdir(parents=True)
+            empty.mkdir()
+            archive.write_bytes(b"saved original")
+            partial.write_bytes(b"unverified partial")
+            incoming = root / "incoming" / "new.zip"
+            incoming.parent.mkdir()
+            incoming.write_bytes(b"new archive")
+
+            moves = FolderFlattener().flatten(root, exclude_dirs={"old-custom-directory"})
+
+            self.assertEqual([record.src for record in moves], [incoming])
+            self.assertEqual((root / "new.zip").read_bytes(), b"new archive")
+            self.assertEqual(archive.read_bytes(), b"saved original")
+            self.assertEqual(partial.read_bytes(), b"unverified partial")
+            self.assertTrue(empty.is_dir())
+
 
 if __name__ == "__main__":
     unittest.main()

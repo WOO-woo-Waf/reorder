@@ -139,8 +139,8 @@ class PackageProcessor:
 
     def apply_builtin_keyword_cleaning(self, workspace: Path, options: ProcessingOptions,
                                        state: str, *, log: Callable[[str], None]) -> None:
-        """仅显式开启且结果为成功/部分时，清理 final 顶层成品条目名；不碰 error_files。"""
-        if not options.clean_builtin_keywords or state not in {"succeeded", "partial"}:
+        """仅显式开启且完整成功时，清理 final 顶层成品条目名。"""
+        if not options.clean_builtin_keywords or state != "succeeded":
             return
         clean_output_entry_names(workspace / "final", self.builtin.keywords,
                                  redact=self.secrets.redact, log=log)
@@ -225,11 +225,16 @@ class PackageProcessor:
             progress("publishing")
             # No cancellation inside this file transaction: finish to a known boundary.
             results: list[str] = []
-            for name in (("final", "error_files", "deferred_volumes") if outcome.state in {"succeeded", "partial"} else ()):
+            publish_names = ("final", "error_files", "deferred_volumes") if outcome.state == "succeeded" else ()
+            if outcome.state == "partial":
+                publish_names = ("incomplete", "deferred_volumes")
+            for name in publish_names:
                 results.extend(transaction.publish_children(workspace / name, output_root / name))
             progress("archiving")
-            if outcome.state in {"succeeded", "partial"}:
+            if outcome.state == "succeeded":
                 destination = output_root / "success" / "archives"
+            elif outcome.state == "partial":
+                destination = output_root / "incomplete" / "archives"
             elif outcome.state == "deferred":
                 destination = output_root / "deferred_volumes" / package.package_id
             else:

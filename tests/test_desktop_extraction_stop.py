@@ -44,6 +44,7 @@ class _WritingExtractor(ExtractorStrategy):
         self._write = write
         self._raises = raises
         self.calls: list[str | None] = []
+        self.output_dirs: list[Path] = []
 
     def name(self) -> str:
         return self._name
@@ -56,6 +57,7 @@ class _WritingExtractor(ExtractorStrategy):
 
     def extract_with_password(self, request: ExtractionRequest, password: str | None, *, dry_run: bool = False) -> ExtractionResult:
         self.calls.append(password)
+        self.output_dirs.append(request.output_dir)
         if self._raises is not None:
             raise self._raises
         assert self._write is not None
@@ -121,24 +123,32 @@ class ExtractionStopPolicyTests(unittest.TestCase):
         result = ExtractionResult(volume_set=None, ok=True, tool="7z")  # type: ignore[arg-type]
         self.assertFalse(result.partial_output)
 
-    def test_nonzero_with_nonempty_output_stops_all_and_marks_partial(self) -> None:
+    def test_partial_is_returned_only_after_all_passwords_and_tools(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             vs, req = self._volume_set(root)
             req = ExtractionRequest(volume_set=vs, output_dir=root / "out", passwords=("pw1", "pw2"))
-            first = _WritingExtractor("7z", [_fail("ERROR: Data Error in file.jpg")], write=_write_nonempty)
-            second = _WritingExtractor("unrar", [ExtractionResult(volume_set=vs, ok=True, tool="unrar")], write=_write_nonempty)
+            first = _WritingExtractor(
+                "7z",
+                [_fail("ERROR: Data Error in file.jpg") for _ in range(3)],
+                write=_write_nonempty,
+            )
+            second = _WritingExtractor(
+                "unrar",
+                [_fail("ERROR: Data Error in file.jpg") for _ in range(3)],
+                write=_write_nonempty,
+            )
 
             result = ExtractionService([first, second]).extract_one(req)
 
-            self.assertTrue(result.ok)
+            self.assertFalse(result.ok)
             self.assertTrue(result.partial_output)
-            self.assertEqual(result.tool, "7z")
+            self.assertEqual(result.tool, "unrar")
             self.assertIn("Data Error in file.jpg", result.message or "")
-            self.assertIn("非空文件", result.message or "")
-            # no further password on this tool, and no other tool was touched
-            self.assertEqual(first.calls, [None])
-            self.assertEqual(second.calls, [])
+            self.assertIn("当前解压方式未完整成功", result.message or "")
+            self.assertEqual(first.calls, [None, "pw1", "pw2"])
+            self.assertEqual(second.calls, [None, "pw1", "pw2"])
+            self.assertEqual((req.output_dir / "recovered.bin").read_bytes(), b"payload")
 
     def test_zero_byte_output_is_not_partial_and_switches_on(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -147,7 +157,7 @@ class ExtractionStopPolicyTests(unittest.TestCase):
             req = ExtractionRequest(volume_set=vs, output_dir=root / "out", passwords=("pw1",))
             first = _WritingExtractor(
                 "7z",
-                [_fail("Wrong password"), _fail("Wrong password")],
+                [_fail("Wrong password") for _ in range(3)],
                 write=_write_zero_byte,
             )
             second = _WritingExtractor("unrar", [ExtractionResult(volume_set=vs, ok=True, tool="unrar")], write=_write_zero_byte)
@@ -173,17 +183,19 @@ class ExtractionStopPolicyTests(unittest.TestCase):
             self.assertEqual(first.calls, [None])
             self.assertEqual(second.calls, [None])
 
-    def test_crc_without_output_does_not_repeat_password_matrix(self) -> None:
+    def test_crc_without_output_retries_all_passwords(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             vs, req = self._volume_set(root)
-            first = _WritingExtractor("7z", [_fail("ERROR: CRC Failed in file.jpg")], write=_write_zero_byte)
+            first = _WritingExtractor(
+                "7z", [_fail("ERROR: CRC Failed in file.jpg") for _ in range(3)], write=_write_zero_byte
+            )
             second = _WritingExtractor("unrar", [ExtractionResult(volume_set=vs, ok=True, tool="unrar")], write=_write_zero_byte)
 
             result = ExtractionService([first, second]).extract_one(req)
 
             self.assertTrue(result.ok)
-            self.assertEqual(first.calls, [None])
+            self.assertEqual(first.calls, [None, "pw1", "pw2"])
             self.assertEqual(second.calls, [None])
 
     def test_missing_volume_stops_everything(self) -> None:
@@ -248,24 +260,188 @@ class ExtractionStopPolicyTests(unittest.TestCase):
             with self.assertRaises(EngineError):
                 ExtractionService([first]).extract_one(req)
 
-    def test_warning_exit_code_with_output_is_partial(self) -> None:
-        # 7-Zip can report ok for exit code 1 (warning); with output it is partial.
+    def test_warning_output_retries_then_later_tool_can_succeed(self) -> None:
+        # 7-Zip can report ok for exit code 1 (warning); this is incomplete and
+        # must not hide a later clean extraction.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            vs, _ = self._volume_set(root)
+            req = ExtractionRequest(volume_set=vs, output_dir=root / "out", passwords=("pw1", "pw2"))
+            first = _WritingExtractor(
+                "7z",
+                [
+                    ExtractionResult(volume_set=vs, ok=True, tool="7z", exit_code=1, message="WARNING: some files were not processed")
+                    for _ in range(3)
+                ],
+                write=_write_nonempty,
+            )
+            second = _WritingExtractor(
+                "unrar", [ExtractionResult(volume_set=vs, ok=True, tool="unrar", exit_code=0)], write=_write_nonempty
+            )
+
+            result = ExtractionService([first, second]).extract_one(req)
+
+            self.assertTrue(result.ok)
+            self.assertFalse(result.partial_output)
+            self.assertEqual(first.calls, [None, "pw1", "pw2"])
+            self.assertEqual(second.calls, [None])
+            self.assertEqual((req.output_dir / "recovered.bin").read_bytes(), b"payload")
+
+    def test_warning_without_nonempty_output_is_not_success(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             vs, _ = self._volume_set(root)
             req = ExtractionRequest(volume_set=vs, output_dir=root / "out", passwords=())
-            first = _WritingExtractor(
+            extractor = _WritingExtractor(
                 "7z",
-                [ExtractionResult(volume_set=vs, ok=True, tool="7z", exit_code=1, message="WARNING: some files were not processed")],
-                write=_write_nonempty,
+                [ExtractionResult(volume_set=vs, ok=True, tool="7z", exit_code=1, message="WARNING: incomplete")],
+                write=_write_zero_byte,
             )
 
-            result = ExtractionService([first]).extract_one(req)
+            result = ExtractionService([extractor]).extract_one(req)
+
+            self.assertFalse(result.ok)
+            self.assertFalse(result.partial_output)
+            self.assertEqual(extractor.calls, [None])
+            self.assertFalse((req.output_dir / "placeholder.bin").exists())
+
+    def test_wrong_password_partial_followed_by_correct_password_is_clean(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            vs, _ = self._volume_set(root)
+            req = ExtractionRequest(volume_set=vs, output_dir=root / "out", passwords=("bad", "good"))
+
+            def write_by_password(out: Path, password: str | None) -> None:
+                out.mkdir(parents=True, exist_ok=True)
+                (out / ("good.bin" if password == "good" else "garbage.bin")).write_bytes(password.encode() if password else b"no-password")
+
+            extractor = _WritingExtractor(
+                "7z",
+                [_fail("Wrong password"), _fail("Wrong password"), ExtractionResult(volume_set=vs, ok=True, tool="7z", exit_code=0)],
+                write=write_by_password,
+            )
+            logged_output_dirs: list[Path] = []
+
+            result = ExtractionService(
+                [extractor],
+                attempt_sink=lambda _tool, attempt_req, _password: logged_output_dirs.append(attempt_req.output_dir),
+            ).extract_one(req)
 
             self.assertTrue(result.ok)
-            self.assertTrue(result.partial_output)
-            self.assertEqual(first.calls, [None])
-            self.assertIn("not processed", result.message or "")
+            self.assertFalse(result.partial_output)
+            self.assertEqual(extractor.calls, [None, "bad", "good"])
+            self.assertEqual(logged_output_dirs, extractor.output_dirs)
+            self.assertTrue(all(path.parent.parent == req.output_dir.parent for path in logged_output_dirs))
+            self.assertEqual(sorted(p.name for p in req.output_dir.iterdir()), ["good.bin"])
+            self.assertEqual((req.output_dir / "good.bin").read_bytes(), b"good")
+
+    def test_preexisting_output_is_preserved_and_not_counted_as_attempt_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            vs, _ = self._volume_set(root)
+            out = root / "out"
+            out.mkdir()
+            (out / "recovered.bin").write_bytes(b"user-file")
+            req = ExtractionRequest(volume_set=vs, output_dir=out, passwords=())
+            extractor = _WritingExtractor(
+                "7z", [ExtractionResult(volume_set=vs, ok=True, tool="7z", exit_code=0)], write=_write_nonempty
+            )
+
+            result = ExtractionService([extractor]).extract_one(req)
+
+            self.assertTrue(result.ok)
+            self.assertEqual((out / "recovered.bin").read_bytes(), b"user-file")
+            self.assertEqual((out / "recovered.recovered-1.bin").read_bytes(), b"payload")
+
+    def test_empty_directories_are_preserved_and_directory_conflicts_remap_subtree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            vs, _ = self._volume_set(root)
+            out = root / "out"
+            out.mkdir()
+            (out / "blocked").write_text("user-file", encoding="utf-8")
+            (out / "merged").mkdir()
+            (out / "merged" / "existing.txt").write_text("keep", encoding="utf-8")
+            req = ExtractionRequest(volume_set=vs, output_dir=out, passwords=())
+
+            def write_tree(attempt: Path, _password: str | None) -> None:
+                (attempt / "empty" / "nested-empty").mkdir(parents=True)
+                (attempt / "blocked" / "child-empty").mkdir(parents=True)
+                (attempt / "blocked" / "child-empty" / "inside.bin").write_bytes(b"payload")
+                (attempt / "merged").mkdir()
+                (attempt / "merged" / "new.txt").write_bytes(b"new")
+
+            extractor = _WritingExtractor(
+                "7z", [ExtractionResult(volume_set=vs, ok=True, tool="7z", exit_code=0)], write=write_tree
+            )
+
+            result = ExtractionService([extractor]).extract_one(req)
+
+            self.assertTrue(result.ok)
+            self.assertTrue((out / "empty" / "nested-empty").is_dir())
+            self.assertEqual((out / "blocked").read_text(encoding="utf-8"), "user-file")
+            self.assertEqual((out / "blocked.recovered-1" / "child-empty" / "inside.bin").read_bytes(), b"payload")
+            self.assertEqual((out / "merged" / "existing.txt").read_text(encoding="utf-8"), "keep")
+            self.assertEqual((out / "merged" / "new.txt").read_bytes(), b"new")
+
+    def test_output_links_and_special_files_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            vs, _ = self._volume_set(root)
+            external = root / "external"
+            external.mkdir()
+            linked_parent = root / "linked-parent"
+            try:
+                linked_parent.symlink_to(external, target_is_directory=True)
+            except (OSError, NotImplementedError):
+                self.skipTest("symlinks unavailable")
+
+            extractor = _WritingExtractor(
+                "7z", [ExtractionResult(volume_set=vs, ok=True, tool="7z", exit_code=0)], write=_write_nonempty
+            )
+            linked_req = ExtractionRequest(
+                volume_set=vs, output_dir=linked_parent / "out", passwords=()
+            )
+            with self.assertRaises(EngineError):
+                ExtractionService([extractor]).extract_one(linked_req)
+            self.assertEqual(extractor.calls, [])
+            self.assertEqual(list(external.iterdir()), [])
+
+            def write_link(attempt: Path, _password: str | None) -> None:
+                (attempt / "escape.bin").symlink_to(external / "target.bin")
+
+            linked_output = _WritingExtractor(
+                "7z", [ExtractionResult(volume_set=vs, ok=True, tool="7z", exit_code=0)], write=write_link
+            )
+            req = ExtractionRequest(volume_set=vs, output_dir=root / "link-output", passwords=())
+            with self.assertRaises(EngineError):
+                ExtractionService([linked_output]).extract_one(req)
+            self.assertFalse((external / "target.bin").exists())
+
+            def replace_attempt_root(attempt: Path, _password: str | None) -> None:
+                attempt.rmdir()
+                attempt.symlink_to(external, target_is_directory=True)
+
+            linked_root = _WritingExtractor(
+                "7z",
+                [ExtractionResult(volume_set=vs, ok=True, tool="7z", exit_code=0)],
+                write=replace_attempt_root,
+            )
+            root_req = ExtractionRequest(volume_set=vs, output_dir=root / "linked-root-output", passwords=())
+            with self.assertRaises(EngineError):
+                ExtractionService([linked_root]).extract_one(root_req)
+            self.assertEqual(list(external.iterdir()), [])
+
+            if hasattr(os, "mkfifo"):
+                def write_fifo(attempt: Path, _password: str | None) -> None:
+                    os.mkfifo(attempt / "special.pipe")
+
+                special_output = _WritingExtractor(
+                    "7z", [ExtractionResult(volume_set=vs, ok=True, tool="7z", exit_code=0)], write=write_fifo
+                )
+                special_req = ExtractionRequest(volume_set=vs, output_dir=root / "special-output", passwords=())
+                with self.assertRaises(EngineError):
+                    ExtractionService([special_output]).extract_one(special_req)
 
     def test_command_error_exit_code_stops_all_without_output(self) -> None:
         for code in (7, 8, 124, 255):
@@ -401,7 +577,7 @@ class ExtractionCommandWiringTests(unittest.TestCase):
             self.assertTrue(runner.abort("ERROR: Wrong password : file.jpg"))
             out.mkdir(parents=True, exist_ok=True)
             (out / "partial.bin").write_bytes(b"bytes")
-            self.assertFalse(runner.abort("ERROR: Wrong password : file.jpg"))
+            self.assertTrue(runner.abort("ERROR: Wrong password : file.jpg"))
 
     def test_7z_password_is_forwarded_plaintext(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -477,9 +653,14 @@ class NativeSevenZipAesTests(unittest.TestCase):
         native_out = Path(_native_path(out))
         vs = VolumeSet(entry=native_archive, members=(native_archive,), group_key="aes")
         req = ExtractionRequest(volume_set=vs, output_dir=native_out, passwords=("SECRET",))
+        probe_req = ExtractionRequest(
+            volume_set=vs,
+            output_dir=Path(_native_path(out / "password_probe")),
+            passwords=("SECRET",),
+        )
 
         try:
-            none_result = extractor.extract_with_password(req, None)
+            none_result = extractor.extract_with_password(probe_req, None)
         except OSError as exc:  # exe not runnable in this environment (no interop)
             self.skipTest(f"cannot execute native 7z.exe: {exc}")
 

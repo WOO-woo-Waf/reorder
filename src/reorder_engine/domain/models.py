@@ -68,10 +68,8 @@ class ExtractionResult:
     # The pipeline routes these files after extraction. A recovered working
     # copy can be the extraction entry while its original still needs archiving.
     source_volume_set: VolumeSet | None = None
-    # True when the tool returned a non-zero exit code yet at least one non-empty
-    # regular file was written to this run's output directory. The user accepts
-    # corrupted output and prefers keeping it, so the result is reported as a
-    # success with a warning instead of being discarded.
+    # True when all usable tool/password retries ended unsuccessfully but a
+    # non-empty regular file from a failed attempt was retained.
     partial_output: bool = False
 
 
